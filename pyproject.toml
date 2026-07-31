@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "clossify"
+version = "0.1.0"
+description = "Naver SmartStore automation MCP server (commerce API, listing compliance, image QA)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [{ name = "clossify" }]
+dependencies = [
+    "mcp",
+    "bcrypt",
+    "requests",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/clossify"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/clossify", "agents", "config.example.json", "README.md", "pyproject.toml"]

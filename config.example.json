@@ -1,0 +1,34 @@
+{
+  "_comment": "Example configuration for clossify. Copy to .local/config.json and fill real values. Never commit real credentials. All values below are placeholders. Keys: naver (Commerce API), naver_searchad (Search Ads keyword API), image_providers (image generation). The agent documents use placeholders {AS_TEL}, {STORE_SLUG}, {STORE_NAME}, {VISION_MODEL} which are resolved from this config at runtime.",
+  "naver": {
+    "_comment": "Naver Commerce API OAuth2 client_credentials. client_secret is used as the bcrypt signing key in naver_client.get_token.",
+    "client_id": "REPLACE_WITH_NAVER_CLIENT_ID",
+    "client_secret": "REPLACE_WITH_NAVER_CLIENT_SECRET",
+    "type": "SELF",
+    "store_url_slug": "{STORE_SLUG}"
+  },
+  "naver_searchad": {
+    "_comment": "Naver SearchAds (keyword volume) API. Used for SEO title keyword ranking.",
+    "api_key": "REPLACE_WITH_SEARCHAD_API_KEY",
+    "secret_key": "REPLACE_WITH_SEARCHAD_SECRET_KEY",
+    "customer_id": "REPLACE_WITH_SEARCHAD_CUSTOMER_ID"
+  },
+  "image_providers": {
+    "_comment": "Paid image generation providers for detail-page cut shortages. See agents/IMAGE_GENERATION_PRICE_POLICY.md.",
+    "openai": {
+      "api_key": "REPLACE_WITH_OPENAI_API_KEY",
+      "model": "gpt-image-2"
+    },
+    "gemini": {
+      "api_key": "REPLACE_WITH_GEMINI_API_KEY",
+      "model": "gemini-3.1-flash-image"
+    }
+  },
+  "brand": {
+    "_comment": "Placeholders resolved into agent documents and rendered detail pages.",
+    "store_name": "{STORE_NAME}",
+    "store_slug": "{STORE_SLUG}",
+    "as_tel": "{AS_TEL}",
+    "vision_model": "{VISION_MODEL}"
+  }
+}
