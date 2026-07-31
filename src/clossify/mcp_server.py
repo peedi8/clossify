@@ -1,0 +1,351 @@
+# -*- coding: utf-8 -*-
+"""Clossify MCP 서버 — 네이버 스마트스토어 등록 능력을 MCP 클라이언트 LLM에 부여.
+
+이 모듈은 MCP Python SDK(v2, PyPI `mcp`)의 `MCPServer`(FastMCP 후속)를 사용해
+로컬 stdio MCP 서버를 노출한다. 서버는 4개의 도구를 제공한다:
+
+- ``check_config``: 자격증명/설정 파일 존재 및 형식 검사 (외부 API 호출 없음).
+- ``upload_images``: 로컬 이미지 경로 리스트를 네이버 이미지서버에 업로드.
+- ``register_product``: 상품 정보를 받아 등록 페이로드를 구성하고 커머스 API로 등록.
+- ``get_product``: 등록된 상품(origin product)을 조회.
+
+모든 자격증명은 프로젝트 루트의 ``.local/config.json`` 에만 존재한다
+(ADR-0002 로컬 MCP + BYO-key). 이 서버 자체는 자격증명을 수탁/저장하지 않는다.
+
+인증 토큰, API 호출, 페이로드 빌딩의 모든 복잡도는 ``naver_client`` 에 캡슐화되어
+있으며, 본 모듈은 그것을 MCP 도구로 얇게 감쌀 뿐이다.
+"""
+from __future__ import annotations
+
+import json
+import os
+from typing import Any
+
+from mcp.server import MCPServer
+
+from . import naver_client
+
+# 서버 인스턴스 — 클라이언트 LLM이 discover 하는 도구들의 컨테이너.
+mcp = MCPServer("clossify")
+
+# naver_client 와 동일한 기준으로 프로젝트 루트의 .local/config.json 을 가리킨다.
+_CONFIG_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "..", ".local", "config.json"
+)
+_CONFIG_PATH = os.path.normpath(_CONFIG_PATH)
+
+# check_config 가 "아직 설정되지 않음" 으로 간주하는 플레이스홀더 값들.
+_PLACEHOLDER_TOKENS = (
+    "REPLACE_WITH_",
+    "{STORE_SLUG}",
+    "{STORE_NAME}",
+)
+
+
+def _is_placeholder(value: Any) -> bool:
+    """값이 config.example.json 의 치환 전 플레이스홀더인지 판별."""
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    if not text:
+        return True
+    return any(token in text for token in _PLACEHOLDER_TOKENS)
+
+
+def _required_naver_keys() -> tuple[str, ...]:
+    return ("client_id", "client_secret", "store_url_slug")
+
+
+@mcp.tool()
+def check_config() -> dict[str, Any]:
+    """네이버 커머스 API 자격증명/설정 상태를 검사한다 (외부 API 호출 없음).
+
+    ``.local/config.json`` 파일의 존재, JSON 파싱 가능 여부, 그리고
+    ``naver.client_id`` / ``naver.client_secret`` / ``naver.store_url_slug``
+    세 키의 존재 및 플레이스홀더 미사용 여부를 확인한다.
+    LLM은 이 도구로 "설정이 완료되었는가?" 를 분기 없이 확인할 수 있다.
+
+    Returns:
+        ``{"ok": bool, "config_path": str, "present": {...}, "missing": [...],
+        "placeholders": [...], "error": str | None}``
+        - ``ok``: 모든 필수 키가 존재하고 플레이스홀더가 아님.
+        - ``present``: 필수 키별 현재 값의 *존재 여부* (값 자체는 노출 안 함).
+        - ``missing``: 누락된 필수 키 이름 목록.
+        - ``placeholders``: 플레이스홀더로 남아있는 필수 키 이름 목록.
+        - ``error``: 파일이 없거나 JSON 파싱에 실패한 경우의 메시지.
+
+    안내: 실제 값은 반환하지 않는다. 이 도구는 가시성이 아니라 게이트(gate)다.
+    """
+    result: dict[str, Any] = {
+        "ok": False,
+        "config_path": _CONFIG_PATH,
+        "present": {},
+        "missing": [],
+        "placeholders": [],
+        "error": None,
+    }
+
+    if not os.path.isfile(_CONFIG_PATH):
+        result["error"] = (
+            f"config 파일이 없습니다: {_CONFIG_PATH}. "
+            "config.example.json 을 .local/config.json 으로 복사한 뒤 실제 값으로 채우세요."
+        )
+        return result
+
+    try:
+        with open(_CONFIG_PATH, encoding="utf-8-sig") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError) as exc:
+        result["error"] = f"config 파일을 읽거나 파싱할 수 없습니다: {exc}"
+        return result
+
+    naver = cfg.get("naver")
+    if not isinstance(naver, dict):
+        result["error"] = "config 의 'naver' 섹션이 객체가 아닙니다."
+        return result
+
+    missing: list[str] = []
+    placeholders: list[str] = []
+    present: dict[str, bool] = {}
+
+    for key in _required_naver_keys():
+        value = naver.get(key)
+        exists = key in naver and not _is_placeholder(value)
+        present[key] = exists
+        if key not in naver or value is None:
+            missing.append(key)
+        elif _is_placeholder(value):
+            placeholders.append(key)
+
+    result["present"] = present
+    result["missing"] = missing
+    result["placeholders"] = placeholders
+    result["ok"] = not missing and not placeholders
+    return result
+
+
+@mcp.tool()
+def upload_images(paths: list[str]) -> dict[str, Any]:
+    """로컬 이미지 파일 경로 리스트를 네이버 이미지서버에 업로드한다.
+
+    업로드된 이미지들은 네이버 CDN의 secure URL 로 반환되며, 이 URL 들은
+    ``register_product`` 의 ``image_urls`` 인자로 그대로 전달된다.
+
+    Args:
+        paths: 업로드할 로컬 이미지 파일의 절대/상대 경로 리스트.
+            첫 번째 이미지가 상품 대표 이미지가 된다.
+
+    Returns:
+        ``{"ok": bool, "image_urls": [str, ...], "count": int, "error": str | None}``
+        성공 시 ``image_urls`` 는 업로드 순서와 동일한 URL 리스트.
+
+    주의: 인증 토큰은 ``naver_client.get_token()`` 이 내부에서 발급·사용한다.
+    설정이 완료되지 않았다면 ``check_config`` 를 먼저 호출하라.
+    """
+    if not isinstance(paths, list) or not paths:
+        return {
+            "ok": False,
+            "image_urls": [],
+            "count": 0,
+            "error": "paths 는 최소 1개 이상의 이미지 경로 리스트여야 합니다.",
+        }
+
+    missing = [p for p in paths if not isinstance(p, str) or not os.path.isfile(p)]
+    if missing:
+        return {
+            "ok": False,
+            "image_urls": [],
+            "count": 0,
+            "error": f"존재하지 않는 이미지 파일: {missing}",
+        }
+
+    try:
+        urls = naver_client.upload_images(paths)
+    except Exception as exc:  # 네트워크/인증/서버 에러를 LLM 에게 명확히 전달
+        return {
+            "ok": False,
+            "image_urls": [],
+            "count": 0,
+            "error": f"이미지 업로드 실패: {exc}",
+        }
+
+    return {
+        "ok": True,
+        "image_urls": urls,
+        "count": len(urls),
+        "error": None,
+    }
+
+
+@mcp.tool()
+def register_product(
+    name: str,
+    price: int,
+    image_urls: list[str],
+    category_id: str,
+    detail_html: str,
+    *,
+    options: list[dict[str, Any]] | None = None,
+    tags: list[str] | None = None,
+    status: str = "SALE",
+    stock: int = 1,
+    delivery_fee: int = 3000,
+    courier: str = "CJGLS",
+    notice: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """상품 정보를 받아 등록 페이로드를 빌드하고 네이버 커머스 API 로 등록한다.
+
+    본 도구는 naver_client.build_payload() + register_product() 를 순차 호출한다.
+    페이로드 빌딩·고시 정보 자동 완성·판매자태그 제한어 자동 제거 등의 복잡도는
+    naver_client 가 처리한다.
+
+    Args:
+        name: 상품명 (네이버 정책상 길이 제한이 있음, naver_client 가 50자 컷).
+        price: 판매가 (KRW, 양의 정수).
+        image_urls: ``upload_images`` 가 반환한 CDN URL 리스트.
+            첫 번째 URL 이 대표 이미지가 된다.
+        category_id: 네이버 상품 카테고리 트리의 리프 카테고리 ID.
+        detail_html: 상세페이지 HTML (``<html>``... 또는 조각 HTML).
+        options: 옵션 조합 목록. 각 원소는 ``{"name": str, "stock": int,
+            "price": int}`` 또는 ``optionName1..3`` 형태. 단일 옵션 상품은
+            생략 가능.
+        tags: 판매자태그(SEO) 문자열 리스트. 제한어는 자동 제거/재시도된다.
+        status: ``"SALE"`` (판매중) 또는 ``"SUSPENSION"`` (판매중지).
+            기본값 ``"SALE"``.
+        stock: 단일 품목(옵션 없음)일 때의 재고. ``options`` 제공 시 무시되고
+            옵션별 재고 합으로 계산된다.
+        delivery_fee: 기본 배송비 (KRW). 기본 3000.
+        courier: 택배사 코드. 기본 ``"CJGLS"``.
+        notice: 상품정보제공고시 오버라이드. ``{"productInfoProvidedNoticeType":
+            "ETC"|"FURNITURE", ...}`` 형태. 미제공 시 naver_client 가
+            카테고리/기본값으로 자동 완성.
+
+    Returns:
+        ``{"ok": bool, "status_code": int | None, "origin_product_no": str | None,
+        "raw": Any, "seller_tags": {...} | None, "error": str | None}``
+        - ``ok``: HTTP 상태가 2xx(성공)인지.
+        - ``raw``: API 응답 본문 (에러 메시지 포함 가능).
+        - ``seller_tags``: 제한어 자동 제거 메타가 있을 때만 존재.
+
+    Note:
+        환경변수 ``COMMERCE_DRY_RUN=1`` 시 실제 등록 없이 페이로드를
+        ``.local/dry_run_payload.json`` 에 덤프한다 (naver_client 동작).
+    """
+    if not isinstance(name, str) or not name.strip():
+        return _fail("name 은 비어있지 않은 문자열이어야 합니다.")
+    if not isinstance(price, int) or isinstance(price, bool) or price <= 0:
+        return _fail("price 는 0보다 큰 정수(KRW)여야 합니다.")
+    if not isinstance(image_urls, list) or not image_urls:
+        return _fail("image_urls 는 최소 1개 이상의 URL 리스트여야 합니다.")
+    if not isinstance(category_id, str) or not category_id.strip():
+        return _fail("category_id 는 비어있지 않은 문자열이어야 합니다.")
+    if not isinstance(detail_html, str) or not detail_html.strip():
+        return _fail("detail_html 은 비어있지 않은 HTML 문자열이어야 합니다.")
+    if status not in {"SALE", "SUSPENSION"}:
+        return _fail("status 는 'SALE' 또는 'SUSPENSION' 이어야 합니다.")
+
+    product = {
+        "name": name,
+        "categoryId": category_id,
+        "salePrice": int(price),
+        "tags": list(tags) if tags else [],
+        "stock": int(stock),
+        "delivery_fee": int(delivery_fee),
+        "courier": courier,
+    }
+    if options:
+        product["options"] = options
+    if notice is not None:
+        product["notice"] = notice
+
+    try:
+        payload = naver_client.build_payload(product, detail_html, image_urls, status=status)
+        outcome = naver_client.register_product(payload)
+    except Exception as exc:
+        return _fail(f"등록 중 오류: {exc}")
+
+    # register_product 는 (status_code, body) 튜플을 반환하지만, DRY_RUN 시 dict.
+    if isinstance(outcome, dict):
+        return {
+            "ok": bool(outcome.get("ok")),
+            "status_code": None,
+            "origin_product_no": outcome.get("originProductNo"),
+            "raw": outcome,
+            "seller_tags": None,
+            "error": None,
+        }
+
+    status_code, body = outcome
+    ok = isinstance(status_code, int) and 200 <= status_code < 300
+    origin_product_no = None
+    if isinstance(body, dict):
+        origin_product_no = body.get("originProductNo") or body.get("originProduct", {}).get("originProductNo")
+    seller_tags_meta = naver_client.seller_tag_autostrip_meta(body) if isinstance(body, dict) else None
+
+    return {
+        "ok": ok,
+        "status_code": status_code,
+        "origin_product_no": origin_product_no,
+        "raw": body,
+        "seller_tags": seller_tags_meta,
+        "error": None if ok else f"API 반환 상태 {status_code}",
+    }
+
+
+@mcp.tool()
+def get_product(origin_product_no: str) -> dict[str, Any]:
+    """등록된 상품을 origin product 기준으로 조회한다.
+
+    Args:
+        origin_product_no: 네이버 커머스 API 의 origin product 번호.
+            (``register_product`` 반환의 ``origin_product_no`` 와 동일.)
+
+    Returns:
+        ``{"ok": bool, "status_code": int, "product": Any, "error": str | None}``
+        ``ok`` 는 HTTP 200 일 때만 ``True``.
+    """
+    if not isinstance(origin_product_no, str) or not origin_product_no.strip():
+        return {
+            "ok": False,
+            "status_code": None,
+            "product": None,
+            "error": "origin_product_no 는 비어있지 않은 문자열이어야 합니다.",
+        }
+
+    try:
+        status_code, body = naver_client.get_product(origin_product_no)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "status_code": None,
+            "product": None,
+            "error": f"조회 중 오류: {exc}",
+        }
+
+    ok = isinstance(status_code, int) and status_code == 200
+    return {
+        "ok": ok,
+        "status_code": status_code,
+        "product": body if ok else None,
+        "error": None if ok else f"API 반환 상태 {status_code}: {body}",
+    }
+
+
+def _fail(message: str) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "status_code": None,
+        "origin_product_no": None,
+        "raw": None,
+        "seller_tags": None,
+        "error": message,
+    }
+
+
+def main() -> None:
+    """stdio MCP 서버 진입점. ``[project.scripts]`` 의 ``clossify`` 가 이 함수를 가리킨다."""
+    mcp.run(transport="stdio")
+
+
+if __name__ == "__main__":
+    main()

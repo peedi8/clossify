@@ -16,6 +16,9 @@ dependencies = [
     "requests",
 ]
 
+[project.scripts]
+clossify = "clossify.mcp_server:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest",
