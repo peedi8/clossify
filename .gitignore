@@ -1,0 +1,30 @@
+# secrets & local state — never commit
+.local/
+.secrets/
+config.json
+*.key
+.env
+.env.*
+
+# runtime artifacts
+artifacts/
+runs/
+reports/
+logs/
+*.log
+preview/
+cases/
+
+# python
+__pycache__/
+*.pyc
+.venv*/
+.pytest_cache/
+
+# node
+node_modules/
+
+# os / editor
+Thumbs.db
+.DS_Store
+nul
