@@ -69,9 +69,12 @@ class TestFix4ImporterField:
             "salePrice": 10000,
             "importer": "테스트수입사",
             "manufacturer": "테스트제조사",
+            "origin_code": "05",
+            "made_in": "한국",
         }
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
-            payload = naver_client.build_payload(p, "<html></html>", ["http://x/img.png"])
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                payload = naver_client.build_payload(p, "<html></html>", ["http://x/img.png"])
         origin_area = payload["originProduct"]["detailAttribute"]["originAreaInfo"]
         assert origin_area["importer"] == "테스트수입사"
         assert origin_area["importer"] != "테스트제조사"
@@ -119,38 +122,41 @@ class TestFix6OriginAreaCode:
     """_resolve_origin_area_code 가 화이트리스트 밖 코드를 fail-closed 처리하는가."""
 
     def test_valid_code_accepted(self):
+        # T-107b: _resolve_origin_area_code 반환형이 문자열로 바뀌었다(코드만 반환).
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
-            code, ok = naver_client._resolve_origin_area_code(
+            code = naver_client._resolve_origin_area_code(
                 {"origin_code": "04"}, {}
             )
         assert code == "04"
-        assert ok is True
 
-    def test_invalid_code_falls_back_to_04(self):
+    def test_invalid_code_raises(self):
+        # T-107b: 화이트리스트 밖 코드는 "04" 폴백 없이 ValueError(fail-closed).
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
-            code, ok = naver_client._resolve_origin_area_code(
-                {"origin_code": "ZZ"}, {}
-            )
-        assert code == "04"
-        assert ok is False
+            with pytest.raises(ValueError):
+                naver_client._resolve_origin_area_code(
+                    {"origin_code": "ZZ"}, {}
+                )
 
-    def test_empty_code_falls_back_to_04(self):
+    def test_empty_code_raises(self):
+        # T-107b: 빈 코드도 조용한 기본값 없이 ValueError(fail-closed).
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
-            code, ok = naver_client._resolve_origin_area_code({}, {})
-        assert code == "04"
-        assert ok is True  # default "04" is in whitelist
+            with pytest.raises(ValueError):
+                naver_client._resolve_origin_area_code({}, {})
 
     def test_build_payload_uses_validated_code(self):
+        # T-107b: 유효한 코드는 그대로 payload 에 반영된다.
         p = {
             "name": "테스트",
             "categoryId": "50002366",
             "salePrice": 5000,
-            "origin_code": "99",  # invalid
+            "origin_code": "05",
+            "made_in": "한국",
         }
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
-            payload = naver_client.build_payload(p, "<html></html>", ["http://x.png"])
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                payload = naver_client.build_payload(p, "<html></html>", ["http://x.png"])
         code = payload["originProduct"]["detailAttribute"]["originAreaInfo"]["originAreaCode"]
-        assert code == "04"  # fail-closed
+        assert code == "05"
 
 
 # ============================================================================ #
@@ -408,10 +414,13 @@ class TestT106OptionStockFailClosed:
             "name": "테스트",
             "categoryId": "50002366",
             "salePrice": 5000,
+            "origin_code": "05",
+            "made_in": "한국",
             "options": [{"name": "블랙", "stock": 0, "price": 0}],
         }
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
-            payload = naver_client.build_payload(p, "<html></html>", ["http://x.png"])
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                payload = naver_client.build_payload(p, "<html></html>", ["http://x.png"])
         assert payload["originProduct"]["stockQuantity"] == 0
 
     def test_mcp_register_catches_stock_error_sanitized(self, monkeypatch):
@@ -447,9 +456,12 @@ class TestT106BuildPayloadNameCut:
             "name": "A" * 60,
             "categoryId": "50002366",
             "salePrice": 10000,
+            "origin_code": "05",
+            "made_in": "한국",
         }
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
-            payload = naver_client.build_payload(p, "<html></html>", ["http://x.png"])
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                payload = naver_client.build_payload(p, "<html></html>", ["http://x.png"])
         name = payload["originProduct"]["name"]
         assert len(name) == 50
 
@@ -458,9 +470,12 @@ class TestT106BuildPayloadNameCut:
             "name": "짧은이름",
             "categoryId": "50002366",
             "salePrice": 10000,
+            "origin_code": "05",
+            "made_in": "한국",
         }
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
-            payload = naver_client.build_payload(p, "<html></html>", ["http://x.png"])
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                payload = naver_client.build_payload(p, "<html></html>", ["http://x.png"])
         assert payload["originProduct"]["name"] == "짧은이름"
 
     def test_build_payload_exact_50_chars(self):
@@ -468,9 +483,12 @@ class TestT106BuildPayloadNameCut:
             "name": "B" * 50,
             "categoryId": "50002366",
             "salePrice": 10000,
+            "origin_code": "05",
+            "made_in": "한국",
         }
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
-            payload = naver_client.build_payload(p, "<html></html>", ["http://x.png"])
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                payload = naver_client.build_payload(p, "<html></html>", ["http://x.png"])
         assert len(payload["originProduct"]["name"]) == 50
 
     def test_build_payload_51_chars_truncated_to_50(self):
@@ -478,9 +496,12 @@ class TestT106BuildPayloadNameCut:
             "name": "C" * 51,
             "categoryId": "50002366",
             "salePrice": 10000,
+            "origin_code": "05",
+            "made_in": "한국",
         }
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
-            payload = naver_client.build_payload(p, "<html></html>", ["http://x.png"])
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                payload = naver_client.build_payload(p, "<html></html>", ["http://x.png"])
         assert len(payload["originProduct"]["name"]) == 50
 
 

@@ -19,8 +19,9 @@ KNOWN_RESTRICTED_SELLER_TAGS = {"인테리어", "화병", "도자기", "꽃병"}
 # 네이버 커머스 API 상품명 최대 길이(정책). 초과 시 등록 거절.
 MAX_PRODUCT_NAME_LEN = 50
 
-# 네이버 커머스 API originAreaInfo.originAreaCode 표준 코드(예: "04"=중국).
-# 잘못된 코드는 400 응답을 유발하므로 화이트리스트로 사전 차단(fail-closed).
+# 네이버 커머스 API originAreaInfo.originAreaCode 표준 코드 화이트리스트.
+# T-107: 특정 해외국 코드를 기본값으로 갖지 않는다. 원산지는 판매자가 config에
+# 명시한 값만 허용하며, 화이트리스트 벗어남/누락 시 ValueError 로 등록 거부(fail-closed).
 _VALID_ORIGIN_AREA_CODES = frozenset({
     "01", "02", "03", "04", "05", "06", "07", "08",
     "09", "10", "11", "12", "13", "14", "15", "16",
@@ -70,6 +71,52 @@ def _notice_config():
     return {}
 
 
+def _kc_config():
+    """KC 인증정보 설정 블록을 config에서 읽는다 (T-107).
+
+    원본(해외 소싱 도구)은 ``kcCertifiedProductExclusionYn="KC_EXEMPTION_OBJECT"``
+    와 ``kcExemptionType="OVERSEAS"`` 를 전 상품에 박았다. 후자는 "해외구매대행이라
+    KC 면제" 라는 규제 신고로, 국내 직접판매에는 성립하지 않아 허위 신고가 된다.
+
+    T-107: KC 값은 config 에 명시된 경우에만 payload 에 싣는다. config 에 없으면
+    KC 필드를 아예 넣지 않는다(네이버가 요구하면 API 가 에러로 알려준다 —
+    우리가 임의 값을 지어내 신고하는 것보다 안전). 단, 호출자가 알 수 있도록
+    반환값 메타에 경고를 포함한다.
+
+    Returns:
+        (kc_block, warning) — kc_block 은 payload 에 넣을 dict(빈 dict 이면 필드
+        생략). warning 은 KC 설정 부재 시 경고 문자열, 있으면 빈 문자열.
+    """
+    try:
+        c = load_config()
+    except Exception:
+        return {}, (
+            "config 에 KC 인증정보(kc_declaration) 설정이 없습니다 — payload 에 "
+            "KC 필드를 포함하지 않습니다. 네이버 커머스 API 가 요구하면 에러로 "
+            "알려줍니다."
+        )
+    kc = c.get("kc_declaration")
+    if not isinstance(kc, dict):
+        return {}, (
+            "config 에 KC 인증정보(kc_declaration) 설정이 없습니다 — payload 에 "
+            "KC 필드를 포함하지 않습니다. 네이버 커머스 API 가 요구하면 에러로 "
+            "알려줍니다."
+        )
+    block = {}
+    exclusion = _first_value(kc.get("kcCertifiedProductExclusionYn"), default="")
+    exemption = _first_value(kc.get("kcExemptionType"), default="")
+    if exclusion:
+        block["kcCertifiedProductExclusionYn"] = exclusion
+    if exemption:
+        block["kcExemptionType"] = exemption
+    if not block:
+        return {}, (
+            "config 의 kc_declaration 블록이 비어 있습니다 — payload 에 KC 필드를 "
+            "포함하지 않습니다."
+        )
+    return block, ""
+
+
 def _first_value(*values, default=""):
     for value in values:
         if value not in (None, ""):
@@ -87,15 +134,14 @@ def _int_value(value, default):
 
 
 def _model_name_default(p):
-    num_iid = _first_value(
-        p.get("num_iid"),
-        p.get("numIid"),
-        p.get("item_id"),
-        p.get("itemId"),
-        p.get("source_item_id"),
-        default="",
-    )
-    return f"TB-{num_iid}" if num_iid else "상세페이지 참조"
+    """모델명 기본값.
+
+    T-107: 외부 마켓 ID 필드(``num_iid``/``item_id`` 계열) 에서 특정 접두사를
+    만들던 경로를 제거했다. 해당 ID 는 이 제품(셀러 본인 상품 국내 직접판매)에
+    존재하지 않는다. 모델명은 config 또는 상품 입력에서만 받는다 — 입력이 없으면
+    빈 문자열을 반환하고, 호출자는 필드를 생략한다.
+    """
+    return ""
 
 
 def _seller_manufacturer_default(p, cfg_notice):
@@ -118,25 +164,28 @@ def _seller_manufacturer_default(p, cfg_notice):
 def _resolve_origin_area_code(p, cfg_notice):
     """``originAreaInfo.originAreaCode`` 값을 화이트리스트로 검증(fail-closed).
 
-    네이버 커머스 API 원산지 코드는 2자리 문자열(예: ``"04"``=중국).
-    잘못된 코드로 페이로드를 보내면 400 응답이 발생하므로, 사전에
-    ``_VALID_ORIGIN_AREA_CODES`` 화이트리스트로 검사한다.
+    T-107: 원본(해외 소싱 도구)의 ``"04"`` (특정 해외국) 기본값/폴백을 제거했다.
+    원산지는 판매자가 실제 신고하는 값이어야 하며, 우리가 임의로 지정하면 안 된다.
 
-    후보 순서: ``p.origin_code`` → ``cfg_notice.origin_area_code`` → ``"04"``(중국).
-    후보가 없거나 화이트리스트에 없으면 ``"04"`` 로 폴백하지만,
-    *사용자가 명시적으로* 지정한 값이 화이트리스트에 없다면 검증 에러로
-    fail-closed 처리하기 위해 검증 결과를 함께 반환한다.
+    후보 순서: ``p.origin_code`` → ``cfg_notice.origin_area_code``.
+    둘 중 하나라도 비어있지 않은 값을 제공해야 한다. 값이 없거나(누락/빈 문자열)
+    화이트리스트에 없으면 ``ValueError`` 로 등록을 거부한다(fail-closed).
+    조용한 기본값/폴백 금지.
 
-    Returns:
-        (code, ok) — code 는 화이트리스트 통과한 최종 코드.
-        ok 는 사용자 명시 값이 검증을 통과했는지.
+    Raises:
+        ValueError: 후보 값이 없거나 화이트리스트 벗어남.
     """
-    raw = _first_value(p.get("origin_code"), cfg_notice.get("origin_area_code"), default="04")
+    raw = _first_value(p.get("origin_code"), cfg_notice.get("origin_area_code"), default="")
     code = str(raw or "").strip()
-    if code in _VALID_ORIGIN_AREA_CODES:
-        return code, True
-    # fail-closed fallback: 인식 불가 코드면 안전한 기본값(중국) 사용.
-    return "04", False
+    if not code:
+        raise ValueError(
+            "config 에 원산지 설정이 필요합니다: smartstore_notice_defaults.origin_area_code"
+        )
+    if code not in _VALID_ORIGIN_AREA_CODES:
+        raise ValueError(
+            f"원산지 코드가 네이버 커머스 API 화이트리스트에 없습니다: {code!r}"
+        )
+    return code
 
 
 def _notice_defaults(p):
@@ -151,9 +200,20 @@ def _notice_defaults(p):
         default="판매자연락처",
     )
     manufacturer = _first_value(p.get("manufacturer"), default=_seller_manufacturer_default(p, cfg_notice))
-    importer = _first_value(p.get("importer"), cfg_notice.get("importer"), default="해외구매대행")
-    made_in = _first_value(p.get("made_in"), p.get("origin_content"), cfg_notice.get("origin_content"), default="중국")
-    cert_text = _first_value(p.get("cert_detail"), cfg_notice.get("cert_detail"), default="해당없음 / KC면제")
+    # T-107: "해외구매대행" 기본값 제거. 수입자는 판매자가 config/입력으로 제공.
+    # 값이 없으면 빈 문자열 — originAreaInfo.importer 필드가 비게 되고,
+    # 네이버가 요구하면 API 가 에러로 알려준다(우리가 임의 값을 지어내지 않음).
+    importer = _first_value(p.get("importer"), cfg_notice.get("importer"), default="")
+    # T-107: "중국" (해외 국가명) 기본값 제거 + fail-closed.
+    # 원산지 표시 문자열도 코드와 마찬가지로 config 또는 상품 입력에서만 받는다.
+    made_in = _first_value(p.get("made_in"), p.get("origin_content"), cfg_notice.get("origin_content"), default="")
+    if not made_in:
+        raise ValueError(
+            "config 에 원산지 설정이 필요합니다: smartstore_notice_defaults.origin_content"
+        )
+    # T-107: "해당없음 / KC면제" 기본값 제거 — KC 면제 여부는 규제 신고이므로
+    # 임의값을 지어내면 안 됨. 값이 없으면 빈 문자열.
+    cert_text = _first_value(p.get("cert_detail"), cfg_notice.get("cert_detail"), default="")
     quality = _first_value(
         p.get("quality_assurance_standard"),
         p.get("qualityAssuranceStandard"),
@@ -173,7 +233,7 @@ def _notice_defaults(p):
         p.get("noRefundReason"),
         cfg_notice.get("no_refund_reason"),
         cfg_notice.get("noRefundReason"),
-        default="주문제작/해외구매대행 등 전자상거래법 제17조 청약철회 제한 사유에 해당하는 경우 청약철회가 제한될 수 있습니다",
+        default="주문제작 등 전자상거래법 제17조 청약철회 제한 사유에 해당하는 경우 청약철회가 제한될 수 있습니다",
     )
     compensation_procedure = _first_value(
         p.get("compensation_procedure"),
@@ -216,9 +276,9 @@ def _notice_defaults(p):
         "as_guide": _first_value(
             p.get("as_guide"),
             cfg_notice.get("as_guide"),
-            default="해외구매대행 상품입니다. 판매자에게 문의해 주세요.",
+            default="",
         ),
-        "origin_area_code": _resolve_origin_area_code(p, cfg_notice)[0],
+        "origin_area_code": _resolve_origin_area_code(p, cfg_notice),
         "origin_content": made_in,
         "return_delivery_fee": _int_value(
             p.get("return_delivery_fee", cfg_notice.get("return_delivery_fee")),
@@ -246,15 +306,13 @@ def _is_furniture_notice(p):
 
 def _base_etc_notice(defaults):
     cert = defaults["cert_detail"]
-    return {
+    notice = {
         "itemName": defaults["item_name"],
-        "modelName": defaults["model_name"],
         "certDetail": cert,
         "certificationDetails": cert,
         "madeIn": defaults["made_in"],
         "countryOfOrigin": defaults["made_in"],
         "manufacturer": defaults["manufacturer"],
-        "importer": defaults["importer"],
         "manufacturerImporter": defaults["manufacturer_importer"],
         "manufactureDate": defaults["manufacture_date"],
         "qualityAssuranceStandard": defaults["quality_assurance_standard"],
@@ -264,6 +322,12 @@ def _base_etc_notice(defaults):
         "troubleShootingContents": defaults["trouble_shooting_contents"],
         "afterServiceDirector": f"{defaults['manufacturer']} {defaults['as_tel']}",
     }
+    # T-107: modelName 은 config/입력에 있을 때만. importer 도 값이 있을 때만.
+    if defaults.get("model_name"):
+        notice["modelName"] = defaults["model_name"]
+    if defaults.get("importer"):
+        notice["importer"] = defaults["importer"]
+    return notice
 
 
 def _base_furniture_notice(p, defaults):
@@ -755,7 +819,37 @@ def build_payload(p, detail_html, images, status="SALE"):
     # mcp_server.register_product 도 사전에 자르지만, build_payload 를
     # 직접 호출하는 경로까지 보호하기 위해 여기서도 컷한다.
     product_name = str(p["name"])[:MAX_PRODUCT_NAME_LEN]
-    return {"originProduct": {
+
+    # T-107: originAreaInfo 는 필수지만 importer 는 값이 있을 때만 넣는다
+    # (빈 문자열을 보내면 API 가 400 을 반환할 수 있으나, 우리가 임의 수입사를
+    # 지어내는 것보다 안전). KC 신고값도 config 에서만 받는다.
+    origin_area_info = {
+        "originAreaCode": defaults["origin_area_code"],
+        "content": defaults["origin_content"],
+    }
+    if defaults.get("importer"):
+        origin_area_info["importer"] = defaults["importer"]
+
+    # T-107: KC 신고값 하드코딩(kcCertifiedProductExclusionYn="KC_EXEMPTION_OBJECT",
+    # kcExemptionType="OVERSEAS") 제거. config 의 kc_declaration 블록이 있으면
+    # 그 값을 그대로 싣고, 없으면 certificationTargetExcludeContent 필드 자체를
+    # 생략한다(네이버가 요구하면 API 가 에러로 알려준다). 호출자가 알 수 있도록
+    # KC 부재 경고를 페이로드 메타에 포함한다.
+    kc_block, kc_warning = _kc_config()
+
+    detail_attribute = {
+        "afterServiceInfo": {"afterServiceTelephoneNumber": defaults["as_tel"],
+                             "afterServiceGuideContent": defaults["as_guide"]},
+        "originAreaInfo": origin_area_info,
+        "minorPurchasable": True, "taxType": "TAX",
+        "seoInfo": {"sellerTags": [{"text": t} for t in p.get("tags", [])]},
+        "productInfoProvidedNotice": notice,
+        "optionInfo": option_info,
+    }
+    if kc_block:
+        detail_attribute["certificationTargetExcludeContent"] = kc_block
+
+    payload = {"originProduct": {
         "statusType": status, "saleType": "NEW", "leafCategoryId": p["categoryId"],
         "name": product_name, "detailContent": detail_html,
         "images": {"representativeImage": {"url": images[0]},
@@ -765,18 +859,10 @@ def build_payload(p, detail_html, images, status="SALE"):
             "deliveryCompany": p.get("courier", "CJGLS"), "deliveryBundleGroupUsable": False,
             "deliveryFee": {"deliveryFeeType": "PAID", "baseFee": int(p.get("delivery_fee", 3000)), "deliveryFeePayType": "PREPAID"},
             "claimDeliveryInfo": {"returnDeliveryFee": defaults["return_delivery_fee"], "exchangeDeliveryFee": defaults["exchange_delivery_fee"]}},
-        "detailAttribute": {
-            "afterServiceInfo": {"afterServiceTelephoneNumber": defaults["as_tel"],
-                                 "afterServiceGuideContent": defaults["as_guide"]},
-            "originAreaInfo": {"originAreaCode": defaults["origin_area_code"],
-                               "content": defaults["origin_content"],
-                               "importer": defaults["importer"]},
-            "certificationTargetExcludeContent": {
-                "kcCertifiedProductExclusionYn": "KC_EXEMPTION_OBJECT",
-                "kcExemptionType": "OVERSEAS"},
-            "minorPurchasable": True, "taxType": "TAX",
-            "seoInfo": {"sellerTags": [{"text": t} for t in p.get("tags", [])]},
-            "productInfoProvidedNotice": notice,
-            "optionInfo": option_info}},
+        "detailAttribute": detail_attribute,
         "smartstoreChannelProduct": {"naverShoppingRegistration": True,
-            "channelProductDisplayStatusType": p.get("display", display_default)}}
+            "channelProductDisplayStatusType": p.get("display", display_default)}}}
+    # T-107: KC 설정 부재 경고를 페이로드 메타에 포함(조용한 생략 금지).
+    if kc_warning:
+        payload["_kcWarning"] = kc_warning
+    return payload
