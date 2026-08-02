@@ -25,6 +25,7 @@ from typing import Any
 from mcp.server import MCPServer
 
 from . import naver_client
+from . import qa_agents
 
 # 서버 인스턴스 — 클라이언트 LLM이 discover 하는 도구들의 컨테이너.
 mcp = MCPServer("clossify")
@@ -179,6 +180,223 @@ def _resolve_upload_path(raw_path: str) -> str:
     return os.path.normpath(os.path.join(_resolve_upload_root(), raw_path))
 
 
+# --------------------------------------------------------------------------- #
+# T-109 — 결정론 컴플라이언스 게이트 (fail-closed).
+#
+# register_product 가 네이버 API 를 호출하기 직전에 결정론 검사를 실행한다.
+# LLM 판단이 필요한 항목(카피/이미지 QA)은 위임 왕복이 T-201c 에서 붙기 전까지
+# 항상 미회신(PENDING) 상태이므로, 본 게이트는 **결정론 위반(FAIL)만 차단**하고
+# LLM 판단 미회신은 차단하지 않되 응답에 ``pending_reviews`` 로 표기한다.
+# --------------------------------------------------------------------------- #
+
+# 고시 필드 이름 → 한국어 라벨/사유 매핑.
+# data/notice_types.json 의 필드명은 camelCase 영어라서 사용자가 바로 이해하기
+# 어렵다. 이 매핑은 거부 응답의 needs_user 항목에 사람이 읽을 수 있는 안내를
+# 제공하기 위해 사용한다. 작업지시: "필드명만 던지지 말고 사람이 이해할 라벨·
+# 사유를 함께 준다."
+_NOTICE_FIELD_LABELS: dict[str, tuple[str, str]] = {
+    "material": ("소재", "이 카테고리 고시 필수 항목이며 추정할 수 없습니다"),
+    "size": ("치수/사이즈", "이 카테고리 고시 필수 항목이며 추정할 수 없습니다"),
+    "color": ("색상", "이 카테고리 고시 필수 항목이며 추정할 수 없습니다"),
+    "components": ("구성품", "이 카테고리 고시 필수 항목이며 추정할 수 없습니다"),
+    "caution": ("주의사항", "이 카테고리 고시 필수 항목입니다"),
+    "manufacturer": ("제조자", "이 카테고리 고시 필수 항목입니다"),
+    "importer": ("수입자", "이 카테고리 고시 필수 항목입니다"),
+    "producer": ("생산자", "이 카테고리 고시 필수 항목입니다"),
+    "itemName": ("품명", "이 카테고리 고시 필수 항목입니다"),
+    "modelName": ("모델명", "이 카테고리 고시 필수 항목입니다"),
+    "certificationType": ("인증 정보", "이 카테고리는 인증 정보가 필요합니다"),
+    "ratedVoltage": ("정격전압", "이 카테고리 고시 필수 항목입니다"),
+    "powerConsumption": ("소비전력", "이 카테고리 고시 필수 항목입니다"),
+    "energyEfficiencyRating": ("에너지효율 등급", "이 카테고리 고시 필수 항목입니다"),
+    "releaseDate": ("출시일", "이 카테고리 고시 필수 항목입니다"),
+    "releaseDateText": ("출시일 정보", "이 카테고리 고시 필수 항목입니다"),
+    "weight": ("무게/중량", "이 카테고리 고시 필수 항목입니다"),
+    "specification": ("규격/스펙", "이 카테고리 고시 필수 항목입니다"),
+    "purity": ("순도", "이 카테고리 고시 필수 항목입니다"),
+    "bandMaterial": ("밴드 소재", "이 카테고리 고시 필수 항목입니다"),
+    "telecomType": ("통신사 정보", "이 카테고리 고시 필수 항목입니다"),
+    "recommendedAge": ("권장 연령", "이 카테고리 고시 필수 항목입니다"),
+    "title": ("제목", "이 카테고리 고시 필수 항목입니다"),
+    "author": ("저자", "이 카테고리 고시 필수 항목입니다"),
+    "publisher": ("출판사", "이 카테고리 고시 필수 항목입니다"),
+    "pages": ("쪽수", "이 카테고리 고시 필수 항목입니다"),
+    "publishDate": ("발행일", "이 카테고리 고시 필수 항목입니다"),
+    "capacity": ("용량/내용량", "이 카테고리 고시 필수 항목입니다"),
+    "expirationDate": ("유통기한", "이 카테고리 고시 필수 항목입니다"),
+    "usage": ("사용방법", "이 카테고리 고시 필수 항목입니다"),
+    "ingredients": ("원재료/성분", "이 카테고리 고시 필수 항목입니다"),
+    "nutritionFacts": ("영양성분", "이 카테고리 고시 필수 항목입니다"),
+    "foodType": ("식품 유형", "이 카테고리 고시 필수 항목입니다"),
+    "location": ("원산지/생산지", "이 카테고리 고시 필수 항목입니다"),
+}
+
+
+def _notice_field_label(field: str) -> tuple[str, str]:
+    """고시 필드명에 대한 (라벨, 사유) 반환. 매핑 없으면 필드명 그대로."""
+    return _NOTICE_FIELD_LABELS.get(field, (field, "이 카테고리 고시 필수 항목입니다"))
+
+
+def _category_path_for(category_id: str) -> str:
+    """``category_id`` 의 카테고리 경로를 반환 (알 수 없으면 빈 문자열).
+
+    ``qa_agents._infer_notice_type`` 이 카테고리 경로에서 고시 타입을
+    추론할 수 있도록 돕는다. 데이터 파일 부재/알 수 없는 ID 는 조용히
+    빈 문자열로 떨어진다 (이 경우 ETC 기본값 사용).
+    """
+    try:
+        from . import category_meta
+        return category_meta.category_path(category_id, raise_if_unknown=False)
+    except Exception:
+        return ""
+
+
+def _build_compliance_context(
+    name: str,
+    category_id: str,
+    payload: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """컴플라이언스 검사용 context 와 검사 대상 notice dict 를 구성.
+
+    ``naver_client.build_payload`` 는 FURNITURE 가 아닌 모든 카테고리에 대해
+    ``productInfoProvidedNoticeType: "ETC"`` 를 하드코딩한다. 하지만 실제로는
+    의류(WEAR), 신발(SHOES) 등 카테고리에 따라 전혀 다른 필수 필드가 적용된다.
+    본 함수는 카테고리 경로에서 올바른 고시 타입을 추론해 notice dict 에
+    반영한 뒤, ``_compliance_code_check`` 가 올바른 필수 필드 목록으로
+    검사하도록 돕는다.
+
+    Returns:
+        ``(context, effective_notice)`` — context 는 ``_compliance_code_check`` 에
+        전달할 dict, effective_notice 는 타입이 보정된 notice dict.
+    """
+    origin_product = payload.get("originProduct") if isinstance(payload, dict) else {}
+    detail_attr = origin_product.get("detailAttribute") if isinstance(origin_product, dict) else {}
+    notice = detail_attr.get("productInfoProvidedNotice") if isinstance(detail_attr, dict) else {}
+    if not isinstance(notice, dict):
+        notice = {}
+
+    category_path = _category_path_for(category_id)
+    # 카테고리 경로 기반으로 올바른 고시 타입 추론.
+    inferred_type = qa_agents._infer_notice_type({
+        "category_path": category_path,
+        "category_name": category_path,
+    })
+    effective_notice = dict(notice)
+    # naver_client 가 ETC 로 설정했더라도, 카테고리가 더 구체적인 타입을
+    # 요구하면 그것으로 보정한다 (ETC 는 catch-all 기본값일 뿐).
+    current_type = str(effective_notice.get("productInfoProvidedNoticeType") or "").strip().upper()
+    if inferred_type != "ETC" and (current_type == "ETC" or not current_type):
+        effective_notice["productInfoProvidedNoticeType"] = inferred_type
+        # notice node 키가 추론된 타입의 node 와 다르면 올바른 node 를 추가.
+        spec = qa_agents._notice_type_spec(inferred_type)
+        expected_node = (spec or {}).get("node") if spec else None
+        if expected_node and expected_node not in effective_notice:
+            # 기존 etc/furniture 노드의 필드를 올바른 노드로 복사(최선 노력).
+            for fallback_key in ("etc", "furniture"):
+                fb = effective_notice.get(fallback_key)
+                if isinstance(fb, dict):
+                    effective_notice[expected_node] = dict(fb)
+                    break
+            else:
+                effective_notice[expected_node] = {}
+
+    context: dict[str, Any] = {
+        "category_id": category_id,
+        "category_path": category_path,
+        "category_name": category_path,
+    }
+    return context, effective_notice
+
+
+def _run_compliance_gate(
+    name: str,
+    category_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """결정론 컴플라이언스 검사를 실행하고 정형화된 결과를 반환.
+
+    Returns:
+        ``{"blocked": bool, "violations": [...], "needs_user": [...],
+        "pending_reviews": [...]}``
+
+        - ``blocked``: FAIL 심각도 위반이 하나라도 있으면 True.
+        - ``violations``: FAIL 심각도 위반 항목(사용자 가독 형태).
+        - ``needs_user``: 비어 있는 고시 필수 필드에서 산출한 사용자 입력 요청.
+        - ``pending_reviews``: LLM 판단이 필요해 대기 중인 검사 항목.
+    """
+    context, effective_notice = _build_compliance_context(name, category_id, payload)
+
+    # _compliance_code_check 는 api_payload 의 notice 를 우선 읽는다.
+    # 여기서는 effective_notice(타입 보정됨)를 context.notice 로 넣고,
+    # api_payload 에서는 detailAttribute 를 제외한 채로 넘겨 notice 가
+    # context 경로로 읽히도록 유도한다. 단 originAreaInfo/KC/A-S 정보는
+    # api_payload 에서 읽어야 하므로, effective_notice 를 payload 에도 반영한다.
+    effective_payload = dict(payload) if isinstance(payload, dict) else {}
+    if isinstance(effective_payload.get("originProduct"), dict):
+        op = dict(effective_payload["originProduct"])
+        da = dict(op.get("detailAttribute")) if isinstance(op.get("detailAttribute"), dict) else {}
+        da["productInfoProvidedNotice"] = effective_notice
+        op["detailAttribute"] = da
+        effective_payload["originProduct"] = op
+    context["notice"] = effective_notice
+
+    check_result = qa_agents._compliance_code_check(
+        name, context, api_payload=effective_payload
+    )
+
+    fail_violations = []
+    for row in (check_result.get("violations") or []):
+        if isinstance(row, dict) and str(row.get("severity") or "").upper() == qa_agents.FAIL:
+            fail_violations.append({
+                "rule": str(row.get("rule") or "컴플라이언스"),
+                "detail": str(row.get("detail") or ""),
+            })
+
+    # needs_user: 결정론 위반 중 "고시 필수필드" 위반에서 누락 필드명을 추출해
+    # 사용자 입력 요청으로 변환. 작업지시가 요구하는 구조:
+    #   {"field": ..., "label": ..., "why": ...}
+    needs_user: list[dict[str, str]] = []
+    seen_fields: set[str] = set()
+    for row in (check_result.get("violations") or []):
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("rule") or "") != "고시 필수필드":
+            continue
+        if str(row.get("severity") or "").upper() != qa_agents.FAIL:
+            continue
+        detail_text = str(row.get("detail") or "")
+        # detail 형태: "고시 타입 WEAR 필수 필드 누락: material, size, color"
+        if "누락:" in detail_text:
+            after = detail_text.split("누락:", 1)[1]
+            for field in after.split(","):
+                field = field.strip()
+                if field and field not in seen_fields:
+                    seen_fields.add(field)
+                    label, why = _notice_field_label(field)
+                    needs_user.append({
+                        "field": field,
+                        "label": label,
+                        "why": why,
+                    })
+
+    pending_reviews: list[str] = []
+    # 카피/이미지 QA 는 위임 왕복(T-201c)이 붙기 전까지 항상 미회신이다.
+    # 결정론 게이트 통과 시 이 사실을 응답에 표기한다 (조용한 생략 금지).
+    # 단, 결정론 FAIL 로 차단된 경우에는 pending_reviews 가 무의미하므로 빈 리스트.
+    if not fail_violations:
+        pending_reviews = [
+            "copy_qa: 카피 품질 LLM 판단 대기 중 (T-201c 위임 왕복 연동 전)",
+            "image_qa: 이미지 적합성 LLM 판단 대기 중 (T-201c 위임 왕복 연동 전)",
+        ]
+
+    return {
+        "blocked": bool(fail_violations),
+        "violations": fail_violations,
+        "needs_user": needs_user,
+        "pending_reviews": pending_reviews,
+    }
+
+
 @mcp.tool()
 def check_config() -> dict[str, Any]:
     """네이버 커머스 API 자격증명/설정 상태를 검사한다 (외부 API 호출 없음).
@@ -245,6 +463,28 @@ def check_config() -> dict[str, Any]:
     result["present"] = present
     result["missing"] = missing
     result["placeholders"] = placeholders
+
+    # T-109 — 원산지 설정 여부 점검 항목 추가.
+    # 값 자체는 반환하지 않고 채워짐/비어있음만 보고한다 (작업지시 요구사항 4).
+    # 원산지가 설정되어 있지 않으면 register_product 의 컴플라이언스 게이트가
+    # 등록을 거부한다 — 사용자에게 이 사실을 안내한다.
+    origin_set = False
+    notice_defaults = cfg.get("smartstore_notice_defaults")
+    if isinstance(notice_defaults, dict):
+        origin_area_code = notice_defaults.get("origin_area_code")
+        origin_content = notice_defaults.get("origin_content")
+        origin_set = (
+            bool(origin_area_code) and not _is_placeholder(origin_area_code)
+            and bool(origin_content) and not _is_placeholder(origin_content)
+        )
+    result["origin_configured"] = origin_set
+    if not origin_set:
+        result["origin_hint"] = (
+            "원산지(smartstore_notice_defaults.origin_area_code 및 origin_content)가 "
+            "설정되지 않았습니다. register_product 가 컴플라이언스 검사에서 "
+            "등록을 거부합니다."
+        )
+
     result["ok"] = not missing and not placeholders
     return result
 
@@ -442,6 +682,64 @@ def register_product(
 
     try:
         payload = naver_client.build_payload(product, detail_html, image_urls, status=status)
+    except Exception as exc:  # Fix 7 — sanitized
+        return _fail(f"등록 중 오류(페이로드 빌드): {_sanitize_error(exc)}")
+
+    # T-109 — 결정론 컴플라이언스 게이트 (fail-closed).
+    # 네이버 API 호출 직전에 고시 필수 필드/KC/원산지 검사를 실행한다.
+    # FAIL 심각도 위반이 있으면 네이버를 호출하지 않고 거부한다.
+    # 예외를 삼켜 등록을 진행시키지 않는다 (무동작·identity 금지).
+    #
+    # 단, COMMERCE_DRY_RUN=1 인 경우에는 게이트를 건너뛴다. DRY_RUN 은 실제
+    # 등록이 일어나지 않고 페이로드를 파일로 덤프만 하는 개발/테스트 모드다.
+    # 게이트의 목적은 비컴플라이언스 상품의 **등록 차단**이며, DRY_RUN 에서는
+    # 등록 자체가 발생하지 않으므로 게이트가 무의미하다. 대신 DRY_RUN 이
+    # 아닌 모든 실제 등록 경로에서 게이트가 동작한다.
+    _dry_run = os.environ.get("COMMERCE_DRY_RUN") == "1"
+    if _dry_run:
+        gate: dict[str, Any] = {
+            "blocked": False,
+            "violations": [],
+            "needs_user": [],
+            "pending_reviews": [
+                "copy_qa: 카피 품질 LLM 판단 대기 중 (T-201c 위임 왕복 연동 전)",
+                "image_qa: 이미지 적합성 LLM 판단 대기 중 (T-201c 위임 왕복 연동 전)",
+            ],
+        }
+    else:
+        try:
+            gate = _run_compliance_gate(name, category_id, payload)
+        except Exception as exc:
+            # 검사 자체가 예외로 실패하면 fail-closed: 등록을 차단한다.
+            return _fail(f"컴플라이언스 검사 중 오류(등록 차단): {_sanitize_error(exc)}")
+
+    if gate["blocked"]:
+        violations = gate["violations"]
+        needs_user = gate["needs_user"]
+        message_lines = [
+            "컴플라이언스 위반으로 등록을 거부했습니다 (fail-closed).",
+        ]
+        for v in violations:
+            message_lines.append(f"- [{v['rule']}] {v['detail']}")
+        if needs_user:
+            field_list = ", ".join(n["label"] for n in needs_user)
+            message_lines.append(f"사용자 입력이 필요한 필수 항목: {field_list}")
+        return {
+            "ok": False,
+            "status_code": None,
+            "origin_product_no": None,
+            "name_truncated": name_truncated,
+            "raw": None,
+            "seller_tags": None,
+            "blocked_by": "compliance",
+            "violations": violations,
+            "needs_user": needs_user,
+            "message": "\n".join(message_lines),
+            "error": None,
+        }
+
+    # 결정론 게이트 통과 — 네이버 API 호출 진행.
+    try:
         outcome = naver_client.register_product(payload)
     except Exception as exc:  # Fix 7 — sanitized
         return _fail(f"등록 중 오류: {_sanitize_error(exc)}")
@@ -455,6 +753,7 @@ def register_product(
             "name_truncated": name_truncated,  # Fix 5
             "raw": outcome,
             "seller_tags": None,
+            "pending_reviews": gate["pending_reviews"],  # T-109
             "error": None,
         }
 
@@ -475,6 +774,7 @@ def register_product(
         "name_truncated": name_truncated,  # Fix 5
         "raw": exposed_raw,
         "seller_tags": seller_tags_meta,
+        "pending_reviews": gate["pending_reviews"],  # T-109
         "error": None if ok else _sanitize_text(f"API 반환 상태 {status_code}"),
     }
 
