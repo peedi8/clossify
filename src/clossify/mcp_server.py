@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any
 
 from mcp.server import MCPServer
@@ -28,11 +29,54 @@ from . import naver_client
 # 서버 인스턴스 — 클라이언트 LLM이 discover 하는 도구들의 컨테이너.
 mcp = MCPServer("clossify")
 
-# naver_client 와 동일한 기준으로 프로젝트 루트의 .local/config.json 을 가리킨다.
-_CONFIG_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "..", ".local", "config.json"
-)
-_CONFIG_PATH = os.path.normpath(_CONFIG_PATH)
+# 설정 파일 경로 — naver_client.config_path() 의 단일 진실 공급원을 따른다.
+# (CLOSSIFY_CONFIG 환경변수 오버라이드 포함)
+_CONFIG_PATH = naver_client.config_path()
+
+
+# --------------------------------------------------------------------------- #
+# Fix 1 — 이미지 업로드 검증 상수
+# --------------------------------------------------------------------------- #
+# 허용 이미지 확장자 화이트리스트 (네이버 이미지서버 호환).
+_ALLOWED_IMAGE_EXTS = frozenset({".jpg", ".jpeg", ".png", ".webp"})
+# 단일 이미지 파일 크기 상한 (10MB, 네이버 정책 기준 여유치).
+_MAX_IMAGE_BYTES = 10 * 1024 * 1024
+
+
+# --------------------------------------------------------------------------- #
+# Fix 7 — 에러 sanitization
+# --------------------------------------------------------------------------- #
+# traceback/에러 메시지에서 제거해야 할 민감 패턴.
+_SENSITIVE_PATTERNS = [
+    # 시크릿/토큰류
+    re.compile(r"(sk-[A-Za-z0-9_\-]{8,})", re.IGNORECASE),
+    re.compile(r"(AIza[A-Za-z0-9_\-]{8,})", re.IGNORECASE),
+    re.compile(r"(Bearer\s+[A-Za-z0-9_\-\.]+)", re.IGNORECASE),
+    # 파일시스템 경로의 사용자명 (Windows/Unix)
+    re.compile(r"([A-Za-z]:[\\/](?:Users|home)[\\/])[^\"'<>\s]+", re.IGNORECASE),
+    re.compile(r"(/(?:home|Users)/[^/\"'<>\s]+)", re.IGNORECASE),
+]
+
+
+def _sanitize_text(text: str) -> str:
+    """traceback/메시지에서 민감 정보(시크릿, 사용자 경로 등)를 마스킹한다."""
+    if not isinstance(text, str):
+        text = str(text)
+    for pat in _SENSITIVE_PATTERNS:
+        text = pat.sub("[REDACTED]", text)
+    return text
+
+
+def _sanitize_error(exc: BaseException) -> str:
+    """예외 객체로부터 타입+메시지를 추출해 sanitized 문자열을 반환한다.
+
+    traceback 전체를 LLM 에게 노출하면 민감한 경로/키가 노출될 수 있으므로
+    예외 타입명과 메시지만 간결하게.
+    """
+    type_name = type(exc).__name__
+    msg = _sanitize_text(str(exc))
+    return f"{type_name}: {msg}"
+
 
 # check_config 가 "아직 설정되지 않음" 으로 간주하는 플레이스홀더 값들.
 _PLACEHOLDER_TOKENS = (
@@ -56,6 +100,30 @@ def _required_naver_keys() -> tuple[str, ...]:
     return ("client_id", "client_secret", "store_url_slug")
 
 
+def _resolve_upload_root() -> str:
+    """업로드 루트 디렉토리 결정.
+
+    우선순위:
+      1. 환경변수 ``CLOSSIFY_UPLOAD_ROOT``
+      2. 현재 작업 디렉토리(cwd)
+    """
+    env_root = os.environ.get("CLOSSIFY_UPLOAD_ROOT")
+    if env_root and env_root.strip():
+        return os.path.normpath(os.path.expandvars(os.path.expanduser(env_root.strip())))
+    return os.getcwd()
+
+
+def _resolve_upload_path(raw_path: str) -> str:
+    """사용자가 준 경로를 절대경로로 정규화.
+
+    상대경로인 경우 ``CLOSSIFY_UPLOAD_ROOT`` 기준으로 해석한다.
+    이미 절대경로면 그대로 사용한다.
+    """
+    if os.path.isabs(raw_path):
+        return os.path.normpath(raw_path)
+    return os.path.normpath(os.path.join(_resolve_upload_root(), raw_path))
+
+
 @mcp.tool()
 def check_config() -> dict[str, Any]:
     """네이버 커머스 API 자격증명/설정 상태를 검사한다 (외부 API 호출 없음).
@@ -76,27 +144,29 @@ def check_config() -> dict[str, Any]:
 
     안내: 실제 값은 반환하지 않는다. 이 도구는 가시성이 아니라 게이트(gate)다.
     """
+    # 매 호출마다 최신 경로를 사용 (CLOSSIFY_CONFIG 오버라이드 반영).
+    cfg_path = naver_client.config_path()
     result: dict[str, Any] = {
         "ok": False,
-        "config_path": _CONFIG_PATH,
+        "config_path": cfg_path,
         "present": {},
         "missing": [],
         "placeholders": [],
         "error": None,
     }
 
-    if not os.path.isfile(_CONFIG_PATH):
+    if not os.path.isfile(cfg_path):
         result["error"] = (
-            f"config 파일이 없습니다: {_CONFIG_PATH}. "
+            f"config 파일이 없습니다: {cfg_path}. "
             "config.example.json 을 .local/config.json 으로 복사한 뒤 실제 값으로 채우세요."
         )
         return result
 
     try:
-        with open(_CONFIG_PATH, encoding="utf-8-sig") as f:
+        with open(cfg_path, encoding="utf-8-sig") as f:
             cfg = json.load(f)
     except (OSError, ValueError) as exc:
-        result["error"] = f"config 파일을 읽거나 파싱할 수 없습니다: {exc}"
+        result["error"] = _sanitize_text(f"config 파일을 읽거나 파싱할 수 없습니다: {exc}")
         return result
 
     naver = cfg.get("naver")
@@ -134,13 +204,17 @@ def upload_images(paths: list[str]) -> dict[str, Any]:
     Args:
         paths: 업로드할 로컬 이미지 파일의 절대/상대 경로 리스트.
             첫 번째 이미지가 상품 대표 이미지가 된다.
+            상대경로는 ``CLOSSIFY_UPLOAD_ROOT`` 환경변수(기본: cwd) 기준으로 해석.
 
     Returns:
         ``{"ok": bool, "image_urls": [str, ...], "count": int, "error": str | None}``
         성공 시 ``image_urls`` 는 업로드 순서와 동일한 URL 리스트.
 
-    주의: 인증 토큰은 ``naver_client.get_token()`` 이 내부에서 발급·사용한다.
-    설정이 완료되지 않았다면 ``check_config`` 를 먼저 호출하라.
+    주의:
+        - 허용 확장자: ``.jpg``, ``.jpeg``, ``.png``, ``.webp``.
+        - 단일 파일 크기 상한: 10MB.
+        - 인증 토큰은 ``naver_client.get_token()`` 이 내부에서 발급·사용한다.
+        - 설정이 완료되지 않았다면 ``check_config`` 를 먼저 호출하라.
     """
     if not isinstance(paths, list) or not paths:
         return {
@@ -150,7 +224,21 @@ def upload_images(paths: list[str]) -> dict[str, Any]:
             "error": "paths 는 최소 1개 이상의 이미지 경로 리스트여야 합니다.",
         }
 
-    missing = [p for p in paths if not isinstance(p, str) or not os.path.isfile(p)]
+    # 경로 정규화: 상대경로를 CLOSSIFY_UPLOAD_ROOT 기준 절대경로로.
+    resolved = []
+    bad_type = [p for p in paths if not isinstance(p, str)]
+    if bad_type:
+        return {
+            "ok": False,
+            "image_urls": [],
+            "count": 0,
+            "error": "paths 의 각 원소는 문자열이어야 합니다.",
+        }
+    for raw in paths:
+        resolved.append(_resolve_upload_path(raw))
+
+    # 존재 검증.
+    missing = [p for p in resolved if not os.path.isfile(p)]
     if missing:
         return {
             "ok": False,
@@ -159,14 +247,46 @@ def upload_images(paths: list[str]) -> dict[str, Any]:
             "error": f"존재하지 않는 이미지 파일: {missing}",
         }
 
-    try:
-        urls = naver_client.upload_images(paths)
-    except Exception as exc:  # 네트워크/인증/서버 에러를 LLM 에게 명확히 전달
+    # 확장자 화이트리스트 검증 (Fix 1).
+    bad_ext = [p for p in resolved if os.path.splitext(p)[1].lower() not in _ALLOWED_IMAGE_EXTS]
+    if bad_ext:
         return {
             "ok": False,
             "image_urls": [],
             "count": 0,
-            "error": f"이미지 업로드 실패: {exc}",
+            "error": (
+                f"허용되지 않은 확장자. 허용: {sorted(_ALLOWED_IMAGE_EXTS)}. "
+                f"파일: {bad_ext}"
+            ),
+        }
+
+    # 파일 크기 상한 검증 (Fix 1).
+    too_big = []
+    for p in resolved:
+        try:
+            if os.path.getsize(p) > _MAX_IMAGE_BYTES:
+                too_big.append(p)
+        except OSError:
+            too_big.append(p)
+    if too_big:
+        return {
+            "ok": False,
+            "image_urls": [],
+            "count": 0,
+            "error": (
+                f"파일 크기 초과 (최대 {_MAX_IMAGE_BYTES // (1024 * 1024)}MB). "
+                f"파일: {too_big}"
+            ),
+        }
+
+    try:
+        urls = naver_client.upload_images(resolved)
+    except Exception as exc:  # 네트워크/인증/서버 에러 — sanitized (Fix 7)
+        return {
+            "ok": False,
+            "image_urls": [],
+            "count": 0,
+            "error": f"이미지 업로드 실패: {_sanitize_error(exc)}",
         }
 
     return {
@@ -244,6 +364,13 @@ def register_product(
     if status not in {"SALE", "SUSPENSION"}:
         return _fail("status 는 'SALE' 또는 'SUSPENSION' 이어야 합니다.")
 
+    # Fix 5 — 상품명 50자 정책 컷. naver_client 도 내부에서 자르지만,
+    # 호출자에게 truncation 여부를 명시적으로 알리기 위해 여기서도 자르고 플래그 노출.
+    original_name = name
+    if len(name) > naver_client.MAX_PRODUCT_NAME_LEN:
+        name = name[:naver_client.MAX_PRODUCT_NAME_LEN]
+    name_truncated = name != original_name
+
     product = {
         "name": name,
         "categoryId": category_id,
@@ -261,8 +388,8 @@ def register_product(
     try:
         payload = naver_client.build_payload(product, detail_html, image_urls, status=status)
         outcome = naver_client.register_product(payload)
-    except Exception as exc:
-        return _fail(f"등록 중 오류: {exc}")
+    except Exception as exc:  # Fix 7 — sanitized
+        return _fail(f"등록 중 오류: {_sanitize_error(exc)}")
 
     # register_product 는 (status_code, body) 튜플을 반환하지만, DRY_RUN 시 dict.
     if isinstance(outcome, dict):
@@ -270,6 +397,7 @@ def register_product(
             "ok": bool(outcome.get("ok")),
             "status_code": None,
             "origin_product_no": outcome.get("originProductNo"),
+            "name_truncated": name_truncated,  # Fix 5
             "raw": outcome,
             "seller_tags": None,
             "error": None,
@@ -286,9 +414,10 @@ def register_product(
         "ok": ok,
         "status_code": status_code,
         "origin_product_no": origin_product_no,
+        "name_truncated": name_truncated,  # Fix 5
         "raw": body,
         "seller_tags": seller_tags_meta,
-        "error": None if ok else f"API 반환 상태 {status_code}",
+        "error": None if ok else _sanitize_text(f"API 반환 상태 {status_code}"),
     }
 
 
@@ -314,12 +443,12 @@ def get_product(origin_product_no: str) -> dict[str, Any]:
 
     try:
         status_code, body = naver_client.get_product(origin_product_no)
-    except Exception as exc:
+    except Exception as exc:  # Fix 7 — sanitized
         return {
             "ok": False,
             "status_code": None,
             "product": None,
-            "error": f"조회 중 오류: {exc}",
+            "error": f"조회 중 오류: {_sanitize_error(exc)}",
         }
 
     ok = isinstance(status_code, int) and status_code == 200
@@ -327,7 +456,7 @@ def get_product(origin_product_no: str) -> dict[str, Any]:
         "ok": ok,
         "status_code": status_code,
         "product": body if ok else None,
-        "error": None if ok else f"API 반환 상태 {status_code}: {body}",
+        "error": None if ok else _sanitize_text(f"API 반환 상태 {status_code}: {body}"),
     }
 
 
@@ -336,6 +465,7 @@ def _fail(message: str) -> dict[str, Any]:
         "ok": False,
         "status_code": None,
         "origin_product_no": None,
+        "name_truncated": False,  # Fix 5 — validation-fail 시 기본값
         "raw": None,
         "seller_tags": None,
         "error": message,

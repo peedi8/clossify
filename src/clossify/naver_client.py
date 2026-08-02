@@ -10,14 +10,51 @@ import bcrypt, requests
 
 BASE = "https://api.commerce.naver.com"
 # src/clossify/naver_client.py -> ../../. = project root
-_CFG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", ".local", "config.json")
+_PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
+_DEFAULT_CONFIG_PATH = os.path.join(_PROJECT_ROOT, ".local", "config.json")
 SELLER_TAG_AUTOSTRIP_KEY = "sellerTagsAutoStrip"
 MAX_RESTRICTED_SELLER_TAG_RETRIES = 2
 KNOWN_RESTRICTED_SELLER_TAGS = {"인테리어", "화병", "도자기", "꽃병"}
 
+# 네이버 커머스 API 상품명 최대 길이(정책). 초과 시 등록 거절.
+MAX_PRODUCT_NAME_LEN = 50
+
+# 네이버 커머스 API originAreaInfo.originAreaCode 표준 코드(예: "04"=중국).
+# 잘못된 코드는 400 응답을 유발하므로 화이트리스트로 사전 차단(fail-closed).
+_VALID_ORIGIN_AREA_CODES = frozenset({
+    "01", "02", "03", "04", "05", "06", "07", "08",
+    "09", "10", "11", "12", "13", "14", "15", "16",
+})
+
+
+def resolve_config_path() -> str:
+    """설정 파일 경로를 결정한다 (단일 진실 공급원).
+
+    우선순위:
+      1. 환경변수 ``CLOSSIFY_CONFIG`` 가 비어있지 않은 경로를 가리키면 그것.
+      2. 그 외는 프로젝트 루트의 ``.local/config.json``.
+
+    반환값은 정규화된 경로 문자열. 파일 존재 여부는 검사하지 않는다
+    (``check_config`` 같은 호출자가 부재 케이스를 다룬다).
+    """
+    env_path = os.environ.get("CLOSSIFY_CONFIG")
+    if env_path and env_path.strip():
+        return os.path.normpath(os.path.expandvars(os.path.expanduser(env_path.strip())))
+    return _DEFAULT_CONFIG_PATH
+
+
+def config_path() -> str:
+    """``resolve_config_path`` 의 public 별칭 (외부 모듈 참조용)."""
+    return resolve_config_path()
+
+
+# 하위 호환: 모듈 수준 상수도 동일 경로로 노출.
+_CFG_PATH = _DEFAULT_CONFIG_PATH
+
 
 def load_config():
-    with open(_CFG_PATH, encoding="utf-8-sig") as f:
+    """설정 JSON 을 로드한다. 경로는 ``resolve_config_path()`` 를 따른다."""
+    with open(resolve_config_path(), encoding="utf-8-sig") as f:
         return json.load(f)
 
 
@@ -76,6 +113,30 @@ def _seller_manufacturer_default(p, cfg_notice):
         cfg_notice.get("manufacturer"),
         default="상세페이지 참조",
     )
+
+
+def _resolve_origin_area_code(p, cfg_notice):
+    """``originAreaInfo.originAreaCode`` 값을 화이트리스트로 검증(fail-closed).
+
+    네이버 커머스 API 원산지 코드는 2자리 문자열(예: ``"04"``=중국).
+    잘못된 코드로 페이로드를 보내면 400 응답이 발생하므로, 사전에
+    ``_VALID_ORIGIN_AREA_CODES`` 화이트리스트로 검사한다.
+
+    후보 순서: ``p.origin_code`` → ``cfg_notice.origin_area_code`` → ``"04"``(중국).
+    후보가 없거나 화이트리스트에 없으면 ``"04"`` 로 폴백하지만,
+    *사용자가 명시적으로* 지정한 값이 화이트리스트에 없다면 검증 에러로
+    fail-closed 처리하기 위해 검증 결과를 함께 반환한다.
+
+    Returns:
+        (code, ok) — code 는 화이트리스트 통과한 최종 코드.
+        ok 는 사용자 명시 값이 검증을 통과했는지.
+    """
+    raw = _first_value(p.get("origin_code"), cfg_notice.get("origin_area_code"), default="04")
+    code = str(raw or "").strip()
+    if code in _VALID_ORIGIN_AREA_CODES:
+        return code, True
+    # fail-closed fallback: 인식 불가 코드면 안전한 기본값(중국) 사용.
+    return "04", False
 
 
 def _notice_defaults(p):
@@ -157,7 +218,7 @@ def _notice_defaults(p):
             cfg_notice.get("as_guide"),
             default="해외구매대행 상품입니다. 판매자에게 문의해 주세요.",
         ),
-        "origin_area_code": _first_value(p.get("origin_code"), cfg_notice.get("origin_area_code"), default="04"),
+        "origin_area_code": _resolve_origin_area_code(p, cfg_notice)[0],
         "origin_content": made_in,
         "return_delivery_fee": _int_value(
             p.get("return_delivery_fee", cfg_notice.get("return_delivery_fee")),
@@ -283,15 +344,40 @@ def _h(tk, json_ct=True):
     return h
 
 
+def _guess_image_mime(path):
+    """파일 확장자에서 MIME 타입 추정. (mimetypes 모듈이 종종 누락하는 케이스 보강)"""
+    ext = os.path.splitext(path)[1].lower().lstrip(".")
+    return {
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "png": "image/png",
+        "webp": "image/webp",
+    }.get(ext, "application/octet-stream")
+
+
 def upload_images(paths, tk=None):
-    """로컬 이미지들을 네이버 이미지서버에 업로드 → secure URL 리스트."""
+    """로컬 이미지들을 네이버 이미지서버에 업로드 → secure URL 리스트.
+
+    파일 핸들은 ``with`` 컨텍스트로 닫힘(리소스 누수 방지).
+    MIME 타입은 확장자 기반으로 추정한다.
+    """
     tk = tk or get_token()
+    opened_files = []
     files = []
-    for p in paths:
-        files.append(("imageFiles", (os.path.basename(p), open(p, "rb"), "image/png")))
-    r = requests.post(BASE + "/external/v1/product-images/upload", headers=_h(tk, False), files=files, timeout=120)
-    r.raise_for_status()
-    return [im["url"] for im in r.json().get("images", [])]
+    try:
+        for p in paths:
+            fh = open(p, "rb")
+            opened_files.append(fh)
+            files.append(("imageFiles", (os.path.basename(p), fh, _guess_image_mime(p))))
+        r = requests.post(BASE + "/external/v1/product-images/upload", headers=_h(tk, False), files=files, timeout=120)
+        r.raise_for_status()
+        return [im["url"] for im in r.json().get("images", [])]
+    finally:
+        for fh in opened_files:
+            try:
+                fh.close()
+            except Exception:
+                pass
 
 
 def _json_or_text_response(response):
@@ -668,7 +754,7 @@ def build_payload(p, detail_html, images, status="SALE"):
                                  "afterServiceGuideContent": defaults["as_guide"]},
             "originAreaInfo": {"originAreaCode": defaults["origin_area_code"],
                                "content": defaults["origin_content"],
-                               "importer": defaults["manufacturer"]},
+                               "importer": defaults["importer"]},
             "certificationTargetExcludeContent": {
                 "kcCertifiedProductExclusionYn": "KC_EXEMPTION_OBJECT",
                 "kcExemptionType": "OVERSEAS"},

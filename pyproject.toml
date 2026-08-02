@@ -27,6 +27,11 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/clossify"]
+# Fix 8 — agents 프롬프트(9개 .md) 와 config.example.json 을 wheel 에 포함.
+# LLM 클라이언트가 패키지 설치만으로 프롬프트 자산/예시 설정을 사용할 수 있도록.
+[tool.hatch.build.targets.wheel.force-include]
+"agents" = "clossify/agents"
+"config.example.json" = "clossify/config.example.json"
 
 [tool.hatch.build.targets.sdist]
 include = ["src/clossify", "agents", "config.example.json", "README.md", "pyproject.toml"]
