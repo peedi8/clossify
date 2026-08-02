@@ -2,10 +2,10 @@
 """Shared constants and JSON IO helpers.
 
 Ported from sourcing.py (T-201a part 1/2) as the DAG root module.
-All symbols whose source values contain forbidden tokens (upstream API
-gateway URL, as_tel literal, CLI command names) are exposed as
-NotImplementedError stubs so this module imports cleanly without leaking
-secrets or CJK.
+Symbols whose source values contain forbidden tokens (upstream API
+gateway URL, as_tel literal, CLI command names) are resolved at runtime
+from config and raise ``ValueError`` when the config key is absent
+(fail-closed). No ``NotImplementedError`` stubs live in this module.
 """
 from __future__ import annotations
 

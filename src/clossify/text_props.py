@@ -8,16 +8,25 @@ removed entirely. This product only ingests Korean user-supplied text,
 so there is no input path that could carry Chinese ideographs. The
 Korean marketing-claim filters are preserved and use literal Korean
 characters.
+
+T-201a-r6: this module is now the canonical home of the text-filter
+regexes (``BANNED_CLAIM_RE``, ``EDITORIAL_NOISE_RE``, ...). Downstream
+modules (``copywriting``) import them from here. This module no longer
+imports any other ``clossify`` submodule — the previous lazy import of
+``BANNED_CLAIM_RE`` from :mod:`copywriting` (which created a cycle) is
+gone. The translation / external-market prop helpers have been removed
+(this product only ingests Korean user-supplied text).
 """
 from __future__ import annotations
 
 import html
-import json
 import re
 from html.parser import HTMLParser
 
-from .common import _safe_float  # noqa: F401 - re-exported for downstream modules
-from . import common
+# T-201a-r6: this module must not import any other ``clossify`` submodule
+# (top-level or lazy). It is the upstream node of the DAG; ``copywriting``
+# and ``seo`` import from here, never the reverse. ``_safe_float`` is
+# available from :mod:`common` directly — do not re-export it here.
 
 # ---------------------------------------------------------------------------
 # Image / detail rendering limits (source L2360-L2387). Pure literals.
@@ -88,6 +97,60 @@ OPTION_CODE_RE = re.compile(
 )
 
 PROPERTY_FIELD_SPLIT_RE = re.compile(r"[:\uff1a]")
+
+# ---------------------------------------------------------------------------
+# Text-filter regexes — canonical home (source L3546-L3563, L3626-L3635).
+#
+# T-201a-r6: these were previously defined in ``copywriting`` and imported
+# lazily from here, creating a hidden circular dependency. The canonical
+# definitions now live in this module (the upstream DAG node).
+# Korean patterns are literal characters.
+# ---------------------------------------------------------------------------
+
+BANNED_CLAIM_RE = re.compile(
+    r"100\s*%|AUTH\s*ENTIC|"
+    r"정\s*품|진\s*품|"
+    r"최고(?:급)?|최상급|"
+    r"완벽(?:한|하게)?|"
+    r"프리미엄",
+    re.I,
+)
+
+EDITORIAL_NOISE_RE = re.compile(
+    r"배송|출고|발송|택배|"
+    r"판매처|판매자|스토어|"
+    r"구매대행|주문\s*확인|"
+    r"반품|교환|고객센터|"
+    r"무료배송|특가|도매|"
+    r"공장직영|쿠폰",
+    re.I,
+)
+
+EMPTY_MARKETING_COPY_RE = re.compile(
+    r"일상에\s*별별|당신만을\s*위한|"
+    r"나만을\s*위한|별별한\s*하루|"
+    r"삶의\s*격|생활의\s*격|"
+    r"공간을\s*완성|물드를\s*완성|"
+    r"감성을\s*더하|각을\s*더하|"
+    r"완벽한\s*선택|소중한\s*사람을\s*위한",
+    re.I,
+)
+
+SENSORY_COPY_NOISE_RE = EMPTY_MARKETING_COPY_RE
+
+# SEO-title specific banned patterns (source L3626-L3631). These are a
+# superset of the marketing-claim regex aimed at title copy.
+SEO_TITLE_BANNED_RE = re.compile(
+    r"정\s*품|최\s*고|1\s*위|공\s*식|100\s*%|정\s*식|명\s*품|고\s*급|"
+    r"주문\s*폭주|즉시\s*할인|재입고|한정|첫구매|공짜|품절|MD\s*추천|"
+    r"선착순|임박|인기|가성비|저렴|추천|신상품|이벤트|무료\s*배송",
+    re.I,
+)
+
+SEO_STOPWORDS = {
+    "은", "는", "이", "가", "을", "를", "의", "와", "과", "도", "로", "으로",
+    "에", "에서", "및", "또는", "그리고", "상품", "제품",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +238,7 @@ def _hesc(value, default=""):
 
 
 # ---------------------------------------------------------------------------
-# Property flatten / summarise / translate (source L7074-L7172).
+# Property flatten / summarise (source L7074-L7172).
 # ---------------------------------------------------------------------------
 
 def _first_text(*values, default=""):
@@ -194,22 +257,26 @@ def _compact_spaces(text):
     return re.sub(r"\s+", " ", str(text or "")).strip()
 
 
+def _strip_banned_claims(text):
+    """Strip banned Korean marketing claims and collapse whitespace.
+
+    Source L3583. ``BANNED_CLAIM_RE`` lives in this module (T-201a-r6),
+    so this helper performs the real removal rather than being an
+    identity.
+    """
+    text = BANNED_CLAIM_RE.sub(" ", str(text or ""))
+    text = re.sub(r"\s{2,}", " ", text)
+    return text.strip()
+
+
 def _detail_safe_text(text, default=""):
     """Sanitise free-form text for detail rendering.
 
     Strips banned Korean marketing claims (e.g. ``"100%"``, ``"정품"`` /
     ``"진품"`` = "genuine/authentic", ``"최고급"`` = "top-grade",
     ``"프리미엄"`` = "premium") then collapses whitespace.
-    ``BANNED_CLAIM_RE`` is defined in :mod:`copywriting` (the terminal
-    DAG node); it is imported lazily on first call and cached in
-    :data:`globals` so the import graph stays acyclic (copywriting ->
-    text_props, never the reverse at load time).
     """
-    banned = globals().get("BANNED_CLAIM_RE")
-    if banned is None:
-        from .copywriting import BANNED_CLAIM_RE as banned
-        globals()["BANNED_CLAIM_RE"] = banned
-    text = banned.sub(" ", str(text or ""))
+    text = _strip_banned_claims(text)
     text = re.sub(r"\s+", " ", text).strip()
     return text or default
 
@@ -217,16 +284,30 @@ def _detail_safe_text(text, default=""):
 def _sanitize_seo_title(text, *, max_len=100):
     """Sanitise a candidate SEO title.
 
-    Source L3644. The full sanitisation pipeline depends on copywriting
-    rules that are out of scope for this stub batch; the fallback path
-    (trim + collapse whitespace) is enough for the property helpers below.
+    Source L3644. Restored to the original pipeline:
+      1. strip banned marketing claims (``BANNED_CLAIM_RE``)
+      2. strip SEO-title-specific banned patterns (``SEO_TITLE_BANNED_RE``)
+      3. drop non-Korean/non-ASCII-alnum/non-space characters
+      4. drop SEO stopwords and duplicate words (case-insensitive)
+      5. truncate to ``max_len`` on a word boundary
     """
-    text = _compact_spaces(text)
-    if not text:
-        return ""
-    if len(text) > max_len:
-        text = text[:max_len].rsplit(" ", 1)[0] or text[:max_len]
-    return text.strip()
+    text = _strip_banned_claims(text)
+    text = SEO_TITLE_BANNED_RE.sub(" ", text)
+    text = re.sub(r"[^0-9A-Za-z가-힣\s]", " ", text)
+    words, seen = [], set()
+    for word in _compact_spaces(text).split():
+        key = word.lower()
+        if key in SEO_STOPWORDS or key in seen:
+            continue
+        seen.add(key)
+        words.append(word)
+    title = " ".join(words)
+    if len(title) > max_len:
+        cut = title[:max_len].rstrip()
+        if " " in cut:
+            cut = cut.rsplit(" ", 1)[0]
+        title = cut or title[:max_len]
+    return title.strip()
 
 
 def _flatten_prop_terms(value, *, limit=30, clean=True):
@@ -288,34 +369,6 @@ def _props_summary(props, *, max_terms=10):
     return " ".join(_flatten_prop_terms(props, limit=max_terms))
 
 
-def _extract_upstream_props(item):
-    """Return the first present prop-list field on ``item``.
-
-    Looks up by a series of candidate keys used across upstream payloads.
-    """
-    for key in (
-        "props", "item_props", "props_list", "props_name", "props_names",
-        "attributes", "attributes_list", "params", "props_str",
-    ):
-        if isinstance(item, dict) and item.get(key):
-            return item.get(key)
-    return []
-
-
-def translate_props_ko(props):
-    """Return sanitised Korean listing keywords for ``props``.
-
-    Source L7137. T-201a-r4: the Chinese-detection branch has been
-    removed (no Chinese input path exists). The flattened terms are
-    sanitised through :func:`_detail_safe_text` and returned directly;
-    no host-LLM translation hint is produced.
-    """
-    terms = _flatten_prop_terms(props, clean=False)
-    if not terms:
-        return []
-    return [_detail_safe_text(t) for t in terms if _detail_safe_text(t)]
-
-
 def _fallback_seo_title(title_ko, props, category_path):
     """Build a deterministic fallback SEO title.
 
@@ -326,52 +379,6 @@ def _fallback_seo_title(title_ko, props, category_path):
     pieces = [title_ko, leaf, _props_summary(props, max_terms=12)]
     return _sanitize_seo_title(" ".join(p for p in pieces if p), max_len=100) or "item-detail"
 
-
-def build_seo_title(title_ko, props, category_path):
-    """Build an SEO product title via the naming agent.
-
-    Source L7181. Delegates to :func:`copywriting.naming_agent`, which
-    returns either a normalised result dict or an ``llm_hint`` descriptor
-    (when the host LLM must run). On invalid output the deterministic
-    :func:`_fallback_seo_title` is used.
-    """
-    from . import copywriting
-
-    try:
-        result = copywriting.naming_agent(title_ko, props, category_path)
-    except ValueError:
-        raise
-    except Exception:
-        return _fallback_seo_title(title_ko, props, category_path)
-    if isinstance(result, dict) and "title" in result:
-        title = _sanitize_seo_title(result.get("title"), max_len=100)
-        if title:
-            return title
-    return _fallback_seo_title(title_ko, props, category_path)
-
-
-# ---------------------------------------------------------------------------
-# Lazy re-export of ``BANNED_CLAIM_RE`` from :mod:`copywriting`.
-#
-# ``copywriting`` imports ``text_props`` at module level (DAG edge), so
-# ``text_props`` cannot import ``copywriting`` at module level without
-# creating a cycle. PEP 562 module ``__getattr__`` lets us resolve
-# ``text_props.BANNED_CLAIM_RE`` lazily on first access — by which point
-# both modules are fully initialised.
-# ---------------------------------------------------------------------------
-
-def __getattr__(name):
-    if name == "BANNED_CLAIM_RE":
-        from .copywriting import BANNED_CLAIM_RE as _bcr
-        globals()["BANNED_CLAIM_RE"] = _bcr
-        return _bcr
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-# ---------------------------------------------------------------------------
-# Convenience: keep ``common`` accessible as ``text_props.common`` for
-# downstream modules that used ``sourcing.common.<x>`` style access.
-# ---------------------------------------------------------------------------
 
 __all__ = [
     "MAIN_IMAGE_LIMIT", "LISTING_IMAGE_LIMIT", "DESC_IMAGE_SCAN_LIMIT",
@@ -389,15 +396,12 @@ __all__ = [
     "DETAIL_GARBAGE_TEXT_RE", "DETAIL_INFOGRAPHIC_TEXT_RE",
     "STRONG_GARBAGE_TEXT_RE", "SELLER_NOTICE_HEADING_RE",
     "OPTION_CARD_TONES", "OPTION_CODE_RE", "PROPERTY_FIELD_SPLIT_RE",
-    "BANNED_CLAIM_RE",  # noqa: F822 - resolved lazily via module __getattr__
+    "BANNED_CLAIM_RE", "EDITORIAL_NOISE_RE", "EMPTY_MARKETING_COPY_RE",
+    "SENSORY_COPY_NOISE_RE", "SEO_TITLE_BANNED_RE", "SEO_STOPWORDS",
+    "_strip_banned_claims",
     "desc_html_to_text", "_normalize_desc_text", "_hesc",
     "_first_text", "_compact_spaces", "_detail_safe_text",
     "_sanitize_seo_title",
     "_flatten_prop_terms", "_props_summary",
-    "_extract_upstream_props", "translate_props_ko",
-    "_fallback_seo_title", "build_seo_title", "_DescTextExtractor",
+    "_fallback_seo_title", "_DescTextExtractor",
 ]
-
-
-# Suppress unused-import lint for the re-export.
-_ = (common, json)

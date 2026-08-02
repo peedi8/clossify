@@ -13,6 +13,15 @@ T-201a-r4: Chinese detection / stripping code has been removed entirely.
 This product only ever ingests Korean user input, so there is no path
 for Chinese text to enter the pipeline. Korean marketing-claim filters
 (``BANNED_CLAIM_RE`` etc.) are preserved and now use literal Korean.
+
+T-201a-r6: the text-filter regexes (``BANNED_CLAIM_RE``,
+``EDITORIAL_NOISE_RE``, ...) are now imported from :mod:`text_props`
+(their canonical home) rather than redefined here — this resolves the
+circular dependency that previously forced a lazy-import workaround.
+The full synonym-dedup machinery (``_seo_sanitize_synonym_duplicates``
+and its helpers) is ported from sourcing.py. Search-volume lookup
+failures in ``_apply_search_seo_to_naming`` are no longer silently
+swallowed.
 """
 from __future__ import annotations
 
@@ -20,6 +29,10 @@ import re
 
 from . import common, keyword_volume, seo
 from .text_props import (
+    BANNED_CLAIM_RE,
+    EDITORIAL_NOISE_RE,
+    EMPTY_MARKETING_COPY_RE,
+    SENSORY_COPY_NOISE_RE,
     _detail_safe_text,
     _fallback_seo_title,
     _flatten_prop_terms,
@@ -37,42 +50,24 @@ SEO_TITLE_TARGET_MAX_LEN: int = 50
 
 
 # ---------------------------------------------------------------------------
-# Banned-claim / editorial-noise regexes (source L3546-L3563).
+# Synonym / semantic duplicate groups (source L3960-L3971).
 #
-# T-201a-r4: Chinese (Hanja) alternatives removed; only Korean patterns
-# remain. Korean is now expressed as literal characters (no \u escapes).
+# Korean literals are required for the dedup logic to function.
 # ---------------------------------------------------------------------------
 
-BANNED_CLAIM_RE = re.compile(
-    r"100\s*%|AUTH\s*ENTIC|"
-    r"정\s*품|진\s*품|"
-    r"최고(?:급)?|최상급|"
-    r"완벽(?:한|하게)?|"
-    r"프리미엄",
-    re.I,
+SEO_SYNONYM_DEDUP_GROUPS = (
+    ("화병", "꽃병", "플라워베이스", "플라워 베이스", "vase", "베이스"),
 )
 
-EDITORIAL_NOISE_RE = re.compile(
-    r"배송|출고|발송|택배|"
-    r"판매처|판매자|스토어|"
-    r"구매대행|주문\s*확인|"
-    r"반품|교환|고객센터|"
-    r"무료배송|특가|도매|"
-    r"공장직영|쿠폰",
-    re.I,
+SEO_SEMANTIC_DUPLICATE_GROUPS = (
+    ("화병", "꽃병", "플라워베이스", "플라워 베이스", "vase", "베이스"),
+    ("인테리어", "거실인테리어", "사무실인테리어", "홈데코", "집꾸미기", "소품샵", "데코", "장식소품", "인테리어소품"),
+    ("도자기", "토기", "세라믹"),
+    ("유리", "글라스"),
+    ("미니", "작은", "소형"),
+    ("화이트", "아이보리", "크림"),
+    ("그레이", "회색"),
 )
-
-EMPTY_MARKETING_COPY_RE = re.compile(
-    r"일상에\s*별별|당신만을\s*위한|"
-    r"나만을\s*위한|별별한\s*하루|"
-    r"삶의\s*격|생활의\s*격|"
-    r"공간을\s*완성|물드를\s*완성|"
-    r"감성을\s*더하|각을\s*더하|"
-    r"완벽한\s*선택|소중한\s*사람을\s*위한",
-    re.I,
-)
-
-SENSORY_COPY_NOISE_RE = EMPTY_MARKETING_COPY_RE
 
 
 # ---------------------------------------------------------------------------
@@ -207,23 +202,127 @@ def _valid_seo_title(text):
     return True
 
 
-def _seo_sanitize_synonym_duplicates(text, *, max_len=SEO_TITLE_TARGET_MAX_LEN):
-    """Collapse duplicate interior synonym tokens.
+# ---------------------------------------------------------------------------
+# Synonym dedup machinery (source L4247-L4316).
+#
+# T-201a-r6: ported the full implementation from sourcing.py. The previous
+# stub only collapsed exact-duplicate whitespace tokens and silently let
+# real synonyms (e.g. 화병/꽃병/플라워베이스) through.
+# ---------------------------------------------------------------------------
 
-    Source L4297. The full synonym table lives in the agent rules and is
-    not yet wired; for now this collapses repeated whitespace-separated
-    tokens to keep titles deterministic.
+def _seo_title_units(title):
+    """Split a title string into normalised keyword units (source L4870)."""
+    return keyword_volume._clean_search_keyword(title, max_len=120).split()
+
+
+def _seo_semantic_group_key(term):
+    """Return a semantic group key for ``term`` (source L4247).
+
+    Units that share a semantic group (e.g. colour variants, material
+    variants) are treated as duplicates by ``_seo_add_title_unit``.
     """
-    tokens = str(text or "").split()
-    seen: set[str] = set()
-    kept: list[str] = []
-    for token in tokens:
-        key = token.lower()
-        if key in seen:
+    compact = seo._keyword_compact(term)
+    if not compact:
+        return ""
+    for idx, group in enumerate(SEO_SEMANTIC_DUPLICATE_GROUPS):
+        group_compacts = seo._seo_term_compacts(group)
+        if any(
+            item and (item == compact or item in compact or compact in item)
+            for item in group_compacts
+        ):
+            return f"group:{idx}"
+    return compact
+
+
+def _seo_add_title_unit(units, term, *, allow_group_duplicate=False):
+    """Append ``term`` to ``units`` with dedup (source L4874).
+
+    Returns True when at least one unit was added.
+    """
+    added = False
+    for unit in _seo_title_units(term):
+        compact = seo._keyword_compact(unit)
+        if not compact:
             continue
-        seen.add(key)
-        kept.append(token)
-    return _sanitize_seo_title(" ".join(kept), max_len=max_len)
+        if any(compact == seo._keyword_compact(existing) for existing in units):
+            continue
+        group = _seo_semantic_group_key(unit)
+        if (
+            not allow_group_duplicate
+            and group
+            and any(_seo_semantic_group_key(existing) == group for existing in units)
+        ):
+            continue
+        units.append(unit)
+        added = True
+        if len(units) >= SEO_TITLE_UNIT_MAX:
+            break
+    return added
+
+
+def _seo_synonym_normalized_compact(text):
+    """Return a synonym-normalised compact form of ``text`` (source L4258).
+
+    Aliases within a synonym group are rewritten to the group's canonical
+    (first) member so that ``화병`` and ``꽃병`` collapse to the same key.
+    """
+    compact = seo._keyword_compact(text)
+    if not compact:
+        return ""
+    normalized = compact
+    for group in SEO_SYNONYM_DEDUP_GROUPS:
+        raw_compacts = seo._seo_term_compacts(group)
+        group_compacts = sorted(raw_compacts, key=len, reverse=True)
+        if not group_compacts:
+            continue
+        canonical = raw_compacts[0]
+        for alias in group_compacts:
+            if alias and alias in normalized:
+                normalized = normalized.replace(alias, canonical)
+    return normalized
+
+
+def _seo_synonym_hits(text, group):
+    """Return the subset of ``group`` whose compact form appears in ``text``."""
+    compact = seo._keyword_compact(text)
+    hits = []
+    for term in sorted(group, key=lambda item: len(seo._keyword_compact(item)), reverse=True):
+        term_compact = seo._keyword_compact(term)
+        if not term_compact or term_compact not in compact:
+            continue
+        if any(term_compact in seo._keyword_compact(existing) for existing in hits):
+            continue
+        hits.append(term)
+    return hits
+
+
+def _seo_sanitize_synonym_duplicates(text, *, max_len=SEO_TITLE_TARGET_MAX_LEN):
+    """Collapse duplicate interior synonym tokens (source L4297).
+
+    Walks the title units; for each unit, compute its synonym-normalised
+    key. If a unit is synonymous with one already kept, drop it. This
+    properly handles groups like ``화병/꽃병/플라워베이스/vase`` rather
+    than only exact whitespace duplicates.
+    """
+    units = []
+    seen_synonyms: set[str] = set()
+    for unit in _seo_title_units(text):
+        norm = _seo_synonym_normalized_compact(unit)
+        synonym_group = ""
+        if norm != seo._keyword_compact(unit):
+            synonym_group = norm
+        else:
+            for group in SEO_SYNONYM_DEDUP_GROUPS:
+                hits = _seo_synonym_hits(unit, group)
+                if hits:
+                    synonym_group = _seo_synonym_normalized_compact(hits[0])
+                    break
+        if synonym_group:
+            if synonym_group in seen_synonyms:
+                continue
+            seen_synonyms.add(synonym_group)
+        _seo_add_title_unit(units, unit)
+    return _sanitize_seo_title(" ".join(units), max_len=max_len)
 
 
 # ---------------------------------------------------------------------------
@@ -327,17 +426,18 @@ def _apply_search_seo_to_naming(naming_result, source_title, props, category_pat
     current naming result and asks the host LLM to apply search-volume
     refinements (re-ordering units, swapping low-volume terms). The host
     returns a normalised naming-result dict.
+
+    T-201a-r6: search-volume lookup failures are no longer silently
+    swallowed (``except Exception: volumes = {}``). When the lookup
+    raises, the exception propagates to the caller. A caller that wants
+    graceful degradation must catch it explicitly and decide.
     """
     from .common import _llm_hint
 
     if not isinstance(naming_result, dict):
         naming_result = _fallback_naming_agent(source_title, props, category_path)
     candidate_keywords = list(naming_result.get("kept_keywords") or [])
-    volumes = {}
-    try:
-        volumes = seo.keyword_volume(candidate_keywords)
-    except Exception:
-        volumes = {}
+    volumes = seo.keyword_volume(candidate_keywords)
     instruction = (
         "Refine the SEO naming result using the provided search volumes. "
         "Re-order title units to front-load higher-volume core terms. "
@@ -496,16 +596,44 @@ def naming_agent(source_title, props, category_path):
     )
 
 
+def build_seo_title(title_ko, props, category_path):
+    """Build an SEO product title via the naming agent.
+
+    Source L7181. Delegates to :func:`naming_agent`, which returns either
+    a normalised result dict or an ``llm_hint`` descriptor (when the host
+    LLM must run). On invalid output the deterministic
+    :func:`_fallback_seo_title` is used.
+
+    T-201a-r6: moved here from :mod:`text_props` so that ``text_props``
+    no longer needs to import :mod:`copywriting` (resolving the cycle).
+    """
+    try:
+        result = naming_agent(title_ko, props, category_path)
+    except ValueError:
+        raise
+    except Exception:
+        return _fallback_seo_title(title_ko, props, category_path)
+    if isinstance(result, dict) and "title" in result:
+        title = _sanitize_seo_title(result.get("title"), max_len=100)
+        if title:
+            return title
+    return _fallback_seo_title(title_ko, props, category_path)
+
+
 __all__ = [
     "SEO_TITLE_UNIT_MIN", "SEO_TITLE_UNIT_MAX", "SEO_TITLE_TARGET_MAX_LEN",
     "BANNED_CLAIM_RE", "EDITORIAL_NOISE_RE", "EMPTY_MARKETING_COPY_RE",
     "SENSORY_COPY_NOISE_RE",
+    "SEO_SYNONYM_DEDUP_GROUPS", "SEO_SEMANTIC_DUPLICATE_GROUPS",
     "_jsonish_loads", "_list_strings", "_normalize_dropped_entries",
     "_agent_title_exclusion_terms", "_strip_agent_exclusion_terms",
-    "_valid_seo_title", "_seo_sanitize_synonym_duplicates",
+    "_valid_seo_title",
+    "_seo_title_units", "_seo_semantic_group_key", "_seo_add_title_unit",
+    "_seo_synonym_normalized_compact", "_seo_synonym_hits",
+    "_seo_sanitize_synonym_duplicates",
     "_fallback_naming_agent", "_normalize_naming_result",
     "_apply_search_seo_to_naming", "_agent_rules_bundle",
-    "_agent_llm_json", "naming_agent",
+    "_agent_llm_json", "naming_agent", "build_seo_title",
 ]
 
 

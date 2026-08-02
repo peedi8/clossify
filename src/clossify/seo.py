@@ -6,14 +6,15 @@ and :mod:`keyword_volume` (the spec lists ``copywriting`` as a
 downstream consumer; this module stays upstream of it).
 
 The full SEO planner depends on the LLM provider and packaged agent
-prompts; those entry points are exposed as NotImplementedError stubs.
-Pure-Python parsing helpers are ported verbatim.
+prompts; those entry points return ``llm_hint`` descriptors for the MCP
+host LLM rather than executing the LLM call in-process. Pure-Python
+parsing helpers are ported verbatim.
 """
 from __future__ import annotations
 
 import re
 
-from . import keyword_volume
+from . import keyword_volume as _kw_module
 from .text_props import _compact_spaces, _detail_safe_text
 
 # ---------------------------------------------------------------------------
@@ -184,7 +185,7 @@ def _keyword_compact(text):
     """Compact a keyword into a normalised lowercase token."""
     return re.sub(
         r"\s+", "",
-        keyword_volume._clean_search_keyword(text, max_len=1000).lower(),
+        _kw_module._clean_search_keyword(text, max_len=1000).lower(),
     )
 
 
@@ -272,13 +273,13 @@ def keyword_volume(keywords, *, use_cache=True):
     from . import common
     import time
 
-    creds = keyword_volume._searchad_credentials()
+    creds = _kw_module._searchad_credentials()
     if not creds:
         return {}
     cleaned = []
     seen = set()
     for kw in keywords:
-        c = keyword_volume._clean_search_keyword(kw)
+        c = _kw_module._clean_search_keyword(kw)
         if c and c not in seen:
             cleaned.append(c)
             seen.add(c)
@@ -315,7 +316,7 @@ def keyword_volume(keywords, *, use_cache=True):
     for kw in remaining:
         uri = f"/keywordstool?hint={kw}&showDetail=1&month=1"
         ts = str(int(time.time() * 1000))
-        sig = keyword_volume._searchad_signature(secret_key, ts, "GET", uri)
+        sig = _kw_module._searchad_signature(secret_key, ts, "GET", uri)
         url = "https://api.searchad.naver.com" + uri
         headers = {
             "X-Timestamp": ts,
@@ -331,7 +332,7 @@ def keyword_volume(keywords, *, use_cache=True):
                     if resp.headers.get("content-type", "").startswith("application/json")
                     else {}
                 )
-                parsed = keyword_volume._parse_keywordstool_response(body)
+                parsed = _kw_module._parse_keywordstool_response(body)
                 vol = parsed.get(kw, 0)
                 result[kw] = vol
                 cache[kw] = vol
@@ -368,11 +369,19 @@ def seo_planner_hint(source_title, props, category_path, *, candidate_keywords=N
 
     prop_terms = _flatten_prop_terms(props, limit=24, clean=False)
     volumes = {}
+    volume_lookup_failed = False
+    volume_lookup_error: str | None = None
     if candidate_keywords:
+        # T-201a-r6: do NOT swallow lookup failures as an empty dict. Either
+        # propagate the exception or surface a failure flag so the host LLM
+        # (and downstream callers) can tell "no volume data" apart from
+        # "lookup broke". Here we catch, record the reason, and still let the
+        # hint proceed — but the descriptor explicitly carries the failure.
         try:
             volumes = keyword_volume(candidate_keywords)
-        except Exception:
-            volumes = {}
+        except Exception as exc:
+            volume_lookup_failed = True
+            volume_lookup_error = str(exc) or exc.__class__.__name__
     instruction = (
         "You are the search-SEO planner for a Naver SmartStore product. "
         "Given the source title, product properties, and category path, "
@@ -391,6 +400,8 @@ def seo_planner_hint(source_title, props, category_path, *, candidate_keywords=N
             "props": prop_terms,
             "category_path": str(category_path or ""),
             "keyword_volumes": volumes,
+            "keyword_lookup_failed": volume_lookup_failed,
+            "keyword_lookup_error": volume_lookup_error,
         },
         instruction=instruction,
     )
@@ -434,4 +445,4 @@ __all__ = [
 
 
 # Suppress unused-import lint for the re-export.
-_ = keyword_volume
+_ = _kw_module
