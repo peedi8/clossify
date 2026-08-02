@@ -1,0 +1,366 @@
+{
+  "generated_at": "2026-08-02T07:22:10Z",
+  "method": "public documentation",
+  "sources": [
+    {
+      "url": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "what": "Naver Commerce API official docs (current version), '상품 등록' endpoint. The productInfoProvidedNoticeType field definition lists the complete enum with all 40 values and Korean labels. The page also defines the full field schema for every child node (wear, shoes, bag, fashionItems, sleepingGear, furniture, imageAppliances, homeAppliances, seasonAppliances, officeAppliances, cellPhone, opticsAppliances, microElectronics, navigation, carArticles, medicalAppliances, kitchenUtensils, cosmetic, jewellery, food, generalFood, dietFood, kids, musicalInstrument, sportsEquipment, books, rentalEtc, digitalContents, giftCard, mobileCoupon, movieShow, etcService, biochemistry, biocidal, etc, rentalHa, lodgmentReservation, travelPackage, airlineTicket, rentCar). This is the authoritative source used to promote all 19 previously-unverified types to verified in T-111c."
+    },
+    {
+      "url": "https://apicenter.commerce.naver.com/docs/commerce-api/2.81.0/update-product-product",
+      "what": "Naver Commerce API official docs (v2.81.0), (v2) 그룹상품 수정 endpoint. The productInfoProvidedNoticeType field definition lists enum values with Korean labels. Search-engine cache of this page explicitly exposes: WEAR(의류), SHOES(구두/신발), BAG(가방), FURNITURE(가구), IMAGE_APPLIANCES(영상가전/TV류), SEASON_APPLIANCES(계절가전), OFFICE_APPLIANCES(사무용기기), SLEEPING_GEAR(침구류/커튼), CELLPHONE(휴대폰, cellPhone 필드), BIOCHEMISTRY, BIOCIDAL, ETC. The page is a JS-rendered docusaurus app, so the field-definition table is only partially captured by search snippets; 12 enum values were directly observed in snippets served from this URL."
+    },
+    {
+      "url": "https://github.com/commerce-api-naver/commerce-api/discussions/3490",
+      "what": "Official Commerce API maintainer (commerce-api-naver, 안아영) response. The original question quotes: 'GET /v1/products-for-provided-notice 조회 결과 productInfoProvidedNoticeType은 총 36개 enum'. Maintainer did not dispute the 36 count and references the '상품정보제공고시 상품군 목록 조회API' as the authoritative source. The question text lists these enum values as confirmed by the questioner's own GET probe: CELLPHONE(휴대형 통신기기, 고시 13), OPTICS_APPLIANCES(광학기기, 고시 11), JEWELLERY(귀금속/보석/시계류, 고시 19), BAG(가방, 고시 3), WEAR(의류, 고시 1), SHOES(구두/신발, 고시 2), BOOKS(서적, 고시 26), ETC(기타 재화, 고시 40), KIDS(어린이제품). These names are reused verbatim in the maintainer's reply and align with the apicenter.commerce.naver.com enum naming."
+    },
+    {
+      "url": "https://github.com/commerce-api-naver/commerce-api/discussions/3458",
+      "what": "Official Commerce API maintainer response providing a full sample productInfoProvidedNotice payload for productInfoProvidedNoticeType=WEAR. Confirms the 'wear' child node and its 12 fields verbatim (returnCostReason, noRefundReason, qualityAssuranceStandard, compensationProcedure, troubleShootingContents, material, color, size, manufacturer, caution, packDateText, warrantyPolicy, afterServiceDirector). Also mentions FOOD and HOME_APPLIANCES as sibling notice types."
+    },
+    {
+      "url": "https://github.com/commerce-api-naver/commerce-api/discussions/241",
+      "what": "Community discussion containing a full productInfoProvidedNotice object dump with 34 camelCase child node names (wear, shoes, bag, fashionItems, sleepingGear, furniture, imageAppliances, homeAppliances, seasonAppliances, officeAppliances, opticsAppliances, microElectronics, navigation, carArticles, medicalAppliances, kitchenUtensils, cosmetic, jewellery, food, generalFood, dietFood, kids, musicalInstrument, sportsEquipment, books, rentalEtc, digitalContents, giftCard, mobileCoupon, movieShow, etcService, biochemistry, biocidal, etc) and per-node field lists. Originally used as supporting evidence for child-node names; now superseded by the official create-product-product docs which exposes all enum values and field schemas directly."
+    },
+    {
+      "url": "https://apicenter.commerce.naver.com/docs/commerce-api/current/get-all-product-info-provided-notice-type-vo-product",
+      "what": "Naver Commerce API official docs endpoint for '상품정보제공고시 상품군 목록 조회' (GET, returns the authoritative enum list). Not directly invoked by this ticket (API-probe ban). The create-product-product docs above were used instead as a static documentation source."
+    }
+  ],
+  "verified": [
+    {
+      "type": "WEAR",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "wear",
+      "label_ko": "의류 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "material", "color", "size", "manufacturer", "caution", "packDateText", "warrantyPolicy", "afterServiceDirector"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product"
+    },
+    {
+      "type": "SHOES",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "shoes",
+      "label_ko": "구두/신발 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "material", "color", "size", "height", "manufacturer", "caution", "warrantyPolicy", "afterServiceDirector"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product"
+    },
+    {
+      "type": "BAG",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "bag",
+      "label_ko": "가방 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "type", "material", "color", "size", "manufacturer", "caution", "warrantyPolicy", "afterServiceDirector"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product"
+    },
+    {
+      "type": "FURNITURE",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "furniture",
+      "label_ko": "가구 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "itemName", "certificationType", "color", "components", "material", "manufacturer", "importer", "producer", "size", "installedCharge", "warrantyPolicy", "afterServiceDirector"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product"
+    },
+    {
+      "type": "IMAGE_APPLIANCES",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "imageAppliances",
+      "label_ko": "영상가전(TV류) 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "itemName", "modelName", "certificationType", "ratedVoltage", "powerConsumption", "energyEfficiencyRating", "releaseDateType", "releaseDate", "releaseDateText", "manufacturer", "size", "displaySpecification", "warrantyPolicy", "afterServiceDirector"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product"
+    },
+    {
+      "type": "SEASON_APPLIANCES",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "seasonAppliances",
+      "label_ko": "계절가전 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "itemName", "modelName", "certificationType", "ratedVoltage", "powerConsumption", "energyEfficiencyRating", "releaseDateType", "releaseDate", "releaseDateText", "manufacturer", "size", "area", "installedCharge", "warrantyPolicy", "afterServiceDirector"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product"
+    },
+    {
+      "type": "OFFICE_APPLIANCES",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "officeAppliances",
+      "label_ko": "사무용기기 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "itemName", "modelName", "certificationType", "ratedVoltage", "powerConsumption", "energyEfficiencyRating", "releaseDateType", "releaseDate", "releaseDateText", "manufacturer", "size", "weight", "specification", "warrantyPolicy", "afterServiceDirector"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product"
+    },
+    {
+      "type": "SLEEPING_GEAR",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "sleepingGear",
+      "label_ko": "침구류/커튼 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "material", "color", "size", "components", "manufacturer", "caution", "warrantyPolicy", "afterServiceDirector"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product"
+    },
+    {
+      "type": "CELLPHONE",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "cellPhone",
+      "label_ko": "휴대폰 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "itemName", "modelName", "certificationType", "releaseDate", "releaseDateText", "manufacturer", "importer", "producer", "size", "weight", "telecomType", "joinProcess", "extraBurden", "specification", "warrantyPolicy", "afterServiceDirector"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "note": "Fields populated in T-111c from official create-product-product docs. Previously empty."
+    },
+    {
+      "type": "OPTICS_APPLIANCES",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "opticsAppliances",
+      "label_ko": "광학기기 상품 요약 정보 (고시 11)",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "itemName", "modelName", "certificationType", "releaseDateType", "releaseDate", "releaseDateText", "manufacturer", "size", "weight", "specification", "warrantyPolicy", "afterServiceDirector"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product"
+    },
+    {
+      "type": "JEWELLERY",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "jewellery",
+      "label_ko": "귀금속/보석/시계류 상품 요약 정보 (고시 19)",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "material", "purity", "bandMaterial", "weight", "manufacturer", "producer", "size", "caution", "specification", "provideWarranty", "warrantyPolicy", "afterServiceDirector"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product"
+    },
+    {
+      "type": "BOOKS",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "books",
+      "label_ko": "서적 상품 요약 정보 (고시 26)",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "title", "author", "publisher", "size", "pages", "components", "publishDateType", "publishDate", "publishDateText", "description"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product"
+    },
+    {
+      "type": "KIDS",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "kids",
+      "label_ko": "어린이제품 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "itemName", "modelName", "certificationType", "size", "weight", "color", "material", "recommendedAge", "releaseDateType", "releaseDate", "releaseDateText", "manufacturer", "caution", "warrantyPolicy", "afterServiceDirector"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product"
+    },
+    {
+      "type": "BIOCHEMISTRY",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "biochemistry",
+      "label_ko": "생활화학제품 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "productName", "dosageForm", "packDateType", "packDate", "packDateText", "expirationDateType", "expirationDate", "expirationDateText", "weight", "effect", "importer", "producer", "manufacturer", "childProtection", "chemicals", "caution", "safeCriterionNo", "customerServicePhoneNumber"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product"
+    },
+    {
+      "type": "BIOCIDAL",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "biocidal",
+      "label_ko": "살생물제 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "productName", "weight", "effect", "rangeOfUse", "importer", "producer", "manufacturer", "childProtection", "harmfulChemicalSubstance", "maleficence", "caution", "approvalNumber", "customerServicePhoneNumber"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product"
+    },
+    {
+      "type": "ETC",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "etc",
+      "label_ko": "기타 재화 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "itemName", "modelName", "certificateDetails", "manufacturer", "afterServiceDirector", "customerServicePhoneNumber"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product"
+    },
+    {
+      "type": "FASHION_ITEMS",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "fashionItems",
+      "label_ko": "패션잡화 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "type", "material", "size", "manufacturer", "caution", "warrantyPolicy", "afterServiceDirector"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "note": "Promoted in T-111c. Corrected enum name: previously recorded as 'FASHION_ITEM' (singular) in T-111b based on community payload inference; the official create-product-product docs expose the enum as 'FASHION_ITEMS' (plural). Verified directly in the apicenter field-definition table."
+    },
+    {
+      "type": "HOME_APPLIANCES",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "homeAppliances",
+      "label_ko": "가전 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "itemName", "modelName", "certificationType", "ratedVoltage", "powerConsumption", "energyEfficiencyRating", "releaseDate", "releaseDateText", "manufacturer", "size", "additionalCost", "warrantyPolicy", "afterServiceDirector"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "note": "Promoted in T-111c from official create-product-product docs."
+    },
+    {
+      "type": "MICROELECTRONICS",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "microElectronics",
+      "label_ko": "영상/음향가전(소형전자) 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "itemName", "modelName", "certificationType", "ratedVoltage", "powerConsumption", "releaseDate", "releaseDateText", "manufacturer", "size", "weight", "specification", "warrantyPolicy", "afterServiceDirector"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "note": "Promoted in T-111c. Corrected enum name: previously recorded as 'MICRO_ELECTRONICS' (with underscore) in T-111b based on community payload inference; the official create-product-product docs expose the enum as 'MICROELECTRONICS' (no underscore). Verified directly in the apicenter field-definition table."
+    },
+    {
+      "type": "NAVIGATION",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "navigation",
+      "label_ko": "네비게이션 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "itemName", "modelName", "certificationType", "ratedVoltage", "powerConsumption", "releaseDate", "releaseDateText", "manufacturer", "size", "weight", "specification", "updateCost", "freeCostPeriod", "warrantyPolicy", "afterServiceDirector"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "note": "Promoted in T-111c from official create-product-product docs."
+    },
+    {
+      "type": "CAR_ARTICLES",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "carArticles",
+      "label_ko": "자동차부품 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "itemName", "modelName", "releaseDate", "releaseDateText", "certificationType", "caution", "manufacturer", "size", "applyModel", "warrantyPolicy", "roadWorthyCertification", "afterServiceDirector"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "note": "Promoted in T-111c from official create-product-product docs."
+    },
+    {
+      "type": "MEDICAL_APPLIANCES",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "medicalAppliances",
+      "label_ko": "의료기기 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "itemName", "modelName", "licenceNo", "advertisingCertificationType", "ratedVoltage", "powerConsumption", "releaseDate", "releaseDateText", "manufacturer", "purpose", "usage", "caution", "warrantyPolicy", "afterServiceDirector"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "note": "Promoted in T-111c from official create-product-product docs."
+    },
+    {
+      "type": "KITCHEN_UTENSILS",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "kitchenUtensils",
+      "label_ko": "주방용품 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "itemName", "modelName", "material", "components", "size", "releaseDate", "releaseDateText", "manufacturer", "producer", "importDeclaration", "warrantyPolicy", "afterServiceDirector"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "note": "Promoted in T-111c from official create-product-product docs."
+    },
+    {
+      "type": "COSMETIC",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "cosmetic",
+      "label_ko": "화장품 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "capacity", "specification", "expirationDate", "expirationDateText", "usage", "manufacturer", "producer", "distributor", "customizedDistributor", "mainIngredient", "certificationType", "caution", "warrantyPolicy", "customerServicePhoneNumber"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "note": "Promoted in T-111c from official create-product-product docs."
+    },
+    {
+      "type": "FOOD",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "food",
+      "label_ko": "농수축산물 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "foodItem", "weight", "amount", "size", "packDate", "packDateText", "consumptionDate", "consumptionDateText", "producer", "relevantLawContent", "productComposition", "keep", "adCaution", "customerServicePhoneNumber"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "note": "Promoted in T-111c from official create-product-product docs."
+    },
+    {
+      "type": "GENERAL_FOOD",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "generalFood",
+      "label_ko": "일반식품 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "productName", "foodType", "producer", "location", "packDate", "packDateText", "consumptionDate", "consumptionDateText", "weight", "amount", "ingredients", "nutritionFacts", "geneticallyModified", "consumerSafetyCaution", "importDeclarationCheck", "customerServicePhoneNumber"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "note": "Promoted in T-111c from official create-product-product docs."
+    },
+    {
+      "type": "DIET_FOOD",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "dietFood",
+      "label_ko": "다이어트식품 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "productName", "producer", "location", "consumptionDate", "consumptionDateText", "storageMethod", "weight", "amount", "ingredients", "nutritionFacts", "specification", "cautionAndSideEffect", "nonMedicinalUsesMessage", "geneticallyModified", "importDeclarationCheck", "consumerSafetyCaution", "customerServicePhoneNumber"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "note": "Promoted in T-111c from official create-product-product docs."
+    },
+    {
+      "type": "MUSICAL_INSTRUMENT",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "musicalInstrument",
+      "label_ko": "악기 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "itemName", "modelName", "size", "color", "material", "components", "releaseDate", "releaseDateText", "manufacturer", "detailContent", "warrantyPolicy", "afterServiceDirector"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "note": "Promoted in T-111c from official create-product-product docs."
+    },
+    {
+      "type": "SPORTS_EQUIPMENT",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "sportsEquipment",
+      "label_ko": "스포츠용품 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "itemName", "modelName", "certificationType", "size", "weight", "color", "material", "components", "releaseDate", "releaseDateText", "manufacturer", "detailContent", "warrantyPolicy", "afterServiceDirector"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "note": "Promoted in T-111c from official create-product-product docs."
+    },
+    {
+      "type": "RENTAL_ETC",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "rentalEtc",
+      "label_ko": "렌탈 기타 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "itemName", "modelName", "ownershipTransferCondition", "payingForLossOrDamage", "refundPolicyForCancel", "customerServicePhoneNumber"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "note": "Promoted in T-111c from official create-product-product docs."
+    },
+    {
+      "type": "DIGITAL_CONTENTS",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "digitalContents",
+      "label_ko": "디지털콘텐츠 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "producer", "termsOfUse", "usePeriod", "medium", "requirement", "cancelationPolicy", "customerServicePhoneNumber"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "note": "Promoted in T-111c from official create-product-product docs."
+    },
+    {
+      "type": "GIFT_CARD",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "giftCard",
+      "label_ko": "상품권 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "issuer", "periodStartDate", "periodEndDate", "periodDays", "termsOfUse", "useStorePlace", "useStoreAddressId", "useStoreUrl", "refundPolicy", "customerServicePhoneNumber"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "note": "Promoted in T-111c from official create-product-product docs."
+    },
+    {
+      "type": "MOBILE_COUPON",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "mobileCoupon",
+      "label_ko": "모바일쿠폰 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "issuer", "usableCondition", "usableStore", "cancelationPolicy", "customerServicePhoneNumber"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "note": "Promoted in T-111c from official create-product-product docs."
+    },
+    {
+      "type": "MOVIE_SHOW",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "movieShow",
+      "label_ko": "영화/공연 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "sponsor", "actor", "rating", "showTime", "showPlace", "cancelationCondition", "cancelationPolicy", "customerServicePhoneNumber"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "note": "Promoted in T-111c from official create-product-product docs."
+    },
+    {
+      "type": "ETC_SERVICE",
+      "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "node": "etcService",
+      "label_ko": "기타 서비스 상품 요약 정보",
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "serviceProvider", "certificateDetails", "usableCondition", "cancelationStandard", "cancelationPolicy", "customerServicePhoneNumber"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "note": "Promoted in T-111c from official create-product-product docs."
+    }
+  ],
+  "unverified": [
+    {
+      "type": "RENTAL_HA",
+      "node": "rentalHa",
+      "candidate_ko": "렌탈(HA) 상품 요약 정보",
+      "note": "Discovered in T-111c in the official create-product-product docs enum list but not in the original 35 types tracked. Field schema was not separately captured in this ticket. Left unverified because the original work order scope was the 19 previously-unverified types; RENTAL_HA is newly observed and its field list requires a dedicated follow-up read of the rentalHa node schema in the same docs."
+    },
+    {
+      "type": "LODGMENT_RESERVATION",
+      "node": "lodgmentReservation",
+      "candidate_ko": "숙박예약 상품 요약 정보",
+      "note": "Discovered in T-111c in the official create-product-product docs enum list. Field schema not separately captured in this ticket. Left unverified — requires a dedicated follow-up read of the lodgmentReservation node schema."
+    },
+    {
+      "type": "TRAVEL_PACKAGE",
+      "node": "travelPackage",
+      "candidate_ko": "여행상품 상품 요약 정보",
+      "note": "Discovered in T-111c in the official create-product-product docs enum list. Field schema not separately captured in this ticket. Left unverified — requires a dedicated follow-up read of the travelPackage node schema."
+    },
+    {
+      "type": "AIRLINE_TICKET",
+      "node": "airlineTicket",
+      "candidate_ko": "항공권 상품 요약 정보",
+      "note": "Discovered in T-111c in the official create-product-product docs enum list. Field schema not separately captured in this ticket. Left unverified — requires a dedicated follow-up read of the airlineTicket node schema."
+    },
+    {
+      "type": "RENT_CAR",
+      "node": "rentCar",
+      "candidate_ko": "렌터카 상품 요약 정보",
+      "note": "Discovered in T-111c in the official create-product-product docs enum list. Field schema not separately captured in this ticket. Left unverified — requires a dedicated follow-up read of the rentCar node schema."
+    }
+  ],
+  "expected_total": 40,
+  "coverage_note": "확보 35/40 (verified 35종). 공식 create-product-product 문서의 productInfoProvidedNoticeType enum에서 총 40개 값을 관측. 직전 티켓(T-111b)에서 unverified로 분류했던 19종을 모두 공식 문서로 확인해 verified로 승격함. 두 타입은 이름 정정: FASHION_ITEM -> FASHION_ITEMS(복수), MICRO_ELECTRONICS -> MICROELECTRONICS(underscore 제거). CELLPHONE의 필드도 공식 문서에서 채움(기존 빈 배열). 미확보 5/40 (RENTAL_HA, LODGMENT_RESERVATION, TRAVEL_PACKAGE, AIRLINE_TICKET, RENT_CAR — 이 티켓 scope 외에서 새로 발견된 타입으로 field schema를 별도로 읽어야 함). 기존 36종이라는 숫자는 GET /v1/products-for-provided-notice 응답 기준(#3490)이었으나, 공식 create-product-product 문서의 정적 enum 정의에는 40개가 노출됨 — 차이는 병합/제외 처리 또는 버전 차이로 추정되며 확정 불가."
+}
