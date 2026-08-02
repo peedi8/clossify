@@ -32,6 +32,11 @@ packages = ["src/clossify"]
 [tool.hatch.build.targets.wheel.force-include]
 "agents" = "clossify/agents"
 "config.example.json" = "clossify/config.example.json"
+# T-110 — 카테고리 메타데이터를 wheel 에 포함. 패키지 설치만으로
+# category_meta 조회 헬퍼가 데이터를 사용할 수 있도록.
+"data/category_meta.json" = "clossify/data/category_meta.json"
+"data/certification_types.json" = "clossify/data/certification_types.json"
+"data/notice_types.json" = "clossify/data/notice_types.json"
 
 [tool.hatch.build.targets.sdist]
-include = ["src/clossify", "agents", "config.example.json", "README.md", "pyproject.toml"]
+include = ["src/clossify", "agents", "data", "config.example.json", "README.md", "pyproject.toml"]
