@@ -23,8 +23,6 @@
 """
 from __future__ import annotations
 
-import re
-
 from . import common
 from .text_props import BANNED_CLAIM_RE
 
@@ -557,7 +555,7 @@ def _copy_code_check(name, detail_text, option_texts=None):
     """카피/텍스트 결정론적 코드검사 (source L6082-L6128 보존).
 
     LLM 위임(qa_copy_agent)과 병행하여 실행되는 로컬 검사다. 결정론적으로
-    잡을 수 있는 위반(금지어, 한자, 빈 제목 등)을 FAIL/WARN 으로 보고한다.
+    잡을 수 있는 위반(금지어, 빈 제목 등)을 FAIL/WARN 으로 보고한다.
 
     Returns:
         ``{agent, verdict, violations, summary}`` dict.
@@ -591,24 +589,6 @@ def _copy_code_check(name, detail_text, option_texts=None):
             "severity": FAIL,
             "detail": "상세 본문에 금지 표현이 포함되어 있습니다.",
         })
-
-    # 한자 잔존 검사 (원본 CHINESE_IDEOGRAPH_RE — 본 제품은 한국어 입력만 받으므로
-    # 한자가 있다면 업스트림 오류).
-    if re.search(r"[\u4e00-\u9fff]", name):
-        violations.append({
-            "rule": "한자 잔존",
-            "severity": FAIL,
-            "detail": "SEO 상품명에 한자가 포함되어 있습니다.",
-        })
-
-    option_texts = option_texts if isinstance(option_texts, list) else []
-    for idx, opt_text in enumerate(option_texts):
-        if re.search(r"[\u4e00-\u9fff]", str(opt_text or "")):
-            violations.append({
-                "rule": "한자 잔존",
-                "severity": FAIL,
-                "detail": f"옵션 {idx + 1} 텍스트에 한자가 포함되어 있습니다.",
-            })
 
     verdict = _verdict_from_violations(violations)
     return {

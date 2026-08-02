@@ -4,8 +4,8 @@ description: {STORE_NAME} 상세페이지 디자인 시스템. 전체 룩=Airbnb
 ---
 
 ## 0. 원칙 (디자인은 규칙 위에 얹는다)
-- **이 문서 = 룩(스타일) 레이어.** [[COMPLIANCE_RULES]] = 콘텐츠/파이프라인 레이어(옵션 번호매칭·충실번역·3단폴백·실데이터·중국어0·금지어·단일컬럼 등). **룩이 규칙을 어기면 안 된다.**
-- 특히 **옵션**: 디자인은 카드 모양만 바꾸고, 데이터는 반드시 파이프라인의 실제 옵션(optionName1, 번호배지=실제 번호, 충실번역+코드, 썸네일/크롭/카드 3단)을 쓴다. **임의 옵션 생성·이미지 재사용 금지.**
+- **이 문서 = 룩(스타일) 레이어.** [[COMPLIANCE_RULES]] = 콘텐츠/파이프라인 레이어(옵션 번호매칭·명칭 충실·3단폴백·실데이터·외국어 라벨 0·금지어·단일컬럼 등). **룩이 규칙을 어기면 안 된다.**
+- 특히 **옵션**: 디자인은 카드 모양만 바꾸고, 데이터는 반드시 파이프라인의 실제 옵션(optionName1, 번호배지=실제 번호, 한국어 명칭+코드, 썸네일/크롭/카드 3단)을 쓴다. **임의 옵션 생성·이미지 재사용 금지.**
 
 ## 1. 색 (Airbnb base + warm 액센트)
 ```
@@ -30,7 +30,7 @@ font: "Pretendard Variable", Pretendard, -apple-system, "Apple SD Gothic Neo", "
 | detail-h | 20–22px | 600 | 1.4 | -0.01em | DETAIL 소제목 |
 | body | 17–18px | 400 | **1.55** | 0 | 본문(한글 가독성 표준) |
 | caption | 14–15px | 500 | 1.45 | 0 | 캡션·정보라벨 |
-| eyebrow | 12px | 700 | 1.3 | 0.1em(uppercase) | OVERSEAS DESIGN SELECT·DETAIL 라벨 |
+| eyebrow | 12px | 700 | 1.3 | 0.1em(uppercase) | DESIGN SELECT·DETAIL 라벨 |
 | badge | 14px | 600 | 1 | 0 | 옵션 번호배지 |
 | price | — | 800 | — | -0.02em | 가격(tabular-nums) |
 - **한글 본문 line-height 1.5–1.55 필수**(KRDS). 자간 0(Pretendard가 이미 타이트). 헤딩만 -0.01~-0.02em.
