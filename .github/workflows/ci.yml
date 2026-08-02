@@ -1,0 +1,83 @@
+# T-206 — CI 보안·품질 게이트
+#
+# ⚠️ 잡 이름(name:)은 브랜치 보호의 required status check 이름과 문자열 계약이다.
+# GitHub 는 status check 이름을 job 의 display name 으로 매칭하므로,
+# 잡 이름을 바꾸면 보호 규칙이 깨진다. 따라서 잡 이름은 안정적으로 유지하고
+# 변경이 필요하면 오케스트레이터 조율 하에 보호 규칙도 함께 바꾼다.
+#
+# pre-commit(.pre-commit-config.yaml) 이 커밋 직전 1차 방어선이라면,
+# 이 워크플로는 PR/push 단계의 2차 방어선이다. 특히 gitleaks 잡은
+# 전체 트리를 스캔하여 이미 들어온 커밋의 시크릿도 잡아낸다
+# (pre-commit 은 staged 만 보므로 둘은互补적).
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # 잡 이름 "gitleaks" 는 보호 규칙과 계약 — 변경 금지.
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 전체 이력 스캔을 위해 fetch-depth=0. 얕은 클론은 히스토리 누락.
+          fetch-depth: 0
+      - name: gitleaks detect (full-tree scan)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          # 커스텀 룰셋 사용 — 네이버 계열 키 패턴 포함.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          config-path: .gitleaks.toml
+
+  # 잡 이름 "ruff" 는 보호 규칙과 계약 — 변경 금지.
+  ruff:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff==0.6.9
+      # pyproject.toml 의 [tool.ruff] 설정을 공유.
+      - run: ruff check .
+      - run: ruff format --check .
+
+  # 잡 이름 "pytest" 는 보호 규칙과 계약 — 변경 금지.
+  pytest:
+    name: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      # config.example.json 의 placeholder 만으로 테스트가 통과해야 한다
+      # (실제 자격증명 없이도 QA 회귀 확인이 가능해야 함).
+      - run: pytest -q
+
+  # 잡 이름 "scan-repo" 는 보호 규칙과 계약 — 변경 금지.
+  scan-repo:
+    name: scan-repo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 커밋 메시지 스캔을 위해 origin/main 범위를 잡으려면 전체 fetch 필요.
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 자체 검사 (금칙어/한자/커밋메시지)
+        run: python scripts/scan_repo.py
