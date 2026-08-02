@@ -291,7 +291,178 @@ def _notice_defaults(p):
     }
 
 
+# T-112: data/notice_types.json 을 단일 진실 공급원으로 사용해 35종 전체 고시
+# 타입을 동적 생성한다. 타입·노드명·필드를 코드에 하드코딩하지 않는다.
+_NOTICE_TYPES_CACHE: list | None = None
+_NOTICE_TYPE_INDEX: dict | None = None
+
+
+def _load_notice_type_specs() -> list:
+    """``data/notice_types.json`` 의 verified 타입 목록을 반환 (단일 진실 공급원).
+
+    캐싱되어 한 프로세스 내에서 반복 호출 시 디스크 I/O 가 발생하지 않는다.
+
+    Raises:
+        RuntimeError: 파일 부재 또는 구조 오류 (fail-closed).
+    """
+    global _NOTICE_TYPES_CACHE, _NOTICE_TYPE_INDEX
+    if _NOTICE_TYPES_CACHE is not None:
+        return _NOTICE_TYPES_CACHE
+    path = os.path.join(_PROJECT_ROOT, "data", "notice_types.json")
+    if not os.path.exists(path):
+        raise RuntimeError(
+            f"notice_types.json 파일이 없습니다: {path} (fail-closed)."
+        )
+    try:
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(
+            f"notice_types.json 읽기 실패: {path} ({exc})"
+        ) from exc
+    verified = doc.get("verified") if isinstance(doc, dict) else None
+    if not isinstance(verified, list) or not verified:
+        raise RuntimeError(
+            f"notice_types.json 구조가 올바르지 않습니다: {path}"
+        )
+    _NOTICE_TYPES_CACHE = verified
+    _NOTICE_TYPE_INDEX = {
+        str(entry.get("type") or "").strip().upper(): entry
+        for entry in verified
+        if isinstance(entry, dict) and entry.get("type")
+    }
+    return verified
+
+
+def _notice_type_spec(notice_type: str) -> dict | None:
+    """특정 고시 타입의 스펙(``{type, node, fields, ...}``)을 반환.
+
+    Returns:
+        매칭 dict 또는 ``None`` (알 수 없는 타입).
+    """
+    if _NOTICE_TYPE_INDEX is None:
+        _load_notice_type_specs()
+    key = str(notice_type or "").strip().upper()
+    return _NOTICE_TYPE_INDEX.get(key) if _NOTICE_TYPE_INDEX else None
+
+
+# 고시 35종 전체에 공통인 5개 필드. config 의 판매자 기본값에서 채운다.
+# 사용자가 상품별로 값을 주면 그 값이 우선.
+_NOTICE_COMMON_FIELDS = (
+    "returnCostReason",
+    "noRefundReason",
+    "qualityAssuranceStandard",
+    "compensationProcedure",
+    "troubleShootingContents",
+)
+
+
+def _common_notice_defaults(defaults) -> dict:
+    """공통 5필드를 config 기본값에서 채운다."""
+    return {
+        "returnCostReason": defaults["return_cost_reason"],
+        "noRefundReason": defaults["no_refund_reason"],
+        "qualityAssuranceStandard": defaults["quality_assurance_standard"],
+        "compensationProcedure": defaults["compensation_procedure"],
+        "troubleShootingContents": defaults["trouble_shooting_contents"],
+    }
+
+
+def _resolve_notice_type(p) -> str:
+    """상품 입력(p)에서 고시 타입을 결정한다.
+
+    우선순위:
+      1. ``p.notice.productInfoProvidedNoticeType`` / ``p.notice.notice_type``
+      2. ``p.notice_type`` / ``p.productInfoProvidedNoticeType``
+      3. 카테고리 경로 휴리스틱 (``qa_agents._CATEGORY_PATH_NOTICE_HINTS`` 재사용)
+
+    확정할 수 없으면 기존 동작(ETC 기본값)을 유지한다(회귀 없이 보존).
+    단, **명시적으로 알 수 없는 타입**이 주어지면 ``ValueError``
+    (조용한 etc 폴백 금지 — 잘못된 고시 타입은 규제 위반).
+
+    Raises:
+        ValueError: 명시적으로 주어진 타입이 data/notice_types.json 에 없음.
+    """
+    explicit = ""
+    user_notice = p.get("notice") if isinstance(p, dict) else None
+    if isinstance(user_notice, dict):
+        explicit = (
+            user_notice.get("productInfoProvidedNoticeType")
+            or user_notice.get("notice_type")
+            or ""
+        )
+    if not explicit and isinstance(p, dict):
+        explicit = (
+            p.get("notice_type")
+            or p.get("productInfoProvidedNoticeType")
+            or ""
+        )
+    notice_type = str(explicit or "").strip().upper()
+    if not notice_type:
+        # 카테고리 경로 휴리스틱으로 추론 시도 (qa_agents 힌트 재사용).
+        category_text = " ".join(
+            str(p.get(k) or "")
+            for k in ("category_name", "category_path", "categoryPath")
+        ) if isinstance(p, dict) else ""
+        for needle, inferred_type in _CATEGORY_PATH_NOTICE_HINTS:
+            if needle in category_text:
+                notice_type = inferred_type
+                break
+    if not notice_type:
+        # 회귀 없이 보존: 타입이 주어지지 않고 카테고리 추론도 실패하면
+        # 기존 동작(ETC 기본값)을 유지한다. 단, 명시적으로 알 수 없는 타입이
+        # 주어진 경우는 아래에서 에러를 낸다(조용한 etc 폴백 금지).
+        # 고수준(MCP register_product)의 컴플라이언스 게이트가 카테고리 기반
+        # 추론으로 올바른 타입을 보정한다.
+        notice_type = "ETC"
+    spec = _notice_type_spec(notice_type)
+    if spec is None:
+        raise ValueError(
+            f"알 수 없는 고시 타입: {notice_type!r} — data/notice_types.json 에 "
+            f"등록된 타입이 아닙니다. 조용한 etc 폴백 금지."
+        )
+    return notice_type
+
+
+# 카테고리 경로 휴리스틱 (qa_agents._CATEGORY_PATH_NOTICE_HINTS 와 동일).
+# naver_client 는 qa_agents 를 import 하지 않으므로 로컬 사본을 둔다.
+# 단일 진실 공급원은 data/notice_types.json 이며, 이 휴리스틱은 추론 보조일 뿐.
+_CATEGORY_PATH_NOTICE_HINTS = (
+    ("가구", "FURNITURE"),
+    ("의류", "WEAR"),
+    ("신발", "SHOES"),
+    ("구두", "SHOES"),
+    ("가방", "BAG"),
+    ("침구", "SLEEPING_GEAR"),
+    ("커튼", "SLEEPING_GEAR"),
+    ("가전", "HOME_APPLIANCES"),
+    ("영상가전", "IMAGE_APPLIANCES"),
+    ("계절가전", "SEASON_APPLIANCES"),
+    ("사무용기기", "OFFICE_APPLIANCES"),
+    ("휴대폰", "CELLPHONE"),
+    ("광학기기", "OPTICS_APPLIANCES"),
+    ("귀금속", "JEWELLERY"),
+    ("보석", "JEWELLERY"),
+    ("시계", "JEWELLERY"),
+    ("서적", "BOOKS"),
+    ("어린이", "KIDS"),
+    ("생활화학", "BIOCHEMISTRY"),
+    ("살생물", "BIOCIDAL"),
+    ("패션잡화", "FASHION_ITEMS"),
+    ("주방", "KITCHEN_UTENSILS"),
+    ("식기", "KITCHEN_UTENSILS"),
+    ("화장품", "COSMETIC"),
+    ("식품", "FOOD"),
+    ("스포츠", "SPORTS_EQUIPMENT"),
+    ("악기", "MUSICAL_INSTRUMENT"),
+    ("자동차", "CAR_ARTICLES"),
+    ("의료기기", "MEDICAL_APPLIANCES"),
+    ("네비게이션", "NAVIGATION"),
+)
+
+
 def _is_furniture_notice(p):
+    """FURNITURE 타입 판정 (기존 동작 보존)."""
     notice_type = str(p.get("notice_type") or p.get("productInfoProvidedNoticeType") or "").strip().upper()
     if notice_type == "FURNITURE":
         return True
@@ -305,6 +476,7 @@ def _is_furniture_notice(p):
 
 
 def _base_etc_notice(defaults):
+    """ETC 타입의 기본 본문 (기존 동작 보존)."""
     cert = defaults["cert_detail"]
     notice = {
         "itemName": defaults["item_name"],
@@ -331,6 +503,7 @@ def _base_etc_notice(defaults):
 
 
 def _base_furniture_notice(p, defaults):
+    """FURNITURE 타입의 기본 본문 (기존 동작 보존)."""
     notice = _base_etc_notice(defaults)
     notice.update({
         "material": _first_value(p.get("material"), p.get("fabric"), p.get("소재"), default="상세참조"),
@@ -342,6 +515,7 @@ def _base_furniture_notice(p, defaults):
 
 
 def _enforce_notice_as_contact_exclusive(notice_body, user_fields=None):
+    """A/S 연락처 단일 노출 정책 (기존 동작 보존)."""
     user_fields = set(user_fields or ())
 
     def has_text(value):
@@ -358,33 +532,109 @@ def _enforce_notice_as_contact_exclusive(notice_body, user_fields=None):
         notice_body.pop("customerServicePhoneNumber", None)
 
 
+def _base_notice_body_for_type(p, defaults, notice_type, spec):
+    """고시 타입별 기본 본문을 생성.
+
+    ETC/FURNITURE 는 기존 빌더를 그대로 사용(회귀 없이 보존).
+    그 외 33종은 공통 5필드 + 빈 타입별 필드로 시작 — 값을 지어내지 않는다.
+    사용자 입력이 _merge_notice 에서 덮어쓴다.
+    """
+    if notice_type == "ETC":
+        return _base_etc_notice(defaults)
+    if notice_type == "FURNITURE":
+        return _base_furniture_notice(p, defaults)
+    # 나머지 33종: 공통 5필드 + afterServiceDirector(있는 타입만)로 시작.
+    body = _common_notice_defaults(defaults)
+    fields = spec.get("fields") or []
+    # afterServiceDirector / customerServicePhoneNumber 가 해당 타입의 필드에
+    # 포함되어 있으면 제조사/A/S 정보로 채운다(기존 ETC 패턴 준용).
+    if "afterServiceDirector" in fields:
+        body["afterServiceDirector"] = f"{defaults['manufacturer']} {defaults['as_tel']}"
+    if "customerServicePhoneNumber" in fields:
+        body["customerServicePhoneNumber"] = defaults["as_tel"]
+    # manufacturer 필드가 있으면 config/입력에서.
+    if "manufacturer" in fields:
+        body["manufacturer"] = defaults["manufacturer"]
+    if "importer" in fields and defaults.get("importer"):
+        body["importer"] = defaults["importer"]
+    return body
+
+
 def _merge_notice(default_notice, user_notice):
+    """사용자 notice 를 기본 notice 에 병합 (데이터 기반 노드명 사용).
+
+    T-112: 노드 키를 ``etc``/``furniture`` 로 고정하지 않고, 고시 타입에
+    해당하는 node 이름(data/notice_types.json)을 사용한다.
+    사용자 입력은 같은 노드 키 아래에서 우선한다.
+    """
     if not isinstance(user_notice, dict):
         return default_notice
-    default_type = str(default_notice.get("productInfoProvidedNoticeType") or "ETC").strip().upper()
-    user_type = str(user_notice.get("productInfoProvidedNoticeType") or "").strip().upper()
-    notice_type = default_type if default_type != "ETC" else (user_type or default_type)
-    key = "furniture" if notice_type == "FURNITURE" else "etc"
+    notice_type = str(
+        default_notice.get("productInfoProvidedNoticeType") or "ETC"
+    ).strip().upper()
+    spec = _notice_type_spec(notice_type)
+    node_key = (spec or {}).get("node") or "etc"
+    # 기본 본문: default_notice 에서 node_key 본문을 찾고, 없으면 etc/furniture 폴백.
+    default_body = default_notice.get(node_key)
+    if not isinstance(default_body, dict):
+        for fallback in ("etc", "furniture"):
+            fb = default_notice.get(fallback)
+            if isinstance(fb, dict):
+                default_body = dict(fb)
+                break
+        if not isinstance(default_body, dict):
+            default_body = {}
+    else:
+        default_body = dict(default_body)
     merged = {
         "productInfoProvidedNoticeType": notice_type,
-        key: dict(default_notice.get(key) or {}),
+        node_key: default_body,
     }
-    user_body = user_notice.get(key) if isinstance(user_notice.get(key), dict) else {}
+    # 사용자 본문: 같은 node_key 우선, 없으면 etc/furniture.
+    user_body = user_notice.get(node_key)
+    if not isinstance(user_body, dict):
+        for fallback in ("etc", "furniture"):
+            fb = user_notice.get(fallback)
+            if isinstance(fb, dict):
+                user_body = fb
+                break
+    if not isinstance(user_body, dict):
+        user_body = {}
     user_fields = set()
     for field, value in user_body.items():
+        # T-113: 사용자가 명시적으로 제공한 값은 그대로 싣는다.
+        # 특정 문자열("상세페이지 참조" 등)이라고 조용히 버리는 필터를 제거했다.
+        # "상세페이지 참조" 는 한국 커머스에서 판매자가 제조일자·치수 등에 일상적으로
+        # 쓰는 정당한 표기이며 시스템이 임의로 폐기할 값이 아니다.
+        # 빈 문자열·공백만·None 은 기존대로 싣지 않는다(값이 없는 것과 값이 있는
+        # 것은 구분).
         text = str(value).strip() if value is not None else ""
-        if text and text not in {"상세페이지 참조", "상세페이지참조"}:
-            merged[key][field] = value
+        if text:
+            merged[node_key][field] = value
             user_fields.add(field)
-    _enforce_notice_as_contact_exclusive(merged[key], user_fields)
+    _enforce_notice_as_contact_exclusive(merged[node_key], user_fields)
     return merged
 
 
 def _product_info_notice(p, defaults):
-    if _is_furniture_notice(p):
-        base = {"productInfoProvidedNoticeType": "FURNITURE", "furniture": _base_furniture_notice(p, defaults)}
-    else:
-        base = {"productInfoProvidedNoticeType": "ETC", "etc": _base_etc_notice(defaults)}
+    """고시 payload 조립 (35종 전체 지원, T-112).
+
+    고시 타입이 무엇이든 ``data/notice_types.json`` 에서 해당 타입의 ``node``
+    이름을 찾아 그 이름으로 본문을 싣는다. 타입이 데이터에 없으면 에러.
+    """
+    notice_type = _resolve_notice_type(p)
+    spec = _notice_type_spec(notice_type)
+    # spec 은 _resolve_notice_type 이 이미 검증했으나 방어적으로 확인.
+    if spec is None:
+        raise ValueError(
+            f"알 수 없는 고시 타입: {notice_type!r} — data/notice_types.json 에 "
+            f"등록된 타입이 아닙니다."
+        )
+    body = _base_notice_body_for_type(p, defaults, notice_type, spec)
+    base = {
+        "productInfoProvidedNoticeType": notice_type,
+        spec["node"]: body,
+    }
     return _merge_notice(base, p.get("notice"))
 
 
