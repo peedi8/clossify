@@ -44,7 +44,7 @@ _MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
 
 # --------------------------------------------------------------------------- #
-# Fix 7 — 에러 sanitization
+# Fix 7 — 에러 sanitization (T-106 강화)
 # --------------------------------------------------------------------------- #
 # traceback/에러 메시지에서 제거해야 할 민감 패턴.
 _SENSITIVE_PATTERNS = [
@@ -52,9 +52,22 @@ _SENSITIVE_PATTERNS = [
     re.compile(r"(sk-[A-Za-z0-9_\-]{8,})", re.IGNORECASE),
     re.compile(r"(AIza[A-Za-z0-9_\-]{8,})", re.IGNORECASE),
     re.compile(r"(Bearer\s+[A-Za-z0-9_\-\.]+)", re.IGNORECASE),
-    # 파일시스템 경로의 사용자명 (Windows/Unix)
-    re.compile(r"([A-Za-z]:[\\/](?:Users|home)[\\/])[^\"'<>\s]+", re.IGNORECASE),
-    re.compile(r"(/(?:home|Users)/[^/\"'<>\s]+)", re.IGNORECASE),
+    # key=value 형태의 시크릿 (api_key=..., client_secret: ..., token=..., 등)
+    # 콜론(:) 또는 등호(=) 구분자 모두 매칭. 값 부분은 4자까지만 노출(표식용).
+    re.compile(
+        r"((?:api[_\-]?key|client[_\-]?secret|access[_\-]?token|auth[_\-]?token|"
+        r"secret[_\-]?key|password|passwd|pwd|credential|private[_\-]?key|"
+        r"token|secret|apikey)"
+        r"\s*[:=]\s*)([^\s\"'<>,;]{5,})",
+        re.IGNORECASE,
+    ),
+    # Windows 파일시스템 경로 전체 (드라이브 문자 포함, 사용자명/비사용자명 무관)
+    re.compile(r"([A-Za-z]:[\\/](?:Users|home|private|secret|config|\.local|Desktop|Documents)[\\/])[^\"'<>\s]+", re.IGNORECASE),
+    # POSIX 시스템/사용자 디렉토리 경로
+    re.compile(r"(/(?:home|Users|etc|var|root|tmp|opt|srv|private|secret)/[^\"'<>\s]+)", re.IGNORECASE),
+    # traceback 헤더 및 File 프레임 (독립적으로도 매칭)
+    re.compile(r"Traceback\s*\(most\s+recent\s+call\s+last\)", re.IGNORECASE),
+    re.compile(r'(File\s+"[^"]+",\s*line\s+\d+[^\n]*)', re.IGNORECASE),
 ]
 
 
@@ -63,8 +76,50 @@ def _sanitize_text(text: str) -> str:
     if not isinstance(text, str):
         text = str(text)
     for pat in _SENSITIVE_PATTERNS:
-        text = pat.sub("[REDACTED]", text)
+        if pat.groups >= 2:
+            # key=value 패턴: 키 이름은 유지, 값만 [REDACTED].
+            text = pat.sub(lambda m: m.group(1) + "[REDACTED]", text)
+        else:
+            text = pat.sub("[REDACTED]", text)
     return text
+
+
+# raw API 응답에서 LLM에게 노출해도 안전한 키만 남기고 나머지는 제거.
+# 네이버 커머스 API 에러 응답에서 디버그에 유용한 최소 필드만 허용.
+_SAFE_BODY_KEYS = frozenset({
+    "code", "message", "status", "detail",
+    "invalidInputs", "name", "type", "reason", "invalidReason",
+    "originProductNo", "channelProductNo",
+    naver_client.SELLER_TAG_AUTOSTRIP_KEY,
+})
+
+
+def _sanitize_body(body: Any, _depth: int = 0) -> Any:
+    """API 응답 본문에서 민감하지 않은 최소 필드만 남긴다.
+
+    네이버 커머스 API 에러 응답의 경우 전체 본문을 LLM에게 노출하면
+    내부 필드가 누출될 수 있다. 화이트리스트 방식으로 ``code``,
+    ``message``, ``invalidInputs[].name`` 등 디버그에 필요한 최소
+    정보만 보존한다. 문자열 값은 추가로 ``_sanitize_text`` 로 위생화.
+
+    200 OK 응답의 본문은 그대로 통과시킨다(호출자가 이미 ok 플래그로
+    제어하므로 에러 케이스만 가지치기).
+    """
+    if _depth == 0 and isinstance(body, dict):
+        # 최상위 에러 응답: 화이트리스트 키만 추출.
+        if "code" in body or "invalidInputs" in body or "status" in body:
+            pruned: dict[str, Any] = {}
+            for key in body:
+                if key in _SAFE_BODY_KEYS:
+                    pruned[key] = _sanitize_body(body[key], _depth + 1)
+            return pruned if pruned else body
+    if isinstance(body, dict):
+        return {k: _sanitize_body(v, _depth + 1) for k, v in body.items()}
+    if isinstance(body, list):
+        return [_sanitize_body(v, _depth + 1) for v in body]
+    if isinstance(body, str):
+        return _sanitize_text(body)
+    return body
 
 
 def _sanitize_error(exc: BaseException) -> str:
@@ -410,12 +465,15 @@ def register_product(
         origin_product_no = body.get("originProductNo") or body.get("originProduct", {}).get("originProductNo")
     seller_tags_meta = naver_client.seller_tag_autostrip_meta(body) if isinstance(body, dict) else None
 
+    # 에러 응답의 raw 본문은 화이트리스트 키만 남겨 노출 (T-106 Fix 3).
+    exposed_raw = _sanitize_body(body) if not ok else body
+
     return {
         "ok": ok,
         "status_code": status_code,
         "origin_product_no": origin_product_no,
         "name_truncated": name_truncated,  # Fix 5
-        "raw": body,
+        "raw": exposed_raw,
         "seller_tags": seller_tags_meta,
         "error": None if ok else _sanitize_text(f"API 반환 상태 {status_code}"),
     }
@@ -452,10 +510,11 @@ def get_product(origin_product_no: str) -> dict[str, Any]:
         }
 
     ok = isinstance(status_code, int) and status_code == 200
+    exposed_body = body if ok else _sanitize_body(body)
     return {
         "ok": ok,
         "status_code": status_code,
-        "product": body if ok else None,
+        "product": exposed_body if ok else None,
         "error": None if ok else _sanitize_text(f"API 반환 상태 {status_code}: {body}"),
     }
 

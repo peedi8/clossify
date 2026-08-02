@@ -640,10 +640,22 @@ def get_product(origin_no, tk=None):
 
 
 def _option_stock(option):
-    try:
-        return int(option.get("stockQuantity", option.get("stock", 99)))
-    except (TypeError, ValueError):
-        return 99
+    """옵션 재고 수량을 fail-closed 로 파싱.
+
+    이전 버전은 stock 이 누락되거나 파싱 불가능할 때 **가짜 기본값 99** 를
+    조용히 반환했다. 이는 실재고가 0 인 것을 99 인 것처럼 등록하는 심각한
+    결함을 유발한다. 따라서:
+
+    - stockQuantity 또는 stock 키가 존재하고 유효한 정수로 파싱되면 그 값.
+    - 키 자체가 없거나(누락), 값이 None 이거나, 파싱 불가(예: ``"bad"``)면
+      ``ValueError`` 를 발생시킨다 (fail-closed).
+    """
+    raw = option.get("stockQuantity", option.get("stock"))
+    if raw is None:
+        raise ValueError(
+            "option 에 stockQuantity 또는 stock 값이 없습니다 (fail-closed)."
+        )
+    return int(raw)
 
 
 def _option_price(option):
@@ -739,9 +751,13 @@ def build_payload(p, detail_html, images, status="SALE"):
     defaults = _notice_defaults(p)
     notice = _product_info_notice(p, defaults)
     display_default = "OFF" if status == "SUSPENSION" else "ON"
+    # 상품명 정책 컷: 네이버 커머스 API 는 50자 초과 시 400 거절.
+    # mcp_server.register_product 도 사전에 자르지만, build_payload 를
+    # 직접 호출하는 경로까지 보호하기 위해 여기서도 컷한다.
+    product_name = str(p["name"])[:MAX_PRODUCT_NAME_LEN]
     return {"originProduct": {
         "statusType": status, "saleType": "NEW", "leafCategoryId": p["categoryId"],
-        "name": p["name"], "detailContent": detail_html,
+        "name": product_name, "detailContent": detail_html,
         "images": {"representativeImage": {"url": images[0]},
                    "optionalImages": [{"url": u} for u in images[1:]]},
         "salePrice": int(p["salePrice"]), "stockQuantity": sum(_option_stock(o) for o in opts) if opts else int(p.get("stock", 1)),

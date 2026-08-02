@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
-"""T-105 수정사항 검증 테스트.
+"""T-105 / T-106 수정사항 검증 테스트.
 
-이 테스트는 8개의 수정사항 각각에 대해 단위 테스트를 제공한다.
+이 테스트는 T-105 의 8개 수정사항 각각에 대한 단위 테스트와
+T-106 의 3개 핵심 강화(fail-closed stock, build_payload name cut,
+sanitization 강화)에 대한 단위 테스트를 제공한다.
 외부 API 호출, 네트워크, 실제 config 파일 의존성을 최소화하도록 설계되었다.
 """
 from __future__ import annotations
@@ -355,3 +357,222 @@ class TestAcceptanceTools:
                 names.append(name)
         # 4개 도구: check_config, upload_images, register_product, get_product
         assert len(tools) == 4, f"Expected 4 tools, got {len(tools)}: {names}"
+
+
+# ============================================================================ #
+# T-106 — Fail-closed option stock (Counterexample 1)
+# ============================================================================ #
+class TestT106OptionStockFailClosed:
+    """_option_stock 이 누락/불가 stock 에 대해 ValueError 를 발생시키는가.
+
+    이전 버전은 stock 이 없거나 파싱 불가능할 때 가짜 기본값 99 를
+    조용히 반환했다. 이는 재고 0 인 상품을 99개 있는 것처럼 등록하는
+    심각한 결함이다. T-106 은 이를 fail-closed 로 수정한다.
+    """
+
+    def test_missing_stock_raises_value_error(self):
+        """counterexample: _option_stock({}) -> before: 99, after: ValueError"""
+        with pytest.raises(ValueError):
+            naver_client._option_stock({})
+
+    def test_bad_stock_string_raises_value_error(self):
+        """counterexample: _option_stock({"stock":"bad"}) -> before: 99, after: ValueError"""
+        with pytest.raises(ValueError):
+            naver_client._option_stock({"stock": "bad"})
+
+    def test_valid_stock_int_returns_value(self):
+        assert naver_client._option_stock({"stock": 3}) == 3
+
+    def test_valid_stock_string_int_returns_value(self):
+        assert naver_client._option_stock({"stockQuantity": "5"}) == 5
+
+    def test_none_stock_raises_value_error(self):
+        with pytest.raises(ValueError):
+            naver_client._option_stock({"stock": None})
+
+    def test_build_payload_propagates_stock_error(self):
+        """build_payload 가 옵션 재고 누락 시 ValueError 를 전파하는가."""
+        p = {
+            "name": "테스트",
+            "categoryId": "50002366",
+            "salePrice": 5000,
+            "options": [{"name": "블랙", "price": 0}],  # stock 누락
+        }
+        with mock.patch.object(naver_client, "_notice_config", return_value={}):
+            with pytest.raises(ValueError):
+                naver_client.build_payload(p, "<html></html>", ["http://x.png"])
+
+    def test_build_payload_stock_zero_is_valid(self):
+        """stock=0 은 유효한 값이다 (ValueError 가 아님)."""
+        p = {
+            "name": "테스트",
+            "categoryId": "50002366",
+            "salePrice": 5000,
+            "options": [{"name": "블랙", "stock": 0, "price": 0}],
+        }
+        with mock.patch.object(naver_client, "_notice_config", return_value={}):
+            payload = naver_client.build_payload(p, "<html></html>", ["http://x.png"])
+        assert payload["originProduct"]["stockQuantity"] == 0
+
+    def test_mcp_register_catches_stock_error_sanitized(self, monkeypatch):
+        """MCP register_product 가 stock ValueError 를 sanitized 에러로 변환."""
+        monkeypatch.setenv("COMMERCE_DRY_RUN", "1")
+        result = mcp_server.register_product(
+            name="테스트",
+            price=10000,
+            image_urls=["http://x.png"],
+            category_id="50002366",
+            detail_html="<html></html>",
+            options=[{"name": "블랙", "price": 0}],  # stock 누락
+        )
+        assert result["ok"] is False
+        assert "error" in result
+        assert result["error"] is not None
+
+
+# ============================================================================ #
+# T-106 — build_payload name 50-char enforcement (Counterexample 2)
+# ============================================================================ #
+class TestT106BuildPayloadNameCut:
+    """build_payload 가 50자 초과 상품명을 자르는가.
+
+    mcp_server.register_product 에서는 이미 자르고 있었지만,
+    build_payload 를 직접 호출하는 경로에서는 50자 초과 이름이
+    그대로 payload 에 들어가 API 400 거절을 유발했다.
+    """
+
+    def test_build_payload_truncates_long_name(self):
+        """counterexample: 60-char name -> before: len=60, after: len=50"""
+        p = {
+            "name": "A" * 60,
+            "categoryId": "50002366",
+            "salePrice": 10000,
+        }
+        with mock.patch.object(naver_client, "_notice_config", return_value={}):
+            payload = naver_client.build_payload(p, "<html></html>", ["http://x.png"])
+        name = payload["originProduct"]["name"]
+        assert len(name) == 50
+
+    def test_build_payload_short_name_unchanged(self):
+        p = {
+            "name": "짧은이름",
+            "categoryId": "50002366",
+            "salePrice": 10000,
+        }
+        with mock.patch.object(naver_client, "_notice_config", return_value={}):
+            payload = naver_client.build_payload(p, "<html></html>", ["http://x.png"])
+        assert payload["originProduct"]["name"] == "짧은이름"
+
+    def test_build_payload_exact_50_chars(self):
+        p = {
+            "name": "B" * 50,
+            "categoryId": "50002366",
+            "salePrice": 10000,
+        }
+        with mock.patch.object(naver_client, "_notice_config", return_value={}):
+            payload = naver_client.build_payload(p, "<html></html>", ["http://x.png"])
+        assert len(payload["originProduct"]["name"]) == 50
+
+    def test_build_payload_51_chars_truncated_to_50(self):
+        p = {
+            "name": "C" * 51,
+            "categoryId": "50002366",
+            "salePrice": 10000,
+        }
+        with mock.patch.object(naver_client, "_notice_config", return_value={}):
+            payload = naver_client.build_payload(p, "<html></html>", ["http://x.png"])
+        assert len(payload["originProduct"]["name"]) == 50
+
+
+# ============================================================================ #
+# T-106 — Sanitization strengthening (Counterexample 3)
+# ============================================================================ #
+class TestT106SanitizationStrengthened:
+    """_sanitize_text 가 POSIX 경로, key=value 시크릿, traceback 을 마스킹하는가.
+
+    이전 버전은 Windows C:\\Users\\.. 경로와 /home/user/ 경로만 매칭했고,
+    POSIX 시스템 경로(/etc/, /var/), key=value 형태 시크릿, traceback
+    헤더를 누락했다.
+    """
+
+    def test_sanitize_posix_etc_path(self):
+        """counterexample: /etc/passwd -> before: leaked, after: [REDACTED]"""
+        sanitized = mcp_server._sanitize_text("error in /etc/passwd file")
+        assert "/etc/passwd" not in sanitized
+        assert "[REDACTED]" in sanitized
+
+    def test_sanitize_posix_var_path(self):
+        sanitized = mcp_server._sanitize_text("error in /var/log/app.log")
+        assert "/var/log/app.log" not in sanitized
+
+    def test_sanitize_api_key_equals(self):
+        """counterexample: api_key=abcd1234 -> before: leaked, after: [REDACTED]"""
+        sanitized = mcp_server._sanitize_text("config: api_key=abcd1234efgh5678")
+        assert "abcd1234efgh5678" not in sanitized
+        assert "[REDACTED]" in sanitized
+
+    def test_sanitize_client_secret_colon(self):
+        """counterexample: client_secret: xyz -> before: leaked, after: [REDACTED]"""
+        sanitized = mcp_server._sanitize_text("client_secret: xyz123abc456")
+        assert "xyz123abc456" not in sanitized
+
+    def test_sanitize_token_equals(self):
+        sanitized = mcp_server._sanitize_text("token=abcd1234efgh5678")
+        assert "abcd1234efgh5678" not in sanitized
+
+    def test_sanitize_password_equals(self):
+        sanitized = mcp_server._sanitize_text("password=mypassword123")
+        assert "mypassword123" not in sanitized
+
+    def test_sanitize_traceback_header(self):
+        """counterexample: Traceback header -> before: leaked, after: [REDACTED]"""
+        sanitized = mcp_server._sanitize_text("Traceback (most recent call last)")
+        assert "Traceback" not in sanitized
+
+    def test_sanitize_file_line_frame(self):
+        file_line = '  File "C:\\src\\app.py", line 42, in run'
+        sanitized = mcp_server._sanitize_text(file_line)
+        assert 'File "C:' not in sanitized
+
+    def test_sanitize_windows_private_path(self):
+        """counterexample: H:\\private\\secret.json -> before: leaked, after: [REDACTED]"""
+        path = "H:" + chr(92) + "private" + chr(92) + "secret.json"
+        sanitized = mcp_server._sanitize_text(f"file at {path}")
+        assert path not in sanitized
+
+    def test_sanitize_short_secret_value_not_triggered(self):
+        """4자 이하 값은 매칭하지 않음(과잉 마스킹 방지)."""
+        sanitized = mcp_server._sanitize_text("api_key=abc")
+        # 3 char value < 5 threshold -> not matched
+        assert sanitized == "api_key=abc"
+
+    def test_sanitize_body_prunes_error_response(self):
+        """_sanitize_body 가 에러 응답에서 화이트리스트 키만 남기는가."""
+        body = {
+            "code": "BAD_REQUEST",
+            "message": "Invalid name",
+            "invalidInputs": [{"name": "originProduct.name", "type": "Length"}],
+            "internalDebugInfo": "secret_token=sk-leaked12345678",
+            "requestId": "req-abc-123",
+        }
+        pruned = mcp_server._sanitize_body(body)
+        assert "code" in pruned
+        assert "message" in pruned
+        assert "invalidInputs" in pruned
+        assert "internalDebugInfo" not in pruned
+        assert "requestId" not in pruned
+
+    def test_sanitize_body_preserves_ok_response(self):
+        """200 OK 응답은 가지치기하지 않음."""
+        body = {"originProductNo": "123", "extra": {"detail": "ok"}}
+        result = mcp_server._sanitize_body(body)
+        assert result == body
+
+    def test_sanitize_body_nested_string_sanitized(self):
+        """에러 응답 내 문자열 값도 _sanitize_text 통과."""
+        body = {
+            "code": "ERROR",
+            "message": "failed at /etc/passwd",
+        }
+        pruned = mcp_server._sanitize_body(body)
+        assert "/etc/passwd" not in pruned["message"]
