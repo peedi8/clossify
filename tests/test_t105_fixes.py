@@ -361,8 +361,9 @@ class TestAcceptanceTools:
             name = getattr(t, "name", None) or getattr(t, "name", None)
             if name:
                 names.append(name)
-        # 4개 도구: check_config, upload_images, register_product, get_product
-        assert len(tools) == 4, f"Expected 4 tools, got {len(tools)}: {names}"
+        # 6개 도구: check_config, upload_images, register_product, get_product,
+        # prepare_listing, submit_reviews (T-201d)
+        assert len(tools) == 6, f"Expected 6 tools, got {len(tools)}: {names}"
 
 
 # ============================================================================ #

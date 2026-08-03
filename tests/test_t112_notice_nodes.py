@@ -536,7 +536,7 @@ class TestNoNoOp:
 class TestToolRegistrationPreserved:
     """T-112 변경 후에도 4개 도구가 등록되어 있는가."""
 
-    def test_four_tools_registered(self):
+    def test_tool_count_registered(self):
         import asyncio
         tools = mcp_server.mcp.list_tools()
         if hasattr(tools, "__await__"):
@@ -544,7 +544,7 @@ class TestToolRegistrationPreserved:
                 tools = asyncio.run(tools)
             except RuntimeError:
                 tools = asyncio.get_event_loop().run_until_complete(tools)
-        assert len(tools) == 4, f"도구가 4개여야 함: {len(tools)}"
+        assert len(tools) == 6, f"도구가 6개여야 함: {len(tools)}"
 
     def test_register_product_signature_unchanged(self):
         """register_product 파라미터가 유지되는가."""

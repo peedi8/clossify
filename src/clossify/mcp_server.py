@@ -2,12 +2,14 @@
 """Clossify MCP 서버 — 네이버 스마트스토어 등록 능력을 MCP 클라이언트 LLM에 부여.
 
 이 모듈은 MCP Python SDK(v2, PyPI `mcp`)의 `MCPServer`(FastMCP 후속)를 사용해
-로컬 stdio MCP 서버를 노출한다. 서버는 4개의 도구를 제공한다:
+로컬 stdio MCP 서버를 노출한다. 서버는 6개의 도구를 제공한다:
 
 - ``check_config``: 자격증명/설정 파일 존재 및 형식 검사 (외부 API 호출 없음).
 - ``upload_images``: 로컬 이미지 경로 리스트를 네이버 이미지서버에 업로드.
 - ``register_product``: 상품 정보를 받아 등록 페이로드를 구성하고 커머스 API로 등록.
 - ``get_product``: 등록된 상품(origin product)을 조회.
+- ``prepare_listing``: 상품 정보 + 이미지 소스로 prepared payload 를 만든다 (T-201d).
+- ``submit_reviews``: 클라이언트 LLM 의 검수 회신을 prepared payload 에 병합 (T-201d).
 
 모든 자격증명은 프로젝트 루트의 ``.local/config.json`` 에만 존재한다
 (ADR-0002 로컬 MCP + BYO-key). 이 서버 자체는 자격증명을 수탁/저장하지 않는다.
@@ -26,6 +28,7 @@ from mcp.server import MCPServer
 
 from . import naver_client
 from . import qa_agents
+from . import register as _register_mod
 
 # 서버 인스턴스 — 클라이언트 LLM이 discover 하는 도구들의 컨테이너.
 mcp = MCPServer("clossify")
@@ -735,6 +738,57 @@ def register_product(
             "error": None,
         }
 
+    # T-201d — 우회 경로 차단 (작업지시 요구 5).
+    #
+    # register_product 도구가 prepared payload 를 전혀 조회하지 않아, prepare 에서
+    # 막힌 상품도 원시 인자로 다시 부르면 등록되는 우회 경로가 존재했다. 내부에서
+    # product_key 를 유도해 prepared payload 가 존재하면 그 QA 집계를 완전 게이트로
+    # 적용한다(PENDING/FAIL 차단 — 네이버 호출 0회). prepared 가 없으면 기존대로
+    # 결정론 검사만 적용하고 응답에 gate:"deterministic_only" 를 표기한다.
+    # 시그니처는 변경하지 않는다.
+    prepared_gate_applied = False
+    gate_label = "deterministic_only"
+    if not _dry_run:
+        try:
+            _pkey = _register_mod.make_product_key(name, int(price))
+        except Exception:
+            _pkey = None
+        if _pkey:
+            try:
+                _prepared = _register_mod.load_prepared_payload(product_key=_pkey)
+            except FileNotFoundError:
+                _prepared = None
+            except ValueError:
+                # version 불일치 등 — 조용히 무시하지 않고 결정론 게이트로만 진행.
+                _prepared = None
+            if isinstance(_prepared, dict):
+                # prepared 가 존재하면 QA 집계를 완전 게이트로 적용.
+                _qa = _prepared.get("qa") if isinstance(_prepared.get("qa"), dict) else {}
+                _allowed, _reason = qa_agents.qa_gate(_prepared)
+                if not _allowed:
+                    # PENDING/FAIL 차단 — 네이버 호출 없이 거부.
+                    return {
+                        "ok": False,
+                        "status_code": None,
+                        "origin_product_no": None,
+                        "name_truncated": name_truncated,
+                        "raw": None,
+                        "seller_tags": None,
+                        "blocked_by": "prepared_qa_gate",
+                        "gate": "full",
+                        "reason": _reason,
+                        "needs_llm": _prepared.get("needs_llm") or [],
+                        "needs_user": _prepared.get("needs_user") or [],
+                        "message": (
+                            "prepared payload 의 QA 게이트가 등록을 차단했다 "
+                            f"(reason={_reason}). submit_reviews 로 PENDING 을 "
+                            "해소하거나 사용자 입력을 보완해야 한다."
+                        ),
+                        "error": None,
+                    }
+                prepared_gate_applied = True
+                gate_label = "full"
+
     # 결정론 게이트 통과 — 네이버 API 호출 진행.
     try:
         outcome = naver_client.register_product(payload)
@@ -750,6 +804,7 @@ def register_product(
             "name_truncated": name_truncated,  # Fix 5
             "raw": outcome,
             "seller_tags": None,
+            "gate": gate_label,  # T-201d
             "pending_reviews": gate["pending_reviews"],  # T-109
             "error": None,
         }
@@ -771,6 +826,7 @@ def register_product(
         "name_truncated": name_truncated,  # Fix 5
         "raw": exposed_raw,
         "seller_tags": seller_tags_meta,
+        "gate": gate_label,  # T-201d
         "pending_reviews": gate["pending_reviews"],  # T-109
         "error": None if ok else _sanitize_text(f"API 반환 상태 {status_code}"),
     }
@@ -813,6 +869,138 @@ def get_product(origin_product_no: str) -> dict[str, Any]:
         "status_code": status_code,
         "product": exposed_body if ok else None,
         "error": None if ok else _sanitize_text(f"API 반환 상태 {status_code}: {body}"),
+    }
+
+
+@mcp.tool()
+def prepare_listing(product: dict[str, Any]) -> dict[str, Any]:
+    """상품 정보 + 이미지 소스로 prepared payload 를 만든다 (T-201d).
+
+    등록 전 단계를 수행한다: 이미지 정규화(images.attach_images), 상세 HTML
+    렌더(detail_render), JPEG 비의존 QA 집계. 결과를 prepared payload 로
+    저장한다. 이미지 QA 는 래스터 렌더를 요구하므로 PENDING 등록하고, 카피
+    QA 도 LLM 판단이 필요하면 PENDING 이다(FAIL 로 만들지 않는다).
+
+    Args:
+        product: 상품 입력 dict. 필수 키:
+            - ``name`` (또는 ``title_ko``): 상품명(한국어).
+            - ``salePrice`` (또는 ``sell_price``/``price``): KRW 판매가.
+            - ``image_sources``: 이미지 소스 리스트(로컬 경로/CDN URL/외부 URL).
+            선택 키: ``options``, ``tags``, ``notice``, ``category_id`` 등.
+            URL 키(``url``/``source_url``/``item_url``/``detail_url``)는 거부.
+
+    Returns:
+        ``{"ok": bool, "product_key": str, "needs_llm": [...],
+        "needs_user": [...], "qa": {...}, "error": str | None}``
+
+    안내:
+        - ``needs_llm`` 의 각 항목은 ``submit_reviews`` 로 회신해야 한다.
+        - 회신하지 않으면 PENDING 이 유지되어 등록이 차단된다.
+        - 서버 자체는 LLM 을 호출하지 않는다(common._llm_hint 위임).
+    """
+    if not isinstance(product, dict):
+        return {
+            "ok": False,
+            "product_key": None,
+            "needs_llm": [],
+            "needs_user": [],
+            "qa": {},
+            "error": "product 는 dict 여야 합니다.",
+        }
+    try:
+        payload = _register_mod.prepare_listing(product)
+    except ValueError as exc:
+        return {
+            "ok": False,
+            "product_key": None,
+            "needs_llm": [],
+            "needs_user": [],
+            "qa": {},
+            "error": _sanitize_text(str(exc)),
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "product_key": None,
+            "needs_llm": [],
+            "needs_user": [],
+            "qa": {},
+            "error": f"prepare_listing 중 오류: {_sanitize_error(exc)}",
+        }
+    return {
+        "ok": True,
+        "product_key": payload.get("product_key"),
+        "needs_llm": payload.get("needs_llm") or [],
+        "needs_user": payload.get("needs_user") or [],
+        "qa": payload.get("qa") or {},
+        "error": None,
+    }
+
+
+@mcp.tool()
+def submit_reviews(product_key: str, reviews: list[dict[str, Any]]) -> dict[str, Any]:
+    """클라이언트 LLM 의 검수 회신을 prepared payload 의 QA 기록에 병합 (T-201d).
+
+    신뢰 모델(타협 불가):
+      - **덮어쓰기가 아니라 병합**: 서버 verdict 와 클라이언트 회신의 *더 나쁜
+        쪽* 을 채택한다(FAIL > PENDING > WARN > PASS).
+      - 서버가 기록한 violations 은 **절대 삭제하지 않는다**.
+      - 결과적으로 클라이언트는 ``PENDING -> PASS`` 로만 상향할 수 있고,
+        ``FAIL -> PASS`` 는 불가능하다.
+      - 제출 가능 agent 는 ``{"image","copy"}`` 로 고정. ``compliance`` 제출은
+        ``ValueError`` (결정론 검사를 클라이언트가 뒤집을 수 없다).
+
+    Args:
+        product_key: prepared payload 의 product_key.
+        reviews: ``[{"agent": "image"|"copy", "verdict": "PASS"|"WARN"|
+            "FAIL"|"PENDING", "violations": [...], "summary": str}, ...]``.
+
+    Returns:
+        ``{"ok": bool, "qa": {...}, "gate_allowed": bool, "error": str | None}``
+        - ``gate_allowed``: 갱신 후 QA 게이트가 등록을 허용하는지(PENDING/FAIL
+          이 없으면 True).
+    """
+    if not isinstance(product_key, str) or not product_key.strip():
+        return {
+            "ok": False,
+            "qa": {},
+            "gate_allowed": False,
+            "error": "product_key 는 비어있지 않은 문자열이어야 합니다.",
+        }
+    if not isinstance(reviews, list) or not reviews:
+        return {
+            "ok": False,
+            "qa": {},
+            "gate_allowed": False,
+            "error": "reviews 는 최소 1개 이상의 검수 항목 리스트여야 합니다.",
+        }
+    try:
+        aggregated = _register_mod.submit_reviews(product_key, reviews)
+    except ValueError as exc:
+        return {
+            "ok": False,
+            "qa": {},
+            "gate_allowed": False,
+            "error": _sanitize_text(str(exc)),
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "qa": {},
+            "gate_allowed": False,
+            "error": f"submit_reviews 중 오류: {_sanitize_error(exc)}",
+        }
+    # 갱신 후 게이트 통과 여부를 계산해 회신.
+    try:
+        _prepared = _register_mod.load_prepared_payload(product_key=product_key)
+        allowed, _reason = qa_agents.qa_gate(_prepared)
+    except Exception:
+        allowed = False
+    return {
+        "ok": True,
+        "qa": aggregated,
+        "gate_allowed": bool(allowed),
+        "error": None,
     }
 
 

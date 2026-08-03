@@ -550,12 +550,12 @@ class TestToolRegistrationPreserved:
                 tools = asyncio.run(tools)
             except RuntimeError:
                 tools = asyncio.get_event_loop().run_until_complete(tools)
-        assert len(tools) == 4, (
-            f"도구가 4개여야 함: {len(tools)}"
+        assert len(tools) == 6, (
+            f"도구가 6개여야 함: {len(tools)}"
         )
 
     def test_tool_names_unchanged(self):
-        """4개 도구 이름이 변경되지 않았는가."""
+        """6개 도구 이름이 변경되지 않았는가."""
         import asyncio
         tools = mcp_server.mcp.list_tools()
         if hasattr(tools, "__await__"):
@@ -565,7 +565,7 @@ class TestToolRegistrationPreserved:
                 tools = asyncio.get_event_loop().run_until_complete(tools)
         names = {getattr(t, "name", None) for t in tools}
         expected = {"check_config", "upload_images", "register_product",
-                    "get_product"}
+                    "get_product", "prepare_listing", "submit_reviews"}
         assert names == expected, f"도구 이름 불일치: {names}"
 
     def test_register_product_signature_unchanged(self):

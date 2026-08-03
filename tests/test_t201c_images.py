@@ -629,10 +629,10 @@ class TestMcpUploadUsesGuard:
 # --------------------------------------------------------------------------- #
 # MCP 도구 등록 — 4개 유지
 # --------------------------------------------------------------------------- #
-class TestFourToolsRegistered:
-    """4개 MCP 도구가 등록돼 있는지 (무회귀)."""
+class TestToolRegistrationPreserved:
+    """MCP 도구가 등록돼 있는지 (무회귀)."""
 
-    def test_four_tools(self):
+    def test_tool_count(self):
         import asyncio
         tools = mcp_server.mcp.list_tools()
         if hasattr(tools, "__await__"):
@@ -640,7 +640,7 @@ class TestFourToolsRegistered:
                 tools = asyncio.run(tools)
             except RuntimeError:
                 tools = asyncio.get_event_loop().run_until_complete(tools)
-        assert len(tools) == 4
+        assert len(tools) == 6
 
 
 # --------------------------------------------------------------------------- #
