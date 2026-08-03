@@ -11,27 +11,42 @@
 
 | 구분 | 항목 | 비고 |
 |------|------|------|
-| 되는 것 | MCP 도구 4개(`check_config`/`upload_images`/`register_product`/`get_product`) | 실제 커머스 API 등록 관통 |
+| 되는 것 | MCP 도구 6개(`check_config`/`upload_images`/`register_product`/`get_product`/`prepare_listing`/`submit_reviews`) | 실제 커머스 API 등록 관통 |
 | 되는 것 | 결정론 컴플라이언스 게이트(fail-closed) | 등록 직전 FAIL 위반 차단 |
 | 되는 것 | 카테고리 메타 데이터(리프 카테고리 약 4,999건)·고시 타입 35종 데이터 기반 검사 | `data/` |
 | 되는 것 | 이미지 입력 정규화(로컬 파일/외부 URL/이미 업로드된 CDN URL) | 매직바이트·확장자·크기·SSRF 가드 |
 | 되는 것 | API 응답 sanitization(시크릿/경로/traceback 마스킹) | `mcp_server._sanitize_*` |
-| 진행 중 | 상세페이지 렌더(`register._render_detail_html`) | `NotImplementedError` 스텁 |
-| 진행 중 | prepare 파이프라인 본체(`register.register_listing`의 입력→prepared 경로) | 스텁 |
-| 진행 중 | LLM 판단 위임 왕복(카피 QA·이미지 QA 회신 접합) | `pending_reviews`로 표기만, 미연결 |
+| 되는 것 | 상세페이지 렌더 + 편집 가능 문서(`detail_render.render_detail_html`/`build_scene`) | 섹션 조립 결과를 HTML 과 구조 문서로 동시 산출 |
+| 되는 것 | prepare 파이프라인 본체(`register.prepare_listing`) | 이미지 정규화 → 상세 렌더 → JPEG 비의존 QA → prepared payload 저장 |
+| 되는 것 | LLM 판단 위임 왕복(`submit_reviews`) | 미회신은 PENDING 으로 게이트 차단, 회신 시 통과 |
 | 아직 없음 | 이미지 생성 어댑터 연동 | config 키만 존재 |
 | 아직 없음 | 멀티몰 | 네이버 단일 |
 | 아직 없음 | GUI | stdio MCP 만 |
 
-> 컴플라이언스 게이트는 현재 결정론 위반(FAIL)만 차단한다. LLM 판단이 필요한
-> 카피/이미지 QA는 위임 왕복 연결 전이라 `pending_reviews`로 응답에 표기된다
-> (조용한 생략 아님). 집계 게이트(`qa_agents.qa_gate`) 정책은 PENDING 도 차단이며,
-> 도구 회선의 게이트와 집계 게이트의 차이는 `docs/ARCHITECTURE.md` 참고.
+> **게이트 정책**: 결정론 검사는 등록 직전 FAIL 위반을 차단한다(fail-closed).
+> LLM 판단이 필요한 카피/이미지 QA는 `prepare_listing` 경로에서 PENDING 으로
+> 등록되고, 집계 게이트(`qa_agents.qa_gate`)는 PENDING 도 차단하므로 미회신이면
+> 등록이 막힌다. 클라이언트는 `submit_reviews` 로 회신하며, 회신은 서버 판정과
+> **최악값 병합**(FAIL > PENDING > WARN > PASS)이므로 서버 FAIL 을 뒤집을 수
+> 없고, 결정론 검사(`compliance`)는 제출 자체가 거부된다. `register_product` 를
+> 직접 부를 때 prepared 기록이 있으면 완전 게이트(PENDING/FAIL 차단), 없으면
+> 결정론 검사만 적용하고 응답의 `gate` 필드로 그 사실을 표기한다. 도구 회선과
+> 집계 게이트의 차이는 `docs/ARCHITECTURE.md` 참고.
 
 ## 어떻게 쓰는가(개념)
 
 MCP의 UI는 자연어다. 사용자가 "이 사진들로 등록해줘"라고 말하면, 클라이언트 LLM이
 아래 도구를 호출한다. 서버는 검증하고 부족한 값이 있으면 무엇이 필요한지 되묻는다.
+
+**전형 흐름**: 사용자가 상품명·가격·사진(로컬 파일 또는 URL)을 건네면, 클라이언트는
+`prepare_listing` 으로 이미지 정규화·상세페이지 조립·QA 집계를 한 번에 수행한다.
+서버는 JPEG 비의존 QA는 바로 실행하고, 이미지/카피 품질처럼 LLM 판단이 필요한
+항목은 PENDING 으로 돌려 needs_llm 에 담아 who-asks-what 을 알려준다. 클라이언트가
+판단을 내려 `submit_reviews` 로 회신하면 PENDING 이 해소되고, 부족한 고시 값은
+사용자에게 되물어 보완한다. 게이트를 통과하면 `register_product` 가 커머스 API 로
+실제 등록을 하고 `get_product` 로 재검증한다. 요약하면 **사진을 주면 → 부족한 값을
+되묻고 → 확인 후 등록** 된다. 상세페이지 조립 결과는 편집 가능한 구조 문서로도
+같이 산출되며, 스펙은 `docs/scene-schema.md`.
 
 ### 도구
 
@@ -41,6 +56,8 @@ MCP의 UI는 자연어다. 사용자가 "이 사진들로 등록해줘"라고 �
 | `upload_images` | 로컬 이미지 경로 리스트를 검증 후 네이버 이미지서버에 업로드 → CDN URL 반환 | 네이버 이미지서버(쓰기) |
 | `register_product` | 상품 정보를 받아 페이로드 빌드 → 컴플라이언스 게이트 → 네이버 커머스 API 등록 | 네이버 커머스(쓰기) |
 | `get_product` | 등록된 상품(origin product)을 조회(재검증용) | 네이버 커머스(읽기) |
+| `prepare_listing` | 상품 정보 + 이미지 소스로 등록 전 준비: 이미지 정규화, 상세페이지 렌더, JPEG 비의존 QA 집계 후 prepared payload 저장. LLM 판단이 필요한 항목(needs_llm)과 사용자 입력이 필요한 항목(needs_user)을 알려준다 | 없음(로컬 검증만) |
+| `submit_reviews` | 클라이언트 LLM 의 카피/이미지 QA 판단을 prepared payload 의 QA 기록에 병합. 회신은 서버 판정과 최악값 병합(PENDING→PASS 만 허용, 서버 FAIL 불가)이며 compliance 제출은 거부된다 | 없음(prepared payload 갱신만) |
 
 ## 설계 원칙
 
@@ -84,7 +101,7 @@ cp config.example.json .local/config.json
 
 ## 개발자용
 
-> **ruff 버전 주의(T-205b)**: CI(`.github/workflows/ci.yml`)는 `ruff==0.6.9` 로
+> **ruff 버전 주의**: CI(`.github/workflows/ci.yml`)는 `ruff==0.6.9` 로
 > 고정되어 있다. 로컬에서 상위 버전을 쓰면 셀렉터 해석 차이로 "로컬은 통과, CI 는
 > 실패"가 발생한다(실제로 `ISC004`/`RUF059` 셀렉터가 상위 버전에만 있어 0.6.9 에서
 > 설정 파싱이 exit 2 로 실패한 사례가 있었다). 반드시 CI 와 **동일한 버전**을 설치할
