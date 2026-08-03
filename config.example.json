@@ -14,7 +14,7 @@
     "customer_id": "REPLACE_WITH_SEARCHAD_CUSTOMER_ID"
   },
   "image_providers": {
-    "_comment": "Paid image generation providers for detail-page cut shortages. See agents/IMAGE_GENERATION_PRICE_POLICY.md.",
+    "_comment": "Paid image generation providers for detail-page cut shortages. See agents/IMAGE_GENERATION_PRICE_POLICY.md. 향후 어댑터 연동 예정, 현재 미사용(코드가 이 섹션을 읽지 않음).",
     "openai": {
       "api_key": "REPLACE_WITH_OPENAI_API_KEY",
       "model": "gpt-image-2"

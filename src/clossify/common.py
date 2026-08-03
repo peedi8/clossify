@@ -2,10 +2,10 @@
 """Shared constants and JSON IO helpers.
 
 Ported from sourcing.py (T-201a part 1/2) as the DAG root module.
-Symbols whose source values contain forbidden tokens (upstream API
-gateway URL, as_tel literal, CLI command names) are resolved at runtime
-from config and raise ``ValueError`` when the config key is absent
-(fail-closed). No ``NotImplementedError`` stubs live in this module.
+Symbols whose source values contain forbidden tokens (e.g. the as_tel
+literal) are resolved at runtime from config and raise ``ValueError``
+when the config key is absent (fail-closed). No ``NotImplementedError``
+stubs live in this module.
 """
 from __future__ import annotations
 
@@ -39,12 +39,6 @@ SEO_MIN_SEARCH_VOLUME: int = 10
 VISION_QA_MAX_SIDE: int = 1568
 NAVER_OPTION_PRICE_DELTA_LIMIT_KRW: int = 500000
 
-# Live, in-process registry of vendor-B model cooldown expiry timestamps
-# (model name -> unix epoch seconds). Mutated at runtime by downstream
-# modules; persisted nowhere. Module-level so VENDOR_B_MODEL_COOLDOWN_UNTIL()
-# hands out the same dict every call.
-_VENDOR_B_COOLDOWN_REGISTRY: dict[str, float] = {}
-
 
 def cfg():
     """Return the loaded config dict.
@@ -58,10 +52,10 @@ def cfg():
 
 
 # ---------------------------------------------------------------------------
-# Stubs: values contain forbidden tokens (upstream API gateway URL,
-# phone literal, CLI binary names). They must not be reproduced verbatim.
-# Public accessor names are vendor-neutral (DEFAULT_VENDOR_A_*,
-# DEFAULT_VENDOR_B_*) to keep forbidden token count at 0.
+# Config section accessor. Used by live accessors below
+# (DEFAULT_AS_TEL). The ported layer that read "upstream" and "llm"
+# sections was removed in T-114 — those lanes are not part of this
+# product (text inference is owned by the MCP client).
 # ---------------------------------------------------------------------------
 
 def _cfg_section(name: str) -> dict:
@@ -71,22 +65,6 @@ def _cfg_section(name: str) -> dict:
     except Exception:
         return {}
     return section if isinstance(section, dict) else {}
-
-
-def OB() -> str:  # noqa: N802 - preserve source symbol name
-    """Upstream commerce-platform API gateway base URL (source L34).
-
-    Resolved at runtime from ``cfg()["upstream"]["base_url"]`` so the
-    literal URL (a forbidden token) never appears in source. Raises
-    ``ValueError`` when the config key is absent — fail-closed rather
-    than silently returning a placeholder.
-    """
-    url = str(_cfg_section("upstream").get("base_url") or "").strip()
-    if not url:
-        raise ValueError(
-            "upstream.base_url is not configured (T-201a: OB source L34)"
-        )
-    return url
 
 
 def DEFAULT_AS_TEL() -> str:
@@ -101,128 +79,6 @@ def DEFAULT_AS_TEL() -> str:
             "brand.as_tel is not configured (T-201a: DEFAULT_AS_TEL source L43)"
         )
     return tel
-
-
-def DEFAULT_VENDOR_A_CMD() -> str:
-    """Default vendor-A CLI binary name (source L50).
-
-    Resolved from ``cfg()["llm"]["vendor_a_cmd"]``; the literal command
-    name is treated as config-supplied so source stays token-free.
-    """
-    cmd = str(_cfg_section("llm").get("vendor_a_cmd") or "").strip()
-    if not cmd:
-        raise ValueError(
-            "llm.vendor_a_cmd is not configured (T-201a: DEFAULT_VENDOR_A_CMD L50)"
-        )
-    return cmd
-
-
-def DEFAULT_VENDOR_A_LLM_TIMEOUT() -> int:
-    """Default vendor-A LLM call timeout in seconds (source L51)."""
-    configured = _cfg_section("llm").get("vendor_a_timeout")
-    if configured is None:
-        return 60
-    try:
-        return int(configured)
-    except (TypeError, ValueError):
-        return 60
-
-
-def DEFAULT_VENDOR_B_CMD() -> str:
-    """Default vendor-B CLI binary name (source L52).
-
-    Resolved from ``cfg()["llm"]["vendor_b_cmd"]``.
-    """
-    cmd = str(_cfg_section("llm").get("vendor_b_cmd") or "").strip()
-    if not cmd:
-        raise ValueError(
-            "llm.vendor_b_cmd is not configured (T-201a: DEFAULT_VENDOR_B_CMD L52)"
-        )
-    return cmd
-
-
-def DEFAULT_VENDOR_B_MODEL() -> str:
-    """Default vendor-B model id (source L53). Resolved from config."""
-    model = str(_cfg_section("llm").get("vendor_b_model") or "").strip()
-    if not model:
-        raise ValueError(
-            "llm.vendor_b_model is not configured (T-201a: DEFAULT_VENDOR_B_MODEL L53)"
-        )
-    return model
-
-
-def DEFAULT_VENDOR_B_MODELS() -> tuple:
-    """Default vendor-B model order tuple (source L54).
-
-    Resolved from ``cfg()["llm"]["vendor_b_models"]`` (a list); returns an
-    empty tuple when unset so callers can degrade gracefully.
-    """
-    raw = _cfg_section("llm").get("vendor_b_models")
-    if isinstance(raw, (list, tuple)):
-        return tuple(str(m).strip() for m in raw if str(m).strip())
-    if isinstance(raw, str) and raw.strip():
-        return tuple(
-            str(m).strip() for m in raw.split(",") if str(m).strip()
-        )
-    return ()
-
-
-def DEFAULT_TRANSLATION_VENDOR_B_MODELS() -> tuple:
-    """Translation vendor-B model order tuple (source L55).
-
-    Resolved from ``cfg()["llm"]["translation_vendor_b_models"]``.
-    """
-    raw = _cfg_section("llm").get("translation_vendor_b_models")
-    if isinstance(raw, (list, tuple)):
-        return tuple(str(m).strip() for m in raw if str(m).strip())
-    if isinstance(raw, str) and raw.strip():
-        return tuple(
-            str(m).strip() for m in raw.split(",") if str(m).strip()
-        )
-    return ()
-
-
-def VENDOR_B_MODEL_COOLDOWN_UNTIL() -> dict:
-    """Vendor-B per-model cooldown-unixtime registry (source L56).
-
-    This is a runtime-mutable registry; it is *not* persisted to config.
-    The accessor returns the live module-level dict so callers mutate and
-    read the same object across the process lifetime.
-    """
-    return _VENDOR_B_COOLDOWN_REGISTRY
-
-
-def DEFAULT_VENDOR_B_MODEL_COOLDOWN_SECONDS() -> int:
-    """Vendor-B cooldown window in seconds (source L57)."""
-    configured = _cfg_section("llm").get("vendor_b_cooldown_seconds")
-    if configured is None:
-        return 30
-    try:
-        return int(configured)
-    except (TypeError, ValueError):
-        return 30
-
-
-# The op-name set identifies which LLM operations are translation-family;
-# the names themselves are neutral identifiers (not forbidden tokens) so
-# they are returned directly rather than read from config.
-_TRANSLATION_LLM_OPS_DEFAULT = frozenset({
-    "translate", "option_translate", "props_translate",
-    "title_translate", "desc_translate",
-})
-
-
-def TRANSLATION_LLM_OPS() -> set:  # noqa: N802 - preserve source symbol name
-    """Translation LLM op-name set (source L58).
-
-    The default closed set is returned; config may extend it via
-    ``cfg()["llm"]["translation_ops"]`` (a list appended to the defaults).
-    """
-    ops = set(_TRANSLATION_LLM_OPS_DEFAULT)
-    extra = _cfg_section("llm").get("translation_ops")
-    if isinstance(extra, (list, tuple)):
-        ops.update(str(o).strip().lower() for o in extra if str(o).strip())
-    return ops
 
 
 # ---------------------------------------------------------------------------
