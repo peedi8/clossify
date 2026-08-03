@@ -716,6 +716,8 @@ def prepare_listing(d, *, attach_fn=None):
           - ``product_key``: ``sha1(name+price)[:12]``.
           - ``images``: ``{"listing_urls": [...], "detail_urls": [...]}``.
           - ``detail_html``: 상세 HTML 문자열.
+          - ``scene``: 조립 결과 문서(T-301). ``detail_html`` 과 같은 조립
+            결과에서 나온 구조적 표현. ``docs/scene-schema.md`` 참조.
           - ``needs_llm``: LLM 위임이 필요한 항목 리스트.
           - ``needs_user``: 사용자 입력이 필요한 항목 리스트.
           - ``qa``: QA 집계 결과.
@@ -772,6 +774,10 @@ def prepare_listing(d, *, attach_fn=None):
     detail_urls = list(listing_urls)
 
     # --- 2. 상세 HTML 렌더 (detail_render.render_detail_html) ---
+    # T-301: scene 도 같은 입력에서 산출한다(요구 2: detail_html 과 scene 은
+    # 같은 조립 결과에서 나와야 한다 — 불일치 금지). build_scene 은
+    # render_detail_html 과 동일한 _assemble 로직을 공유하므로, 같은 입력을
+    # 넣으면 두 출력은 정합이다.
     options = d.get("options") or []
     product_for_render = {
         "name": name,
@@ -780,6 +786,9 @@ def prepare_listing(d, *, attach_fn=None):
         "notice": d.get("notice") or {},
     }
     detail_html = detail_render.render_detail_html(
+        product_for_render, listing_urls, options
+    )
+    scene = detail_render.build_scene(
         product_for_render, listing_urls, options
     )
 
@@ -915,6 +924,7 @@ def prepare_listing(d, *, attach_fn=None):
             "detail_urls": detail_urls,
         },
         "detail_html": detail_html,
+        "scene": scene,
         "needs_llm": needs_llm,
         "needs_user": needs_user,
         "qa": qa_result,
