@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """T-301 — 조립 결과 문서(scene) 산출 검증 테스트.
 
 작업지시(T-301) 의 Acceptance 반례 전체를 단위 테스트로 구현한다:
@@ -22,8 +21,11 @@ _SRC = _PROJECT_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from clossify import common, register  # noqa: E402
-from clossify import detail_render  # noqa: E402
+from clossify import (
+    common,
+    detail_render,
+    register,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -360,13 +362,9 @@ class TestMissingMarking:
         }
         scene = detail_render.build_scene(product, [], [])
         notice = [s for s in scene["sections"] if s["id"] == "notice"][0]
-        # notice 섹션은 color 행을 가짐.
-        labels = {r["label"] for r in notice["rows"]}
-        # 빈 값 행이 missing 으로 표시되어 있는지 확인.
-        missing_rows = [r for r in notice["rows"] if r["source"].get("missing")]
         # color 는 값이 있으므로 missing 이 아님.
         for row in notice["rows"]:
-            if row["label"] and row["label"].startswith("color") or "블랙" in str(row["value"]):
+            if (row["label"] and row["label"].startswith("color")) or "블랙" in str(row["value"]):
                 assert not row["source"].get("missing"), (
                     f"값이 있는 행이 missing 표시됨: {row}"
                 )

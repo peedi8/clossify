@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """카테고리 메타데이터 수집 스크립트 (T-110).
 
 네이버 커머스 API 에서 전체 카테고리 목록을 조회한 뒤, 리프(``last=true``)
@@ -43,7 +42,7 @@ _SRC_PATH = os.path.join(_REPO_ROOT, "src")
 if _SRC_PATH not in sys.path:
     sys.path.insert(0, _SRC_PATH)
 
-from clossify import naver_client as nc  # noqa: E402
+from clossify import naver_client as nc
 
 DATA_DIR = os.path.join(_REPO_ROOT, "data")
 META_PATH = os.path.join(DATA_DIR, "category_meta.json")

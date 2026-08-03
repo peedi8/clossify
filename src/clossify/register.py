@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """등록 오케스트레이션 (T-201b-r).
 
 원본 ``sourcing.py`` 의 등록 파이프라인을 이식하되, 작업지시의 핵심 개정사항을
@@ -27,9 +26,7 @@ import hashlib
 import re
 from pathlib import Path
 
-from . import common
-from . import qa_agents
-
+from . import common, qa_agents
 
 # ---------------------------------------------------------------------------
 # URL 입력 거부 (작업지시 핵심).
@@ -332,7 +329,6 @@ def register_prepared_listing(d):
         return {"ok": False, "blocked": True, "reason": reason, "product_key": product_key}
 
     product = payload.get("product") or {}
-    seo_title = str(product.get("name") or "")
     # prepared detail_html 를 그대로 사용(작업지시 요구 2: payload 의 detail_html).
     detail_html = str(payload.get("detail_html") or "")
     if not detail_html:
@@ -935,22 +931,22 @@ def prepare_listing(d, *, attach_fn=None):
 
 
 __all__ = [
-    "_reject_url_inputs",
-    "_sanitize_product_key",
-    "make_product_key",
-    "resolve_product_key",
+    "_build_product_dict",
     "_prepared_dir",
     "_prepared_item_dir",
     "_prepared_payload_path",
-    "write_prepared_payload",
-    "read_prepared_payload",
-    "load_prepared_payload",
-    "iter_prepared_payload_paths",
-    "_build_product_dict",
-    "register_prepared_listing",
-    "register_listing",
-    "inject_prepared_qa",
-    "prepare_listing",
-    "submit_reviews",
+    "_reject_url_inputs",
+    "_sanitize_product_key",
     "_validate_review_submission",
+    "inject_prepared_qa",
+    "iter_prepared_payload_paths",
+    "load_prepared_payload",
+    "make_product_key",
+    "prepare_listing",
+    "read_prepared_payload",
+    "register_listing",
+    "register_prepared_listing",
+    "resolve_product_key",
+    "submit_reviews",
+    "write_prepared_payload",
 ]

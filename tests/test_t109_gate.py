@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """T-109 — MCP 표면의 QA 게이트 우회 차단 검증 테스트.
 
 작업지시(T-109)가 요구하는 시나리오:
@@ -19,16 +18,13 @@ import sys
 from pathlib import Path
 from unittest import mock
 
-import pytest
-
 # src 레이아웃 지원.
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _SRC = _PROJECT_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from clossify import mcp_server, naver_client  # noqa: E402
-
+from clossify import common, mcp_server, naver_client
 
 # --------------------------------------------------------------------------- #
 # 테스트용 공통 픽스처.
@@ -71,13 +67,6 @@ class TestBlockClothingMissingFields:
     def test_blocks_clothing_without_material_and_size(self):
         """register_product 가 네이버를 호출하지 않고 거부하는가."""
         naver_calls = []
-        p = {
-            "name": "테스트니트",
-            "categoryId": _CLOTHING_CATEGORY,
-            "salePrice": 30000,
-            "origin_code": "04",
-            "made_in": "중국",
-        }
         # COMMERCE_DRY_RUN 이 설정되어 있지 않아야 게이트가 동작한다.
         with mock.patch.object(naver_client, "_notice_config",
                                return_value=_NOTICE_CFG_WITH_ORIGIN):
@@ -190,13 +179,6 @@ class TestBlockKcMissing:
     def test_blocks_kc_category_without_kc_info(self):
         """고데기 카테고리(50000151) + KC 정보 없음 → 거부."""
         naver_calls = []
-        p_dict = {
-            "name": "테스트고데기",
-            "categoryId": _KC_CATEGORY,
-            "salePrice": 50000,
-            "origin_code": "04",
-            "made_in": "중국",
-        }
         with mock.patch.object(naver_client, "_notice_config",
                                return_value=_NOTICE_CFG_WITH_ORIGIN):
             with mock.patch.object(naver_client, "_kc_config",
@@ -269,17 +251,26 @@ class TestPassClothingComplete:
                                return_value=_NOTICE_CFG_WITH_ORIGIN):
             with mock.patch.object(naver_client, "_kc_config",
                                    return_value=({}, "")):
-                with mock.patch.object(naver_client, "register_product",
-                                       side_effect=_mock_naver_register_called_recorder(
-                                           naver_calls)):
-                    result = mcp_server.register_product(
-                        name="테스트니트",
-                        price=30000,
-                        image_urls=["http://cdn/x.png"],
-                        category_id=_CLOTHING_CATEGORY,
-                        detail_html="<html><body>상세</body></html>",
-                        notice=notice_override,
-                    )
+                # _compliance_code_check 가 common.cfg().get(
+                # "smartstore_notice_defaults") 를 직접 읽기 때문에,
+                # CI(config.example.json)의 플레이스홀더 원산지와 충돌한다.
+                # _notice_config mock 값과 일치하도록 common.cfg 도 함께 덮어쓴다.
+                with mock.patch.object(common, "cfg", return_value={
+                    "smartstore_notice_defaults": {
+                        "origin_area_code": "04", "origin_content": "중국",
+                    },
+                }):
+                    with mock.patch.object(naver_client, "register_product",
+                                           side_effect=_mock_naver_register_called_recorder(
+                                               naver_calls)):
+                        result = mcp_server.register_product(
+                            name="테스트니트",
+                            price=30000,
+                            image_urls=["http://cdn/x.png"],
+                            category_id=_CLOTHING_CATEGORY,
+                            detail_html="<html><body>상세</body></html>",
+                            notice=notice_override,
+                        )
 
         assert result["ok"] is True, f"등록 실패: {result}"
         # 네이버 API 가 실제로 호출되었는지 확인.
@@ -304,16 +295,25 @@ class TestPassClothingComplete:
                                return_value=_NOTICE_CFG_WITH_ORIGIN):
             with mock.patch.object(naver_client, "_kc_config",
                                    return_value=({}, "")):
-                with mock.patch.object(naver_client, "register_product",
-                                       side_effect=_mock_naver_register_success):
-                    result = mcp_server.register_product(
-                        name="테스트니트",
-                        price=30000,
-                        image_urls=["http://cdn/x.png"],
-                        category_id=_CLOTHING_CATEGORY,
-                        detail_html="<html><body>상세</body></html>",
-                        notice=notice_override,
-                    )
+                # _compliance_code_check 가 common.cfg().get(
+                # "smartstore_notice_defaults") 를 직접 읽기 때문에,
+                # CI(config.example.json)의 플레이스홀더 원산지와 충돌한다.
+                # _notice_config mock 값과 일치하도록 common.cfg 도 함께 덮어쓴다.
+                with mock.patch.object(common, "cfg", return_value={
+                    "smartstore_notice_defaults": {
+                        "origin_area_code": "04", "origin_content": "중국",
+                    },
+                }):
+                    with mock.patch.object(naver_client, "register_product",
+                                           side_effect=_mock_naver_register_success):
+                        result = mcp_server.register_product(
+                            name="테스트니트",
+                            price=30000,
+                            image_urls=["http://cdn/x.png"],
+                            category_id=_CLOTHING_CATEGORY,
+                            detail_html="<html><body>상세</body></html>",
+                            notice=notice_override,
+                        )
 
         pending = result.get("pending_reviews")
         assert isinstance(pending, list)
@@ -385,16 +385,25 @@ class TestLlmPendingNotBlocked:
                                return_value=_NOTICE_CFG_WITH_ORIGIN):
             with mock.patch.object(naver_client, "_kc_config",
                                    return_value=({}, "")):
-                with mock.patch.object(naver_client, "register_product",
-                                       side_effect=_mock_naver_register_success):
-                    result = mcp_server.register_product(
-                        name="테스트니트",
-                        price=30000,
-                        image_urls=["http://cdn/x.png"],
-                        category_id=_CLOTHING_CATEGORY,
-                        detail_html="<html><body>상세</body></html>",
-                        notice=notice_override,
-                    )
+                # _compliance_code_check 가 common.cfg().get(
+                # "smartstore_notice_defaults") 를 직접 읽기 때문에,
+                # CI(config.example.json)의 플레이스홀더 원산지와 충돌한다.
+                # _notice_config mock 값과 일치하도록 common.cfg 도 함께 덮어쓴다.
+                with mock.patch.object(common, "cfg", return_value={
+                    "smartstore_notice_defaults": {
+                        "origin_area_code": "04", "origin_content": "중국",
+                    },
+                }):
+                    with mock.patch.object(naver_client, "register_product",
+                                           side_effect=_mock_naver_register_success):
+                        result = mcp_server.register_product(
+                            name="테스트니트",
+                            price=30000,
+                            image_urls=["http://cdn/x.png"],
+                            category_id=_CLOTHING_CATEGORY,
+                            detail_html="<html><body>상세</body></html>",
+                            notice=notice_override,
+                        )
 
         # LLM 미회신만 있는 경우 차단되지 않는다.
         assert result["ok"] is True

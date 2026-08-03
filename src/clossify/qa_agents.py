@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """품질 게이트 — 3분할 QA + 집계 + 등록 차단 (T-201b-r).
 
 원본 ``sourcing.py`` 의 QA 서브시스템을 이식하되, 작업지시의 핵심 개정사항을
@@ -25,7 +24,6 @@ from __future__ import annotations
 
 from . import common
 from .text_props import BANNED_CLAIM_RE
-
 
 # ---------------------------------------------------------------------------
 # Verdict 상수. PENDING 은 본 이식판이 새로 도입한 "위임 미회신" 상태다.
@@ -833,13 +831,27 @@ def qa_gate(payload):
 
 
 __all__ = [
-    "PASS", "WARN", "FAIL", "PENDING",
-    "_clamp_verdict", "_verdict_from_violations",
-    "_normalize_qa_result", "_qa_agent_result", "_normalize_agent_result",
+    "FAIL",
+    "PASS",
+    "PENDING",
+    "WARN",
+    "_clamp_verdict",
+    "_compliance_code_check",
+    "_copy_code_check",
+    "_infer_notice_type",
+    "_load_notice_types",
     "_merge_code_check",
-    "_load_notice_types", "_notice_type_spec", "_infer_notice_type",
-    "_notice_field_missing", "_compliance_code_check", "_copy_code_check",
-    "qa_image", "qa_copy", "qa_compliance",
-    "aggregate_qa_results", "run_qa_agents",
-    "replace_qa_agent_result", "qa_gate",
+    "_normalize_agent_result",
+    "_normalize_qa_result",
+    "_notice_field_missing",
+    "_notice_type_spec",
+    "_qa_agent_result",
+    "_verdict_from_violations",
+    "aggregate_qa_results",
+    "qa_compliance",
+    "qa_copy",
+    "qa_gate",
+    "qa_image",
+    "replace_qa_agent_result",
+    "run_qa_agents",
 ]

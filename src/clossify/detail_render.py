@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """상세 페이지 HTML 렌더 (T-201d) 및 조립 결과 문서(scene) 산출 (T-301).
 
 본 모듈은 ``templates`` 가 제공하는 상세 템플릿·CSS·레이아웃 상수를 사용해
@@ -30,12 +29,9 @@ scene 는 **하나의 조립 결과를 공유**한다 — 두 개의 진실이 �
 from __future__ import annotations
 
 import datetime
-from typing import Any
 
-from . import common
-from . import templates
-from .text_props import DETAIL_RENDER_WIDTH, _hesc, _detail_safe_text
-
+from . import common, templates
+from .text_props import DETAIL_RENDER_WIDTH, _detail_safe_text, _hesc
 
 # ---------------------------------------------------------------------------
 # T-301 — scene 문서 형식 상수.
@@ -531,10 +527,10 @@ def _wrap_document(body_html, *, image_urls=None):
         '<html lang="ko">',
         "<head>",
         '<meta charset="utf-8" />',
-        f'<meta name="viewport" content="width=device-width, initial-scale=1" />',
-        f"<style>",
-        f"body{{margin:0;padding:0;background:#fff;"
-        f"font-family:'Pretendard',sans-serif;color:#222}}",
+        '<meta name="viewport" content="width=device-width, initial-scale=1" />',
+        "<style>",
+        "body{margin:0;padding:0;background:#fff;"
+        "font-family:'Pretendard',sans-serif;color:#222}",
         f".detail-wrap{{max-width:{width}px;margin:0 auto;padding:0}}",
         css,
         "</style>",
@@ -681,8 +677,8 @@ def needs_llm_for_copy(product):
 
 
 __all__ = [
-    "render_detail_html",
+    "SCENE_FORMAT_VERSION",
     "build_scene",
     "needs_llm_for_copy",
-    "SCENE_FORMAT_VERSION",
+    "render_detail_html",
 ]

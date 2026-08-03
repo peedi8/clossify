@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Shared constants and JSON IO helpers.
 
 Ported from sourcing.py (T-201a part 1/2) as the DAG root module.

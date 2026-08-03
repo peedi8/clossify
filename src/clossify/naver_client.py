@@ -1,12 +1,18 @@
-# -*- coding: utf-8 -*-
 """검증된 네이버 커머스API 클라이언트 — 인증/이미지업로드/등록/조회/수정.
 2026-06-23 풀루프 실증된 흐름을 함수로 정리.
 
 경로 메모: 본 모듈은 src/clossify/ 에 위치하므로, 프로젝트 루트의
 .local/config.json 을 가리키기 위해 __file__ 기준 상위 2단계를 사용한다.
 """
-import copy, re, time, base64, json, os
-import bcrypt, requests
+import base64
+import copy
+import json
+import os
+import re
+import time
+
+import bcrypt
+import requests
 
 BASE = "https://api.commerce.naver.com"
 # src/clossify/naver_client.py -> ../../. = project root

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """T-402b — as_tel 설정 키 불일치 수리 검증 테스트.
 
 작업지시(T-402b)가 요구하는 시나리오:
@@ -22,15 +21,13 @@ import sys
 from pathlib import Path
 from unittest import mock
 
-import pytest
-
 # src 레이아웃 지원.
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _SRC = _PROJECT_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from clossify import mcp_server, naver_client  # noqa: E402
+from clossify import mcp_server, naver_client
 
 _CONFIG_EXAMPLE_PATH = _PROJECT_ROOT / "config.example.json"
 

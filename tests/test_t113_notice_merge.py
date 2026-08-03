@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """T-113 — 사용자 고시 입력값 무음 폐기 제거 검증 테스트.
 
 작업지시(T-113)가 요구하는 시나리오:
@@ -19,16 +18,13 @@ import sys
 from pathlib import Path
 from unittest import mock
 
-import pytest
-
 # src 레이아웃 지원.
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _SRC = _PROJECT_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from clossify import mcp_server, naver_client  # noqa: E402
-
+from clossify import common, mcp_server, naver_client
 
 # --------------------------------------------------------------------------- #
 # 테스트용 공통 픽스처.
@@ -335,20 +331,29 @@ class TestRegisterProductE2E:
                                return_value=_NOTICE_CFG_WITH_ORIGIN):
             with mock.patch.object(naver_client, "_kc_config",
                                    return_value=({}, "")):
-                with mock.patch.object(
-                    naver_client, "register_product",
-                    side_effect=lambda *a, **k: (
-                        naver_calls.append({"args": a, "kwargs": k})
-                        or (200, {"originProductNo": "test-t113-1"})
-                    )):
-                    result = mcp_server.register_product(
-                        name="테스트니트",
-                        price=30000,
-                        image_urls=["http://cdn/x.png"],
-                        category_id=_CLOTHING_CATEGORY,
-                        detail_html="<html><body>상세</body></html>",
-                        notice=notice_override,
-                    )
+                # _compliance_code_check 가 common.cfg().get(
+                # "smartstore_notice_defaults") 를 직접 읽기 때문에,
+                # CI(config.example.json)의 플레이스홀더 원산지와 충돌한다.
+                # _notice_config mock 값과 일치하도록 common.cfg 도 함께 덮어쓴다.
+                with mock.patch.object(common, "cfg", return_value={
+                    "smartstore_notice_defaults": {
+                        "origin_area_code": "04", "origin_content": "중국",
+                    },
+                }):
+                    with mock.patch.object(
+                        naver_client, "register_product",
+                        side_effect=lambda *a, **k: (
+                            naver_calls.append({"args": a, "kwargs": k})
+                            or (200, {"originProductNo": "test-t113-1"})
+                        )):
+                        result = mcp_server.register_product(
+                            name="테스트니트",
+                            price=30000,
+                            image_urls=["http://cdn/x.png"],
+                            category_id=_CLOTHING_CATEGORY,
+                            detail_html="<html><body>상세</body></html>",
+                            notice=notice_override,
+                        )
         assert result["ok"] is True, (
             f"등록 실패(컴플라이언스 차단?): {result}"
         )
@@ -382,17 +387,26 @@ class TestRegisterProductE2E:
                                return_value=_NOTICE_CFG_WITH_ORIGIN):
             with mock.patch.object(naver_client, "_kc_config",
                                    return_value=({}, "")):
-                with mock.patch.object(
-                    naver_client, "register_product",
-                    side_effect=capture):
-                    result = mcp_server.register_product(
-                        name="테스트니트",
-                        price=30000,
-                        image_urls=["http://cdn/x.png"],
-                        category_id=_CLOTHING_CATEGORY,
-                        detail_html="<html><body>상세</body></html>",
-                        notice=notice_override,
-                    )
+                # _compliance_code_check 가 common.cfg().get(
+                # "smartstore_notice_defaults") 를 직접 읽기 때문에,
+                # CI(config.example.json)의 플레이스홀더 원산지와 충돌한다.
+                # _notice_config mock 값과 일치하도록 common.cfg 도 함께 덮어쓴다.
+                with mock.patch.object(common, "cfg", return_value={
+                    "smartstore_notice_defaults": {
+                        "origin_area_code": "04", "origin_content": "중국",
+                    },
+                }):
+                    with mock.patch.object(
+                        naver_client, "register_product",
+                        side_effect=capture):
+                        result = mcp_server.register_product(
+                            name="테스트니트",
+                            price=30000,
+                            image_urls=["http://cdn/x.png"],
+                            category_id=_CLOTHING_CATEGORY,
+                            detail_html="<html><body>상세</body></html>",
+                            notice=notice_override,
+                        )
         assert result["ok"] is True
         notice = (
             captured_payload

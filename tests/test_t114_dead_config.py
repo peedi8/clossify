@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """T-114 — 이식 취소된 계층의 설정 리더 잔재 제거 검증.
 
 작업지시(T-114)가 요구하는 검증:
@@ -24,7 +23,7 @@ _SRC = _PROJECT_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from clossify import common  # noqa: E402
+from clossify import common
 
 _CONFIG_EXAMPLE_PATH = _PROJECT_ROOT / "config.example.json"
 
@@ -174,10 +173,9 @@ class TestLiveAccessorsIntact:
             "DEFAULT_AS_TEL 이 삭제됨 — live 접근자"
         )
         # cfg 가 비 구성일 때 fail-closed 동작 확인.
-        import unittest.mock as mock
-        with mock.patch.object(common, "cfg", return_value={}):
-            with pytest.raises(ValueError):
-                common.DEFAULT_AS_TEL()
+        from unittest import mock
+        with mock.patch.object(common, "cfg", return_value={}), pytest.raises(ValueError):
+            common.DEFAULT_AS_TEL()
 
     def test_cfg_section_still_works(self):
         """_cfg_section 헬퍼는 live 접근자가 쓰므로 유지되어야 한다."""
@@ -185,7 +183,7 @@ class TestLiveAccessorsIntact:
             "_cfg_section 이 삭제됨 — DEFAULT_AS_TEL 이 사용 중"
         )
         # 빈 cfg 에서는 {} 반환.
-        import unittest.mock as mock
+        from unittest import mock
         with mock.patch.object(common, "cfg", return_value={}):
             assert common._cfg_section("brand") == {}
 

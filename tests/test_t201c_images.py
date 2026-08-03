@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """T-201c-r — 이미지 입력 정규화 + 업로드 가드 정본화 테스트.
 
 이 테스트는 작업지시서 T-201c-r 의 Acceptance 항목을 전부 검증한다:
@@ -18,7 +17,6 @@ import os
 import socket
 import sys
 from pathlib import Path
-from typing import Any
 from unittest import mock
 
 import pytest
@@ -29,7 +27,7 @@ _SRC = _PROJECT_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from clossify import images, mcp_server, naver_client  # noqa: E402
+from clossify import images, mcp_server, naver_client
 
 
 # --------------------------------------------------------------------------- #
@@ -655,7 +653,7 @@ class TestModuleStructure:
         src = (_SRC / "clossify" / "images.py").read_text(encoding="utf-8")
         # from . import ... 또는 from clossify import ... 형태만 허용.
         import re
-        matches = re.findall(r"^\s*from\s+\.?\s*import\s+(\w+)", src, re.M)
+        matches = re.findall(r"^\s*from\s+\.?\s*import\s+(\w+)", src, re.MULTILINE)
         # common 과 naver_client 만 허용.
         forbidden_modules = {
             "mcp_server", "qa_agents", "category", "category_meta",

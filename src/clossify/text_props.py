@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Text and property extraction helpers.
 
 Ported from sourcing.py (T-201a part 1/2). Depends on :mod:`common`.
@@ -66,30 +65,30 @@ RETOUCH_GRID_PADDING: int = 12
 OPTION_LABEL_TEXT_RE = re.compile(
     r"(?:\bSTY(?:LE|IE|1E)\b|\bTYPE\b|\bMODEL\b|\bCOLOR\b|"
     r"(?<![A-Za-z0-9])[A-Z]\s*\d{1,3}(?![A-Za-z0-9]))",
-    re.I,
+    re.IGNORECASE,
 )
 
 SELLER_SIZE_TEXT_RE = re.compile(
     r"(?:\d+(?:\.\d+)?\s*(?:cm|mm|m|in|inch)"
     r"\s*(?:[*xX\u00d7]\s*)?){2,3}",
-    re.I,
+    re.IGNORECASE,
 )
 
 DETAIL_GARBAGE_TEXT_RE = re.compile(
     r"watermark|logo|coupon|free\s*shipping|sale",
-    re.I,
+    re.IGNORECASE,
 )
 
 DETAIL_INFOGRAPHIC_TEXT_RE = re.compile(
     r"our\s*product\s*advantages|product\s*advantages|"
     r"A5\s*melamine|melamine\s*material|"
     r"utensils?",
-    re.I,
+    re.IGNORECASE,
 )
 
-STRONG_GARBAGE_TEXT_RE = re.compile(r"(?!x)x", re.I)
+STRONG_GARBAGE_TEXT_RE = re.compile(r"(?!x)x", re.IGNORECASE)
 
-SELLER_NOTICE_HEADING_RE = re.compile(r"(?!x)x", re.I)
+SELLER_NOTICE_HEADING_RE = re.compile(r"(?!x)x", re.IGNORECASE)
 
 OPTION_CARD_TONES = {"brown", "orange", "pink", "green", "neutral"}
 OPTION_CODE_RE = re.compile(
@@ -113,7 +112,7 @@ BANNED_CLAIM_RE = re.compile(
     r"최고(?:급)?|최상급|"
     r"완벽(?:한|하게)?|"
     r"프리미엄",
-    re.I,
+    re.IGNORECASE,
 )
 
 EDITORIAL_NOISE_RE = re.compile(
@@ -123,7 +122,7 @@ EDITORIAL_NOISE_RE = re.compile(
     r"반품|교환|고객센터|"
     r"무료배송|특가|도매|"
     r"공장직영|쿠폰",
-    re.I,
+    re.IGNORECASE,
 )
 
 EMPTY_MARKETING_COPY_RE = re.compile(
@@ -133,7 +132,7 @@ EMPTY_MARKETING_COPY_RE = re.compile(
     r"공간을\s*완성|물드를\s*완성|"
     r"감성을\s*더하|각을\s*더하|"
     r"완벽한\s*선택|소중한\s*사람을\s*위한",
-    re.I,
+    re.IGNORECASE,
 )
 
 SENSORY_COPY_NOISE_RE = EMPTY_MARKETING_COPY_RE
@@ -144,7 +143,7 @@ SEO_TITLE_BANNED_RE = re.compile(
     r"정\s*품|최\s*고|1\s*위|공\s*식|100\s*%|정\s*식|명\s*품|고\s*급|"
     r"주문\s*폭주|즉시\s*할인|재입고|한정|첫구매|공짜|품절|MD\s*추천|"
     r"선착순|임박|인기|가성비|저렴|추천|신상품|이벤트|무료\s*배송",
-    re.I,
+    re.IGNORECASE,
 )
 
 SEO_STOPWORDS = {
@@ -205,7 +204,7 @@ def _normalize_desc_text(text, limit=6000):
     lines = []
     for line in re.split(r"[\r\n]+", text):
         line = re.sub(r"\s+", " ", line).strip()
-        if not line or re.fullmatch(r"https?://\S+", line, flags=re.I):
+        if not line or re.fullmatch(r"https?://\S+", line, flags=re.IGNORECASE):
             continue
         lines.append(line)
     return "\n".join(lines)[:limit].strip()
@@ -226,7 +225,7 @@ def desc_html_to_text(desc_html):
         parser.close()
         text = "".join(parser.parts)
     except Exception:
-        text = re.sub(r"<(script|style|noscript|svg)\b[\s\S]*?</\1>", " ", raw, flags=re.I)
+        text = re.sub(r"<(script|style|noscript|svg)\b[\s\S]*?</\1>", " ", raw, flags=re.IGNORECASE)
         text = re.sub(r"<[^>]+>", " ", text)
     return _normalize_desc_text(text)
 
@@ -381,27 +380,56 @@ def _fallback_seo_title(title_ko, props, category_path):
 
 
 __all__ = [
-    "MAIN_IMAGE_LIMIT", "LISTING_IMAGE_LIMIT", "DESC_IMAGE_SCAN_LIMIT",
-    "OPTION_GRID_LIMIT", "DETAIL_RENDER_WIDTH", "DETAIL_CONTENT_TARGET",
-    "DETAIL_ASPECT_TALL", "DETAIL_IMAGES_MIN", "DETAIL_IMAGES_MAX",
-    "DETAIL_TILE_MIN_CONTENT", "DETAIL_TILE_CONTENT_MAX",
-    "DETAIL_TILE_MAX_UPSCALE", "DETAIL_TILE_SKIP_MIN",
-    "DETAIL_RENDER_CAPTURE_SCALE", "DETAIL_RENDER_SEGMENT_MAX_DEVICE_PX",
-    "DETAIL_RENDER_FINAL_JPEG_QUALITY", "DETAIL_HERO_IMAGE_COUNT",
-    "DETAIL_MERGE_COLUMNS", "DETAIL_MERGE_ROWS", "DETAIL_MERGE_CELL",
-    "RETOUCH_SHEET_MAX_PX", "RETOUCH_GRID_MAX_DEFAULT",
-    "RETOUCH_GRID_MAX_LIMIT", "RETOUCH_GRID_MIN_CONTENT",
+    "BANNED_CLAIM_RE",
+    "DESC_IMAGE_SCAN_LIMIT",
+    "DETAIL_ASPECT_TALL",
+    "DETAIL_CONTENT_TARGET",
+    "DETAIL_GARBAGE_TEXT_RE",
+    "DETAIL_HERO_IMAGE_COUNT",
+    "DETAIL_IMAGES_MAX",
+    "DETAIL_IMAGES_MIN",
+    "DETAIL_INFOGRAPHIC_TEXT_RE",
+    "DETAIL_MERGE_CELL",
+    "DETAIL_MERGE_COLUMNS",
+    "DETAIL_MERGE_ROWS",
+    "DETAIL_RENDER_CAPTURE_SCALE",
+    "DETAIL_RENDER_FINAL_JPEG_QUALITY",
+    "DETAIL_RENDER_SEGMENT_MAX_DEVICE_PX",
+    "DETAIL_RENDER_WIDTH",
+    "DETAIL_TILE_CONTENT_MAX",
+    "DETAIL_TILE_MAX_UPSCALE",
+    "DETAIL_TILE_MIN_CONTENT",
+    "DETAIL_TILE_SKIP_MIN",
+    "EDITORIAL_NOISE_RE",
+    "EMPTY_MARKETING_COPY_RE",
+    "LISTING_IMAGE_LIMIT",
+    "MAIN_IMAGE_LIMIT",
+    "OPTION_CARD_TONES",
+    "OPTION_CODE_RE",
+    "OPTION_GRID_LIMIT",
+    "OPTION_LABEL_TEXT_RE",
+    "PROPERTY_FIELD_SPLIT_RE",
+    "RETOUCH_GRID_MAX_DEFAULT",
+    "RETOUCH_GRID_MAX_LIMIT",
+    "RETOUCH_GRID_MIN_CONTENT",
     "RETOUCH_GRID_PADDING",
-    "OPTION_LABEL_TEXT_RE", "SELLER_SIZE_TEXT_RE",
-    "DETAIL_GARBAGE_TEXT_RE", "DETAIL_INFOGRAPHIC_TEXT_RE",
-    "STRONG_GARBAGE_TEXT_RE", "SELLER_NOTICE_HEADING_RE",
-    "OPTION_CARD_TONES", "OPTION_CODE_RE", "PROPERTY_FIELD_SPLIT_RE",
-    "BANNED_CLAIM_RE", "EDITORIAL_NOISE_RE", "EMPTY_MARKETING_COPY_RE",
-    "SENSORY_COPY_NOISE_RE", "SEO_TITLE_BANNED_RE", "SEO_STOPWORDS",
-    "_strip_banned_claims",
-    "desc_html_to_text", "_normalize_desc_text", "_hesc",
-    "_first_text", "_compact_spaces", "_detail_safe_text",
+    "RETOUCH_SHEET_MAX_PX",
+    "SELLER_NOTICE_HEADING_RE",
+    "SELLER_SIZE_TEXT_RE",
+    "SENSORY_COPY_NOISE_RE",
+    "SEO_STOPWORDS",
+    "SEO_TITLE_BANNED_RE",
+    "STRONG_GARBAGE_TEXT_RE",
+    "_DescTextExtractor",
+    "_compact_spaces",
+    "_detail_safe_text",
+    "_fallback_seo_title",
+    "_first_text",
+    "_flatten_prop_terms",
+    "_hesc",
+    "_normalize_desc_text",
+    "_props_summary",
     "_sanitize_seo_title",
-    "_flatten_prop_terms", "_props_summary",
-    "_fallback_seo_title", "_DescTextExtractor",
+    "_strip_banned_claims",
+    "desc_html_to_text",
 ]

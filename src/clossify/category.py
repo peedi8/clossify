@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """카테고리 분류 — 토큰 기반 후보 산출 + LLM 확정 (T-201b-r).
 
 원본 ``sourcing.py`` L6582-L7071 의 카테고리 분류 파이프라인을 이식한다.
@@ -22,7 +21,6 @@ import re
 
 from . import common
 from .text_props import _compact_spaces, _props_summary, _strip_banned_claims
-
 
 # ---------------------------------------------------------------------------
 # 카테고리 타입 별칭 (source L6672-L6706).
@@ -376,15 +374,15 @@ def category_path(category_id, *, raise_if_unknown=False):
 
 
 __all__ = [
-    "_category_rows",
-    "_normalize_category_match_text",
+    "_category_candidates_from_tokens",
     "_category_input_has_term",
     "_category_input_text",
+    "_category_rows",
     "_category_token_specs",
-    "_category_candidates_from_tokens",
-    "_strong_category_candidate",
-    "llm_select_category_hint",
     "_llm_response_candidate_id",
-    "classify_category",
+    "_normalize_category_match_text",
+    "_strong_category_candidate",
     "category_path",
+    "classify_category",
+    "llm_select_category_hint",
 ]

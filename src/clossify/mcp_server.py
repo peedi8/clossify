@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Clossify MCP 서버 — 네이버 스마트스토어 등록 능력을 MCP 클라이언트 LLM에 부여.
 
 이 모듈은 MCP Python SDK(v2, PyPI `mcp`)의 `MCPServer`(FastMCP 후속)를 사용해
@@ -26,8 +25,7 @@ from typing import Any
 
 from mcp.server import MCPServer
 
-from . import naver_client
-from . import qa_agents
+from . import naver_client, qa_agents
 from . import register as _register_mod
 
 # 서버 인스턴스 — 클라이언트 LLM이 discover 하는 도구들의 컨테이너.
@@ -746,7 +744,6 @@ def register_product(
     # 적용한다(PENDING/FAIL 차단 — 네이버 호출 0회). prepared 가 없으면 기존대로
     # 결정론 검사만 적용하고 응답에 gate:"deterministic_only" 를 표기한다.
     # 시그니처는 변경하지 않는다.
-    prepared_gate_applied = False
     gate_label = "deterministic_only"
     if not _dry_run:
         try:
@@ -786,7 +783,6 @@ def register_product(
                         ),
                         "error": None,
                     }
-                prepared_gate_applied = True
                 gate_label = "full"
 
     # 결정론 게이트 통과 — 네이버 API 호출 진행.

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """T-105 / T-106 수정사항 검증 테스트.
 
 이 테스트는 T-105 의 8개 수정사항 각각에 대한 단위 테스트와
@@ -11,7 +10,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-import tempfile
 from pathlib import Path
 from unittest import mock
 
@@ -23,7 +21,7 @@ _SRC = _PROJECT_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from clossify import naver_client, mcp_server  # noqa: E402
+from clossify import mcp_server, naver_client
 
 
 # ============================================================================ #
@@ -89,25 +87,42 @@ class TestFix5NameTruncation:
     def test_long_name_truncated_in_dry_run(self, monkeypatch):
         monkeypatch.setenv("COMMERCE_DRY_RUN", "1")
         long_name = "A" * 80
-        result = mcp_server.register_product(
-            name=long_name,
-            price=10000,
-            image_urls=["http://x.png"],
-            category_id="50002366",
-            detail_html="<html></html>",
-        )
+        # _notice_config 에 원산지/연락처 기본값을 주어 build_payload 의
+        # _notice_defaults 단계에서 ValueError 가 발생하지 않게 한다.
+        # CI 환경(config.example.json)은 플레이스홀더 값이라 실제 config 를
+        # 읽으면 fail-closed 로 거부된다. 이 테스트의 대상은 상품명 절삭
+        # 여부이지 원산지 검사가 아니다.
+        _notice = {
+            "origin_area_code": "04", "origin_content": "중국",
+            "as_tel": "070-1234-5678", "manufacturer": "테스트제조사",
+        }
+        with mock.patch.object(naver_client, "_notice_config", return_value=_notice):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                result = mcp_server.register_product(
+                    name=long_name,
+                    price=10000,
+                    image_urls=["http://x.png"],
+                    category_id="50002366",
+                    detail_html="<html></html>",
+                )
         assert result["ok"] is True
         assert result.get("name_truncated") is True
 
     def test_short_name_not_truncated(self, monkeypatch):
         monkeypatch.setenv("COMMERCE_DRY_RUN", "1")
-        result = mcp_server.register_product(
-            name="짧은이름",
-            price=10000,
-            image_urls=["http://x.png"],
-            category_id="50002366",
-            detail_html="<html></html>",
-        )
+        _notice = {
+            "origin_area_code": "04", "origin_content": "중국",
+            "as_tel": "070-1234-5678", "manufacturer": "테스트제조사",
+        }
+        with mock.patch.object(naver_client, "_notice_config", return_value=_notice):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                result = mcp_server.register_product(
+                    name="짧은이름",
+                    price=10000,
+                    image_urls=["http://x.png"],
+                    category_id="50002366",
+                    detail_html="<html></html>",
+                )
         assert result["ok"] is True
         assert result.get("name_truncated") is False
 

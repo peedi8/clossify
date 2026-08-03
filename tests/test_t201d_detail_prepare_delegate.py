@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """T-201d — 상세 렌더 + prepare 본체 + 위임 왕복 + 게이트 승격 검증 테스트.
 
 작업지시(T-201d) 의 Acceptance 반례 전체를 단위 테스트로 구현한다.
@@ -19,8 +18,14 @@ _SRC = _PROJECT_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from clossify import common, qa_agents, register, mcp_server, naver_client  # noqa: E402
-from clossify import detail_render  # noqa: E402
+from clossify import (
+    common,
+    detail_render,
+    mcp_server,
+    naver_client,
+    qa_agents,
+    register,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -379,6 +384,16 @@ class TestBypassBlocking:
                                 "blocked": False, "violations": [],
                                 "needs_user": [], "pending_reviews": [],
                             })
+        # _notice_config / _kc_config 를 mock 하여 config 파일 의존을 제거한다.
+        # CI 환경(config.example.json)에서는 origin_area_code 가 플레이스홀더라
+        # build_payload 단계에서 ValueError 가 발생하기 때문이다. 이 테스트의
+        # 대상은 prepared_qa_gate 우회 차단이지 원산지 검사가 아니다.
+        monkeypatch.setattr(naver_client, "_notice_config",
+                            lambda: {"origin_area_code": "04", "origin_content": "중국",
+                                     "as_tel": "070-1234-5678",
+                                     "manufacturer": "테스트제조사"})
+        monkeypatch.setattr(naver_client, "_kc_config",
+                            lambda: ({}, ""))
         result = mcp_server.register_product(
             name=name,
             price=price,
@@ -413,9 +428,17 @@ class TestBypassBlocking:
                                    "origin_area_code": "04", "origin_content": "중국",
                                    "as_tel": "070-1234-5678",
                                    "manufacturer": "테스트제조사",
-                               }):
-            with mock.patch.object(naver_client, "_kc_config",
-                                   return_value=({}, "")):
+                               }), mock.patch.object(naver_client, "_kc_config",
+                               return_value=({}, "")):
+            # _compliance_code_check 가 common.cfg().get(
+            # "smartstore_notice_defaults") 를 직접 읽기 때문에,
+            # CI(config.example.json)의 플레이스홀더 원산지와 충돌한다.
+            # _notice_config mock 값과 일치하도록 common.cfg 도 함께 덮어쓴다.
+            with mock.patch.object(common, "cfg", return_value={
+                "smartstore_notice_defaults": {
+                    "origin_area_code": "04", "origin_content": "중국",
+                },
+            }):
                 with mock.patch.object(naver_client, "register_product",
                                        return_value=(200, {"originProductNo": "x"})):
                     result = mcp_server.register_product(

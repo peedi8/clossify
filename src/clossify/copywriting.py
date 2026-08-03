@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Naming agent and SEO copy normalisation.
 
 Ported from sourcing.py (T-201a part 1/2). Terminal node of the DAG:
@@ -492,8 +491,9 @@ def _agent_rules_bundle(agent_filename):
     """
     if agent_filename in _AGENT_RULES_CACHE:
         return _AGENT_RULES_CACHE[agent_filename]
-    from . import common
     from importlib import resources
+
+    from . import common
 
     candidates = []
     # 1. Source tree: <root>/agents/<filename>
@@ -621,19 +621,34 @@ def build_seo_title(title_ko, props, category_path):
 
 
 __all__ = [
-    "SEO_TITLE_UNIT_MIN", "SEO_TITLE_UNIT_MAX", "SEO_TITLE_TARGET_MAX_LEN",
-    "BANNED_CLAIM_RE", "EDITORIAL_NOISE_RE", "EMPTY_MARKETING_COPY_RE",
+    "BANNED_CLAIM_RE",
+    "EDITORIAL_NOISE_RE",
+    "EMPTY_MARKETING_COPY_RE",
     "SENSORY_COPY_NOISE_RE",
-    "SEO_SYNONYM_DEDUP_GROUPS", "SEO_SEMANTIC_DUPLICATE_GROUPS",
-    "_jsonish_loads", "_list_strings", "_normalize_dropped_entries",
-    "_agent_title_exclusion_terms", "_strip_agent_exclusion_terms",
-    "_valid_seo_title",
-    "_seo_title_units", "_seo_semantic_group_key", "_seo_add_title_unit",
-    "_seo_synonym_normalized_compact", "_seo_synonym_hits",
+    "SEO_SEMANTIC_DUPLICATE_GROUPS",
+    "SEO_SYNONYM_DEDUP_GROUPS",
+    "SEO_TITLE_TARGET_MAX_LEN",
+    "SEO_TITLE_UNIT_MAX",
+    "SEO_TITLE_UNIT_MIN",
+    "_agent_llm_json",
+    "_agent_rules_bundle",
+    "_agent_title_exclusion_terms",
+    "_apply_search_seo_to_naming",
+    "_fallback_naming_agent",
+    "_jsonish_loads",
+    "_list_strings",
+    "_normalize_dropped_entries",
+    "_normalize_naming_result",
+    "_seo_add_title_unit",
     "_seo_sanitize_synonym_duplicates",
-    "_fallback_naming_agent", "_normalize_naming_result",
-    "_apply_search_seo_to_naming", "_agent_rules_bundle",
-    "_agent_llm_json", "naming_agent", "build_seo_title",
+    "_seo_semantic_group_key",
+    "_seo_synonym_hits",
+    "_seo_synonym_normalized_compact",
+    "_seo_title_units",
+    "_strip_agent_exclusion_terms",
+    "_valid_seo_title",
+    "build_seo_title",
+    "naming_agent",
 ]
 
 

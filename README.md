@@ -85,8 +85,9 @@ cp config.example.json .local/config.json
 ## 개발자용
 
 ```sh
-python scripts/scan_repo.py   # 금칙어·한자·커밋메시지 스캔, 위반 시 exit 1
+ruff check .                  # 린트(CI와 동일 구성)
 pytest                        # 기존 테스트
+python scripts/scan_repo.py   # 금칙어·한자·커밋메시지 스캔, 위반 시 exit 1
 ```
 
 pre-commit(gitleaks 등) 설정은 저장소 참고. 자세한 설계·모듈 의존·데이터 자산은

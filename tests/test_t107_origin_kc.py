@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """T-107 — 원산지·KC 신고값 하드코딩 제거 검증 테스트.
 
 이 테스트는 해외 소싱 도구 원본의 규제 신고 하드코딩이 제거되었는지 확인한다:
@@ -25,7 +24,7 @@ _SRC = _PROJECT_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from clossify import naver_client  # noqa: E402
+from clossify import naver_client
 
 
 # ============================================================================ #

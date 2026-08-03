@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """판단 위임 계약 구성 (T-201b-r).
 
 원본 ``sourcing.py`` 의 에이전트 프롬프트 조립 로직을 이식한다. 단,
@@ -38,7 +37,6 @@ from .copywriting import (
     _agent_rules_bundle,
     _normalize_naming_result,
 )
-
 
 # ---------------------------------------------------------------------------
 # 공용 헬퍼: 에이전트 규칙 텍스트 로더 (source L3675-L3687 보존).

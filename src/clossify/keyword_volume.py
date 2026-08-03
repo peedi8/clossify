@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Search-volume and keyword helpers.
 
 Ported from sourcing.py (T-201a part 1/2). Depends on :mod:`common` and
@@ -17,7 +16,6 @@ import re
 
 from . import common
 from .text_props import _strip_banned_claims
-
 
 # ---------------------------------------------------------------------------
 # Naver SearchAd HTTP helpers (source L649-L718). Pure-Python; only the
@@ -55,7 +53,7 @@ def _searchad_signature(secret_key, timestamp, method, uri):
     import hashlib
     import hmac
 
-    message = f"{timestamp}.{method}.{uri}".encode("utf-8")
+    message = f"{timestamp}.{method}.{uri}".encode()
     digest = hmac.new(
         str(secret_key).encode("utf-8"), message, hashlib.sha256
     ).digest()
@@ -140,9 +138,11 @@ def _parse_keywordstool_response(data):
 
 
 __all__ = [
-    "_searchad_credentials", "_searchad_signature",
     "_clean_search_keyword",
-    "_parse_search_volume", "_parse_keywordstool_response",
+    "_parse_keywordstool_response",
+    "_parse_search_volume",
+    "_searchad_credentials",
+    "_searchad_signature",
 ]
 
 

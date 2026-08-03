@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """자체 저장소 검사 스크립트.
 
 누구든 ``python scripts/scan_repo.py`` 한 번이면 동일한 검사를 재현할 수 있다.

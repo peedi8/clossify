@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """SEO keyword planning and attribute classification.
 
 Ported from sourcing.py (T-201a part 1/2). Depends on :mod:`text_props`
@@ -270,8 +269,9 @@ def keyword_volume(keywords, *, use_cache=True):
         ``{keyword: int}`` mapping. Returns an empty dict when
         credentials are missing (the caller degrades gracefully).
     """
-    from . import common
     import time
+
+    from . import common
 
     creds = _kw_module._searchad_credentials()
     if not creds:
@@ -430,17 +430,26 @@ def classify_category_hint(source_context):
 
 
 __all__ = [
-    "SEO_UNRELATED_KEYWORDS", "SEO_GENERIC_KEYWORD_TOKENS",
-    "SEO_CATEGORY_ANCHOR_STOPWORDS", "SEO_RELATED_GROUPS",
+    "SEO_ATTRIBUTE_MATERIAL_ALLOWED",
+    "SEO_ATTRIBUTE_MATERIAL_DISPLAY",
+    "SEO_ATTRIBUTE_MATERIAL_GROUPS",
+    "SEO_ATTRIBUTE_TYPE_ALLOWED",
+    "SEO_ATTRIBUTE_TYPE_DISPLAY",
+    "SEO_ATTRIBUTE_TYPE_GROUPS",
+    "SEO_CATEGORY_ANCHOR_STOPWORDS",
     "SEO_CATEGORY_SIGNALS",
-    "SEO_ATTRIBUTE_MATERIAL_GROUPS", "SEO_ATTRIBUTE_TYPE_GROUPS",
-    "SEO_ATTRIBUTE_MATERIAL_ALLOWED", "SEO_ATTRIBUTE_TYPE_ALLOWED",
-    "SEO_ATTRIBUTE_MATERIAL_DISPLAY", "SEO_ATTRIBUTE_TYPE_DISPLAY",
+    "SEO_GENERIC_KEYWORD_TOKENS",
     "SEO_MATERIAL_SOURCE_KEYS",
-    "_keyword_compact", "_seo_term_compacts",
-    "_seo_known_terms_in_text", "_seo_attribute_group_hits",
+    "SEO_RELATED_GROUPS",
+    "SEO_UNRELATED_KEYWORDS",
+    "_keyword_compact",
+    "_seo_attribute_group_hits",
+    "_seo_known_terms_in_text",
     "_seo_material_source_text",
-    "keyword_volume", "seo_planner_hint", "classify_category_hint",
+    "_seo_term_compacts",
+    "classify_category_hint",
+    "keyword_volume",
+    "seo_planner_hint",
 ]
 
 

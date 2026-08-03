@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """카테고리 메타데이터 조회 헬퍼 (T-110).
 
 ``data/category_meta.json`` (및 ``data/certification_types.json``) 을 로드하여

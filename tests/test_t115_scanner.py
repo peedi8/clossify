@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """T-115 — 스캐너 자기유출 제거 검증 테스트.
 
 이 테스트는 ``scripts/scan_repo.py`` 가 두 층 설계로 올바르게 전환되었는지
@@ -21,7 +20,6 @@ from __future__ import annotations
 
 import importlib
 import io
-import os
 import sys
 from pathlib import Path
 
@@ -271,7 +269,7 @@ class TestMainNoticeAndExit:
         monkeypatch.setattr(scanner, "_REPO_ROOT", str(tmp_path))
         monkeypatch.setattr(scanner, "_LOCAL_LIST_PATH", str(tmp_path / "nope.txt"))
         monkeypatch.setattr(scanner, "SCAN_PATHS", [])
-        monkeypatch.setattr(scanner, "scan_commit_messages", lambda: [])
+        monkeypatch.setattr(scanner, "scan_commit_messages", list)
 
         buf = io.StringIO()
         monkeypatch.setattr(sys, "stdout", buf)
@@ -290,7 +288,7 @@ class TestMainNoticeAndExit:
         monkeypatch.setattr(scanner, "_LOCAL_LIST_PATH", str(tmp_path / "nope.txt"))
         monkeypatch.setattr(scanner, "SCAN_PATHS", ["src"])
         monkeypatch.setattr(scanner, "ALLOWED_MASKING_PAIRS", [])
-        monkeypatch.setattr(scanner, "scan_commit_messages", lambda: [])
+        monkeypatch.setattr(scanner, "scan_commit_messages", list)
 
         buf = io.StringIO()
         monkeypatch.setattr(sys, "stdout", buf)
