@@ -508,6 +508,8 @@ def upload_images(paths: list[str]) -> dict[str, Any]:
     주의:
         - 허용 확장자: ``.jpg``, ``.jpeg``, ``.png``, ``.webp``.
         - 단일 파일 크기 상한: 10MB.
+        - T-201c-r: 검증은 정본 가드 ``images.validate_local_image`` 에 위임한다.
+          확장자 위장·심링크·디렉터리·루트 밖 절대경로 등이 여기서 차단된다.
         - 인증 토큰은 ``naver_client.get_token()`` 이 내부에서 발급·사용한다.
         - 설정이 완료되지 않았다면 ``check_config`` 를 먼저 호출하라.
     """
@@ -519,8 +521,6 @@ def upload_images(paths: list[str]) -> dict[str, Any]:
             "error": "paths 는 최소 1개 이상의 이미지 경로 리스트여야 합니다.",
         }
 
-    # 경로 정규화: 상대경로를 CLOSSIFY_UPLOAD_ROOT 기준 절대경로로.
-    resolved = []
     bad_type = [p for p in paths if not isinstance(p, str)]
     if bad_type:
         return {
@@ -529,50 +529,25 @@ def upload_images(paths: list[str]) -> dict[str, Any]:
             "count": 0,
             "error": "paths 의 각 원소는 문자열이어야 합니다.",
         }
+
+    # T-201c-r — 정본 로컬 이미지 가드로 교체. 도구 시그니처/반환 계약 유지.
+    # mcp_server._MAX_IMAGE_BYTES 를 max_bytes 오버라이드로 넘겨 기존 테스트가
+    # monkeypatch 한 상한을 존중한다.
+    from . import images as _images_mod  # 방향: mcp_server -> images (허용)
+    resolved: list[str] = []
     for raw in paths:
-        resolved.append(_resolve_upload_path(raw))
-
-    # 존재 검증.
-    missing = [p for p in resolved if not os.path.isfile(p)]
-    if missing:
-        return {
-            "ok": False,
-            "image_urls": [],
-            "count": 0,
-            "error": f"존재하지 않는 이미지 파일: {missing}",
-        }
-
-    # 확장자 화이트리스트 검증 (Fix 1).
-    bad_ext = [p for p in resolved if os.path.splitext(p)[1].lower() not in _ALLOWED_IMAGE_EXTS]
-    if bad_ext:
-        return {
-            "ok": False,
-            "image_urls": [],
-            "count": 0,
-            "error": (
-                f"허용되지 않은 확장자. 허용: {sorted(_ALLOWED_IMAGE_EXTS)}. "
-                f"파일: {bad_ext}"
-            ),
-        }
-
-    # 파일 크기 상한 검증 (Fix 1).
-    too_big = []
-    for p in resolved:
-        try:
-            if os.path.getsize(p) > _MAX_IMAGE_BYTES:
-                too_big.append(p)
-        except OSError:
-            too_big.append(p)
-    if too_big:
-        return {
-            "ok": False,
-            "image_urls": [],
-            "count": 0,
-            "error": (
-                f"파일 크기 초과 (최대 {_MAX_IMAGE_BYTES // (1024 * 1024)}MB). "
-                f"파일: {too_big}"
-            ),
-        }
+        v = _images_mod.validate_local_image(
+            raw, max_bytes=_MAX_IMAGE_BYTES
+        )
+        if not v["ok"]:
+            reason = "; ".join(v["errors"]) if v["errors"] else "검증 실패"
+            return {
+                "ok": False,
+                "image_urls": [],
+                "count": 0,
+                "error": f"이미지 검증 실패 ({raw}): {reason}",
+            }
+        resolved.append(v["path"])
 
     try:
         urls = naver_client.upload_images(resolved)
