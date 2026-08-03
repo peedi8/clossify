@@ -17,4 +17,4 @@ Clossify는 원래 SaaS로 기획되었으나, 셀러 도구의 최대 진입 �
 ## 결과
 
 - 무료 사용자 = 배포망이자 QA망. 수익화는 서버 측 부가 서비스(편집 등)와 상업 라이선스로 이연.
-- OSI 인정 "오픈소스" 명칭은 포기 (fair-code는 OSI 정의 밖).
+- OSI 인정 "오픈소스(open source)" 명칭은 포기 (fair-code는 OSI 정의 밖이며, 본 저장소는 source-available 으로 표기한다).
