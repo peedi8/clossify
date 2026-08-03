@@ -1,6 +1,6 @@
-"""T-201c-r — 이미지 입력 정규화 + 업로드 가드 정본화 테스트.
+"""이미지 입력 정규화 + 업로드 가드 정본화 테스트.
 
-이 테스트는 작업지시서 T-201c-r 의 Acceptance 항목을 전부 검증한다:
+이 테스트는 다음 반례 항목을 전부 검증한다:
 
   - 로컬 이미지 가드 반례(디렉터리/심링크/루트밖 절대경로/매직바이트 위장)
   - 외부 URL SSRF 반례(루프백/사설/링크로컬/예약대역/10진·16진·8진 IP 표기/
@@ -138,10 +138,10 @@ WEBP_HEADER = b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP" + b"\x00" * 32
 
 
 # --------------------------------------------------------------------------- #
-# 로컬 이미지 가드 반례 — Acceptance ① ~ ⑤
+# 로컬 이미지 가드 반례 — 반례 ① ~ ⑤
 # --------------------------------------------------------------------------- #
-class TestLocalGuardAcceptance:
-    """``validate_local_image`` 가 작업지시 반례 5종을 모두 다루는가."""
+class TestLocalGuardCases:
+    """``validate_local_image`` 가 로컬 이미지 가드 반례 5종을 모두 다루는가."""
 
     def test_text_file_with_jpg_extension_rejected(self, tmp_path):
         """① .jpg 인데 내용이 텍스트 → 매직바이트 위장으로 거부."""
@@ -221,7 +221,7 @@ class TestExternalUrlGuardDefault:
     """허용목록 미설정/비었을 때 외부 URL 은 전부 거부."""
 
     def test_arbitrary_url_rejected_when_allowlist_empty(self, monkeypatch):
-        """Acceptance: https://example.com/x.jpg → 거부(사유에 허용목록 안내)."""
+        """https://example.com/x.jpg → 거부(사유에 허용목록 안내)."""
         monkeypatch.delenv("CLOSSIFY_IMAGE_FETCH_ALLOW_HOSTS", raising=False)
         r = images.fetch_external_image(
             "https://example.com/x.jpg",
@@ -246,7 +246,7 @@ class TestExternalUrlGuardDefault:
 # 외부 URL SSRF 가드 — 허용목록에 호스트를 넣은 상태에서의 반례
 # --------------------------------------------------------------------------- #
 class TestSsrfCounterexamples:
-    """작업지시 Acceptance SSRF 반례 전부."""
+    """SSRF 반례 전부."""
 
     def setup_method(self):
         # 테스트 전역 상태 오염 방지용 루트 비움.
@@ -471,7 +471,7 @@ class TestSsrfCounterexamples:
 # 정규화 진입점 attach_images — 순서 보존 / 재업로드 금지 / fail-closed
 # --------------------------------------------------------------------------- #
 class TestAttachImages:
-    """``attach_images`` 가 작업지시 Acceptance 정규화 반례를 다루는가."""
+    """``attach_images`` 가 정규화 반례를 다루는가."""
 
     def test_mixed_local_and_cdn_preserves_order(self, tmp_path):
         """로컬 + 네이버 CDN URL 혼합 → urls 가 입력 순서 유지."""
@@ -596,7 +596,7 @@ class TestMcpUploadUsesGuard:
     """mcp_server.upload_images 가 확장자 위장 파일을 거부하는가(정본 가드 적용)."""
 
     def test_rejects_extension_mismatch(self, tmp_path):
-        """Acceptance: .jpg 인데 내용이 텍스트 → 도구가 거부."""
+        """.jpg 인데 내용이 텍스트 → 도구가 거부."""
         fake = tmp_path / "fake.jpg"
         fake.write_text("this is text")
         r = mcp_server.upload_images([str(fake)])

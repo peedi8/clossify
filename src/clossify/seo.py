@@ -1,6 +1,6 @@
 """SEO keyword planning and attribute classification.
 
-Ported from sourcing.py (T-201a part 1/2). Depends on :mod:`text_props`
+Ported from the original sourcing pipeline. Depends on :mod:`text_props`
 and :mod:`keyword_volume` (the spec lists ``copywriting`` as a
 downstream consumer; this module stays upstream of it).
 
@@ -18,10 +18,9 @@ from . import keyword_volume as _kw_module
 from .text_props import _compact_spaces, _detail_safe_text
 
 # ---------------------------------------------------------------------------
-# SEO keyword sets (source L3813-L3865). Pure ASCII identifiers + Korean
-# string literals. The Korean tokens are required for the classifier to
-# function and are expressed via ``\u`` escapes to keep the source file
-# ASCII-only (Hard Constraint 2: CJK count == 0).
+# SEO keyword sets. Pure ASCII identifiers + Korean string literals. The
+# Korean tokens are required for the classifier to function and are
+# expressed as literal characters.
 # ---------------------------------------------------------------------------
 
 SEO_UNRELATED_KEYWORDS = {
@@ -253,7 +252,7 @@ SEO_CATEGORY_SIGNALS = {
 }
 
 # ---------------------------------------------------------------------------
-# SEO attribute dictionaries (source L3973-L4011).
+# SEO attribute dictionaries.
 # ---------------------------------------------------------------------------
 
 SEO_ATTRIBUTE_MATERIAL_GROUPS = (
@@ -318,7 +317,7 @@ SEO_MATERIAL_SOURCE_KEYS = (
 
 
 # ---------------------------------------------------------------------------
-# Keyword compaction helpers (source L4014-L4047). Pure-Python.
+# Keyword compaction helpers. Pure-Python.
 # ---------------------------------------------------------------------------
 
 
@@ -389,19 +388,19 @@ def _seo_material_source_text(source_context, *, max_len=1800):
 
 
 # ---------------------------------------------------------------------------
-# Keyword volume client (source L620-L718). Wraps the Naver SearchAds
-# KeywordTool API using the credential reader + signature helper already
-# ported in :mod:`keyword_volume`. Returns ``{keyword: total_volume}``.
+# Keyword volume client. Wraps the Naver SearchAds KeywordTool API using
+# the credential reader + signature helper already ported in
+# :mod:`keyword_volume`. Returns ``{keyword: total_volume}``.
 # ---------------------------------------------------------------------------
 
 
 def keyword_volume(keywords, *, use_cache=True):
     """Fetch PC+mobile search volumes for ``keywords`` from Naver SearchAds.
 
-    Source L620. Uses the credential reader, HMAC-SHA256 signature helper
-    and response parser already ported in :mod:`keyword_volume`. Results
-    are cached on disk (:data:`common.KW_CACHE_PATH`) when ``use_cache``
-    is True so repeated runs within a session avoid extra API calls.
+    Uses the credential reader, HMAC-SHA256 signature helper and response
+    parser already ported in :mod:`keyword_volume`. Results are cached on
+    disk (:data:`common.KW_CACHE_PATH`) when ``use_cache`` is True so
+    repeated runs within a session avoid extra API calls.
 
     Args:
         keywords: iterable of keyword strings. Each is cleaned via
@@ -492,18 +491,18 @@ def keyword_volume(keywords, *, use_cache=True):
 
 
 # ---------------------------------------------------------------------------
-# SEO planner llm_hint (source L5017-L5257). The full search-SEO planner
-# depends on the LLM provider; this entry point returns an ``llm_hint``
-# descriptor for the MCP host.
+# SEO planner llm_hint. The full search-SEO planner depends on the LLM
+# provider; this entry point returns an ``llm_hint`` descriptor for the
+# MCP host.
 # ---------------------------------------------------------------------------
 
 
 def seo_planner_hint(source_title, props, category_path, *, candidate_keywords=None):
     """Return an ``llm_hint`` for the search-SEO keyword planner.
 
-    Source L5017. The host LLM receives the source title, flattened prop
-    terms, the category path, and (optionally) pre-fetched keyword
-    volumes. It returns a ranked keyword list + suggested seller tags.
+    The host LLM receives the source title, flattened prop terms, the
+    category path, and (optionally) pre-fetched keyword volumes. It
+    returns a ranked keyword list + suggested seller tags.
 
     The ``instruction`` references the registration-agent's keyword
     selection rules (relevance-first, front-load high-volume core
@@ -517,11 +516,11 @@ def seo_planner_hint(source_title, props, category_path, *, candidate_keywords=N
     volume_lookup_failed = False
     volume_lookup_error: str | None = None
     if candidate_keywords:
-        # T-201a-r6: do NOT swallow lookup failures as an empty dict. Either
-        # propagate the exception or surface a failure flag so the host LLM
-        # (and downstream callers) can tell "no volume data" apart from
-        # "lookup broke". Here we catch, record the reason, and still let the
-        # hint proceed — but the descriptor explicitly carries the failure.
+        # Do NOT swallow lookup failures as an empty dict. Either propagate
+        # the exception or surface a failure flag so the host LLM (and
+        # downstream callers) can tell "no volume data" apart from "lookup
+        # broke". Here we catch, record the reason, and still let the hint
+        # proceed — but the descriptor explicitly carries the failure.
         try:
             volumes = keyword_volume(candidate_keywords)
         except Exception as exc:

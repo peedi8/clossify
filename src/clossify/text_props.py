@@ -1,14 +1,14 @@
 """Text and property extraction helpers.
 
-Ported from sourcing.py (T-201a part 1/2). Depends on :mod:`common`.
+Ported from the original sourcing pipeline. Depends on :mod:`common`.
 
-T-201a-r5: all Chinese (Hanja) detection and stripping code has been
+All Chinese (Hanja) detection and stripping code has been
 removed entirely. This product only ingests Korean user-supplied text,
 so there is no input path that could carry Chinese ideographs. The
 Korean marketing-claim filters are preserved and use literal Korean
 characters.
 
-T-201a-r6: this module is now the canonical home of the text-filter
+This module is now the canonical home of the text-filter
 regexes (``BANNED_CLAIM_RE``, ``EDITORIAL_NOISE_RE``, ...). Downstream
 modules (``copywriting``) import them from here. This module no longer
 imports any other ``clossify`` submodule — the previous lazy import of
@@ -23,13 +23,13 @@ import html
 import re
 from html.parser import HTMLParser
 
-# T-201a-r6: this module must not import any other ``clossify`` submodule
+# This module must not import any other ``clossify`` submodule
 # (top-level or lazy). It is the upstream node of the DAG; ``copywriting``
 # and ``seo`` import from here, never the reverse. ``_safe_float`` is
 # available from :mod:`common` directly — do not re-export it here.
 
 # ---------------------------------------------------------------------------
-# Image / detail rendering limits (source L2360-L2387). Pure literals.
+# Image / detail rendering limits. Pure literals.
 # ---------------------------------------------------------------------------
 
 MAIN_IMAGE_LIMIT = None
@@ -98,9 +98,9 @@ OPTION_CODE_RE = re.compile(
 PROPERTY_FIELD_SPLIT_RE = re.compile(r"[:\uff1a]")
 
 # ---------------------------------------------------------------------------
-# Text-filter regexes — canonical home (source L3546-L3563, L3626-L3635).
+# Text-filter regexes — canonical home.
 #
-# T-201a-r6: these were previously defined in ``copywriting`` and imported
+# These were previously defined in ``copywriting`` and imported
 # lazily from here, creating a hidden circular dependency. The canonical
 # definitions now live in this module (the upstream DAG node).
 # Korean patterns are literal characters.
@@ -137,7 +137,7 @@ EMPTY_MARKETING_COPY_RE = re.compile(
 
 SENSORY_COPY_NOISE_RE = EMPTY_MARKETING_COPY_RE
 
-# SEO-title specific banned patterns (source L3626-L3631). These are a
+# SEO-title specific banned patterns. These are a
 # superset of the marketing-claim regex aimed at title copy.
 SEO_TITLE_BANNED_RE = re.compile(
     r"정\s*품|최\s*고|1\s*위|공\s*식|100\s*%|정\s*식|명\s*품|고\s*급|"
@@ -170,7 +170,7 @@ SEO_STOPWORDS = {
 
 
 # ---------------------------------------------------------------------------
-# Description HTML -> text helpers (source L3258-L3370).
+# Description HTML -> text helpers.
 # ---------------------------------------------------------------------------
 
 
@@ -279,7 +279,7 @@ def _hesc(value, default=""):
 
 
 # ---------------------------------------------------------------------------
-# Property flatten / summarise (source L7074-L7172).
+# Property flatten / summarise.
 # ---------------------------------------------------------------------------
 
 
@@ -302,9 +302,8 @@ def _compact_spaces(text):
 def _strip_banned_claims(text):
     """Strip banned Korean marketing claims and collapse whitespace.
 
-    Source L3583. ``BANNED_CLAIM_RE`` lives in this module (T-201a-r6),
-    so this helper performs the real removal rather than being an
-    identity.
+    ``BANNED_CLAIM_RE`` lives in this module, so this helper performs
+    the real removal rather than being an identity.
     """
     text = BANNED_CLAIM_RE.sub(" ", str(text or ""))
     text = re.sub(r"\s{2,}", " ", text)
@@ -326,7 +325,7 @@ def _detail_safe_text(text, default=""):
 def _sanitize_seo_title(text, *, max_len=100):
     """Sanitise a candidate SEO title.
 
-    Source L3644. Restored to the original pipeline:
+    Restored to the original pipeline:
       1. strip banned marketing claims (``BANNED_CLAIM_RE``)
       2. strip SEO-title-specific banned patterns (``SEO_TITLE_BANNED_RE``)
       3. drop non-Korean/non-ASCII-alnum/non-space characters

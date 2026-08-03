@@ -1,8 +1,8 @@
-"""T-301 — 조립 결과 문서(scene) 산출 검증 테스트.
+"""조립 결과 문서(scene) 산출 검증 테스트.
 
-작업지시(T-301) 의 Acceptance 반례 전체를 단위 테스트로 구현한다:
+본 테스트는 scene 산출 반례 전체를 단위 테스트로 구현한다:
   - 결정론: 같은 입력으로 build_scene 두 번 호출 → generatedAt 제외 동일.
-  - HTML 무회귀: 같은 입력의 render_detail_html 결과가 이 티켓 전후로 동일.
+  - HTML 무회귀: 같은 입력의 render_detail_html 결과가 도입 전후로 동일.
   - 정합성: prepare_listing 의 scene 과 detail_html 이 같은 입력에서 나옴.
   - provenance: 사용자 제공 값의 source.field 가 실제 입력 경로와 일치.
   - missing 표시: 사용자가 소재를 주지 않은 경우 행이 missing: true 로 남음.
@@ -142,7 +142,7 @@ class TestDeterminism:
 # HTML 무회귀 반례.
 # --------------------------------------------------------------------------- #
 class TestHtmlNoRegression:
-    """render_detail_html 결과가 이 티켓 전후로 동일."""
+    """render_detail_html 결과가 도입 전후로 동일."""
 
     def test_html_still_returns_doctype(self):
         html = detail_render.render_detail_html(
@@ -447,10 +447,10 @@ class TestSceneStructure:
 
 
 # --------------------------------------------------------------------------- #
-# T-301b — 고시 본문 필드 분해 + 미제공 필수 항목 표시 반례.
+# 고시 본문 필드 분해 + 미제공 필수 항목 표시 반례.
 # --------------------------------------------------------------------------- #
 class TestNoticeDecomposition:
-    """T-301b 결함 1: 고시 본문 dict 를 필드 단위 행으로 분해."""
+    """고시 본문 dict 를 필드 단위 행으로 분해."""
 
     def test_wear_material_color_size_separate_rows(self):
         """WEAR 입력 → material/color/size 가 각각 별도 행."""
@@ -527,7 +527,7 @@ class TestNoticeDecomposition:
 
 
 class TestMissingRequiredFields:
-    """T-301b 결함 2: 미제공 필수 항목을 value:'' + source.missing:true 로 표시."""
+    """미제공 필수 항목을 value:'' + source.missing:true 로 표시."""
 
     def test_missing_material_row_exists_with_missing_flag(self):
         """소재를 주지 않은 WEAR 입력 → material 행이 존재하고 missing:true."""

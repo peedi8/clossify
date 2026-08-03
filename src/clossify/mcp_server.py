@@ -7,8 +7,8 @@
 - ``upload_images``: 로컬 이미지 경로 리스트를 네이버 이미지서버에 업로드.
 - ``register_product``: 상품 정보를 받아 등록 페이로드를 구성하고 커머스 API로 등록.
 - ``get_product``: 등록된 상품(origin product)을 조회.
-- ``prepare_listing``: 상품 정보 + 이미지 소스로 prepared payload 를 만든다 (T-201d).
-- ``submit_reviews``: 클라이언트 LLM 의 검수 회신을 prepared payload 에 병합 (T-201d).
+- ``prepare_listing``: 상품 정보 + 이미지 소스로 prepared payload 를 만든다.
+- ``submit_reviews``: 클라이언트 LLM 의 검수 회신을 prepared payload 에 병합.
 
 모든 자격증명은 프로젝트 루트의 ``.local/config.json`` 에만 존재한다
 (ADR-0002 로컬 MCP + BYO-key). 이 서버 자체는 자격증명을 수탁/저장하지 않는다.
@@ -47,7 +47,7 @@ _MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
 
 # --------------------------------------------------------------------------- #
-# Fix 7 — 에러 sanitization (T-106 강화)
+# Fix 7 — 에러 sanitization
 # --------------------------------------------------------------------------- #
 # traceback/에러 메시지에서 제거해야 할 민감 패턴.
 _SENSITIVE_PATTERNS = [
@@ -198,10 +198,10 @@ def _resolve_upload_path(raw_path: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# T-109 — 결정론 컴플라이언스 게이트 (fail-closed).
+# 결정론 컴플라이언스 게이트 (fail-closed).
 #
 # register_product 가 네이버 API 를 호출하기 직전에 결정론 검사를 실행한다.
-# LLM 판단이 필요한 항목(카피/이미지 QA)은 위임 왕복이 T-201c 에서 붙기 전까지
+# LLM 판단이 필요한 항목(카피/이미지 QA)은 위임 왕복이 붙기 전까지
 # 항상 미회신(PENDING) 상태이므로, 본 게이트는 **결정론 위반(FAIL)만 차단**하고
 # LLM 판단 미회신은 차단하지 않되 응답에 ``pending_reviews`` 로 표기한다.
 # --------------------------------------------------------------------------- #
@@ -209,7 +209,7 @@ def _resolve_upload_path(raw_path: str) -> str:
 # 고시 필드 이름 → 한국어 라벨/사유 매핑.
 # data/notice_types.json 의 필드명은 camelCase 영어라서 사용자가 바로 이해하기
 # 어렵다. 이 매핑은 거부 응답의 needs_user 항목에 사람이 읽을 수 있는 안내를
-# 제공하기 위해 사용한다. 작업지시: "필드명만 던지지 말고 사람이 이해할 라벨·
+# 제공하기 위해 사용한다. 정책: "필드명만 던지지 말고 사람이 이해할 라벨·
 # 사유를 함께 준다."
 _NOTICE_FIELD_LABELS: dict[str, tuple[str, str]] = {
     "material": ("소재", "이 카테고리 고시 필수 항목이며 추정할 수 없습니다"),
@@ -373,7 +373,7 @@ def _run_compliance_gate(
             )
 
     # needs_user: 결정론 위반 중 "고시 필수필드" 위반에서 누락 필드명을 추출해
-    # 사용자 입력 요청으로 변환. 작업지시가 요구하는 구조:
+    # 사용자 입력 요청으로 변환. 요구되는 구조:
     #   {"field": ..., "label": ..., "why": ...}
     needs_user: list[dict[str, str]] = []
     seen_fields: set[str] = set()
@@ -402,13 +402,13 @@ def _run_compliance_gate(
                     )
 
     pending_reviews: list[str] = []
-    # 카피/이미지 QA 는 위임 왕복(T-201c)이 붙기 전까지 항상 미회신이다.
+    # 카피/이미지 QA 는 위임 왕복이 붙기 전까지 항상 미회신이다.
     # 결정론 게이트 통과 시 이 사실을 응답에 표기한다 (조용한 생략 금지).
     # 단, 결정론 FAIL 로 차단된 경우에는 pending_reviews 가 무의미하므로 빈 리스트.
     if not fail_violations:
         pending_reviews = [
-            "copy_qa: 카피 품질 LLM 판단 대기 중 (T-201c 위임 왕복 연동 전)",
-            "image_qa: 이미지 적합성 LLM 판단 대기 중 (T-201c 위임 왕복 연동 전)",
+            "copy_qa: 카피 품질 LLM 판단 대기 중",
+            "image_qa: 이미지 적합성 LLM 판단 대기 중",
         ]
 
     return {
@@ -489,8 +489,8 @@ def check_config() -> dict[str, Any]:
     result["missing"] = missing
     result["placeholders"] = placeholders
 
-    # T-109 — 원산지 설정 여부 점검 항목 추가.
-    # 값 자체는 반환하지 않고 채워짐/비어있음만 보고한다 (작업지시 요구사항 4).
+    # 원산지 설정 여부 점검 항목 추가.
+    # 값 자체는 반환하지 않고 채워짐/비어있음만 보고한다.
     # 원산지가 설정되어 있지 않으면 register_product 의 컴플라이언스 게이트가
     # 등록을 거부한다 — 사용자에게 이 사실을 안내한다.
     origin_set = False
@@ -512,10 +512,10 @@ def check_config() -> dict[str, Any]:
             "등록을 거부합니다."
         )
 
-    # T-402b — AS 전화번호 정본 위치 점검 항목 추가.
+    # AS 전화번호 정본 위치 점검 항목 추가.
     # 정본은 smartstore_notice_defaults.as_tel 이다 (naver_client._notice_defaults 가
     # cfg_notice.get("as_tel") 로 읽는 자리). 값 자체는 반환하지 않고
-    # 채워짐/비어있음만 보고한다 (작업지시 요구사항 3). 미설정 시 등록이 거부된다는
+    # 채워짐/비어있음만 보고한다. 미설정 시 등록이 거부된다는
     # 안내를 포함한다.
     as_tel_set = False
     if isinstance(notice_defaults, dict):
@@ -552,7 +552,7 @@ def upload_images(paths: list[str]) -> dict[str, Any]:
     주의:
         - 허용 확장자: ``.jpg``, ``.jpeg``, ``.png``, ``.webp``.
         - 단일 파일 크기 상한: 10MB.
-        - T-201c-r: 검증은 정본 가드 ``images.validate_local_image`` 에 위임한다.
+        - 검증은 정본 가드 ``images.validate_local_image`` 에 위임한다.
           확장자 위장·심링크·디렉터리·루트 밖 절대경로 등이 여기서 차단된다.
         - 인증 토큰은 ``naver_client.get_token()`` 이 내부에서 발급·사용한다.
         - 설정이 완료되지 않았다면 ``check_config`` 를 먼저 호출하라.
@@ -574,7 +574,7 @@ def upload_images(paths: list[str]) -> dict[str, Any]:
             "error": "paths 의 각 원소는 문자열이어야 합니다.",
         }
 
-    # T-201c-r — 정본 로컬 이미지 가드로 교체. 도구 시그니처/반환 계약 유지.
+    # 정본 로컬 이미지 가드로 교체. 도구 시그니처/반환 계약 유지.
     # mcp_server._MAX_IMAGE_BYTES 를 max_bytes 오버라이드로 넘겨 기존 테스트가
     # monkeypatch 한 상한을 존중한다.
     from . import images as _images_mod  # 방향: mcp_server -> images (허용)
@@ -703,7 +703,7 @@ def register_product(
     except Exception as exc:  # Fix 7 — sanitized
         return _fail(f"등록 중 오류(페이로드 빌드): {_sanitize_error(exc)}")
 
-    # T-109 — 결정론 컴플라이언스 게이트 (fail-closed).
+    # 결정론 컴플라이언스 게이트 (fail-closed).
     # 네이버 API 호출 직전에 고시 필수 필드/KC/원산지 검사를 실행한다.
     # FAIL 심각도 위반이 있으면 네이버를 호출하지 않고 거부한다.
     # 예외를 삼켜 등록을 진행시키지 않는다 (무동작·identity 금지).
@@ -720,8 +720,8 @@ def register_product(
             "violations": [],
             "needs_user": [],
             "pending_reviews": [
-                "copy_qa: 카피 품질 LLM 판단 대기 중 (T-201c 위임 왕복 연동 전)",
-                "image_qa: 이미지 적합성 LLM 판단 대기 중 (T-201c 위임 왕복 연동 전)",
+                "copy_qa: 카피 품질 LLM 판단 대기 중",
+                "image_qa: 이미지 적합성 LLM 판단 대기 중",
             ],
         }
     else:
@@ -756,7 +756,7 @@ def register_product(
             "error": None,
         }
 
-    # T-201d — 우회 경로 차단 (작업지시 요구 5).
+    # 우회 경로 차단.
     #
     # register_product 도구가 prepared payload 를 전혀 조회하지 않아, prepare 에서
     # 막힌 상품도 원시 인자로 다시 부르면 등록되는 우회 경로가 존재했다. 내부에서
@@ -820,8 +820,8 @@ def register_product(
             "name_truncated": name_truncated,  # Fix 5
             "raw": outcome,
             "seller_tags": None,
-            "gate": gate_label,  # T-201d
-            "pending_reviews": gate["pending_reviews"],  # T-109
+            "gate": gate_label,
+            "pending_reviews": gate["pending_reviews"],
             "error": None,
         }
 
@@ -836,7 +836,7 @@ def register_product(
         naver_client.seller_tag_autostrip_meta(body) if isinstance(body, dict) else None
     )
 
-    # 에러 응답의 raw 본문은 화이트리스트 키만 남겨 노출 (T-106 Fix 3).
+    # 에러 응답의 raw 본문은 화이트리스트 키만 남겨 노출.
     exposed_raw = _sanitize_body(body) if not ok else body
 
     return {
@@ -846,8 +846,8 @@ def register_product(
         "name_truncated": name_truncated,  # Fix 5
         "raw": exposed_raw,
         "seller_tags": seller_tags_meta,
-        "gate": gate_label,  # T-201d
-        "pending_reviews": gate["pending_reviews"],  # T-109
+        "gate": gate_label,
+        "pending_reviews": gate["pending_reviews"],
         "error": None if ok else _sanitize_text(f"API 반환 상태 {status_code}"),
     }
 
@@ -894,7 +894,7 @@ def get_product(origin_product_no: str) -> dict[str, Any]:
 
 @mcp.tool()
 def prepare_listing(product: dict[str, Any]) -> dict[str, Any]:
-    """상품 정보 + 이미지 소스로 prepared payload 를 만든다 (T-201d).
+    """상품 정보 + 이미지 소스로 prepared payload 를 만든다.
 
     등록 전 단계를 수행한다: 이미지 정규화(images.attach_images), 상세 HTML
     렌더(detail_render), JPEG 비의존 QA 집계. 결과를 prepared payload 로
@@ -959,7 +959,7 @@ def prepare_listing(product: dict[str, Any]) -> dict[str, Any]:
 
 @mcp.tool()
 def submit_reviews(product_key: str, reviews: list[dict[str, Any]]) -> dict[str, Any]:
-    """클라이언트 LLM 의 검수 회신을 prepared payload 의 QA 기록에 병합 (T-201d).
+    """클라이언트 LLM 의 검수 회신을 prepared payload 의 QA 기록에 병합.
 
     신뢰 모델(타협 불가):
       - **덮어쓰기가 아니라 병합**: 서버 verdict 와 클라이언트 회신의 *더 나쁜

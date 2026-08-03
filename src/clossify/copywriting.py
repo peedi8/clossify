@@ -1,26 +1,25 @@
 """Naming agent and SEO copy normalisation.
 
-Ported from sourcing.py (T-201a part 1/2). Terminal node of the DAG:
+Ported from the original sourcing pipeline. Terminal node of the DAG:
 depends on :mod:`common`, :mod:`text_props`, :mod:`keyword_volume`
 and :mod:`seo`.
 
-Per the spec the signature of :func:`_normalize_naming_result` uses
+The signature of :func:`_normalize_naming_result` uses
 ``source_title`` (renamed from the original ``title_cn``); a falsy
 ``source_title`` now raises :class:`ValueError` before normalisation.
 
-T-201a-r4: Chinese detection / stripping code has been removed entirely.
+Chinese detection / stripping code has been removed entirely.
 This product only ever ingests Korean user input, so there is no path
 for Chinese text to enter the pipeline. Korean marketing-claim filters
 (``BANNED_CLAIM_RE`` etc.) are preserved and now use literal Korean.
 
-T-201a-r6: the text-filter regexes (``BANNED_CLAIM_RE``,
-``EDITORIAL_NOISE_RE``, ...) are now imported from :mod:`text_props`
+The text-filter regexes (``BANNED_CLAIM_RE``,
+``EDITORIAL_NOISE_RE``, ...) are imported from :mod:`text_props`
 (their canonical home) rather than redefined here — this resolves the
 circular dependency that previously forced a lazy-import workaround.
 The full synonym-dedup machinery (``_seo_sanitize_synonym_duplicates``
-and its helpers) is ported from sourcing.py. Search-volume lookup
-failures in ``_apply_search_seo_to_naming`` are no longer silently
-swallowed.
+and its helpers) is preserved. Search-volume lookup failures in
+``_apply_search_seo_to_naming`` are not silently swallowed.
 """
 
 from __future__ import annotations
@@ -41,7 +40,7 @@ from .text_props import (
 )
 
 # ---------------------------------------------------------------------------
-# SEO title targets (source L3905-L3907).
+# SEO title targets.
 # ---------------------------------------------------------------------------
 
 SEO_TITLE_UNIT_MIN: int = 6
@@ -50,7 +49,7 @@ SEO_TITLE_TARGET_MAX_LEN: int = 50
 
 
 # ---------------------------------------------------------------------------
-# Synonym / semantic duplicate groups (source L3960-L3971).
+# Synonym / semantic duplicate groups.
 #
 # Korean literals are required for the dedup logic to function.
 # ---------------------------------------------------------------------------
@@ -79,7 +78,7 @@ SEO_SEMANTIC_DUPLICATE_GROUPS = (
 
 
 # ---------------------------------------------------------------------------
-# List/string normalisation helpers (source L3712-L3744). Pure-Python.
+# List/string normalisation helpers. Pure-Python.
 # ---------------------------------------------------------------------------
 
 
@@ -137,7 +136,7 @@ def _normalize_dropped_entries(value, *, limit=20):
 
 
 # ---------------------------------------------------------------------------
-# Agent-rule driven term stripping (source L3747-L3759).
+# Agent-rule driven term stripping.
 # ---------------------------------------------------------------------------
 
 
@@ -147,8 +146,8 @@ def _agent_title_exclusion_terms():
     Source: read from the packaged ``COMPLIANCE_RULES.md`` asset. Returns
     an empty tuple when the asset is missing or the section is absent.
 
-    T-201a-r4: the Korean-only token scan no longer admits Hanja ranges;
-    only Hangul syllables are collected.
+    The Korean-only token scan does not admit Hanja ranges; only Hangul
+    syllables are collected.
     """
     try:
         bundle = _agent_rules_bundle("COMPLIANCE_RULES.md")
@@ -178,7 +177,7 @@ def _agent_title_exclusion_terms():
 def _strip_agent_exclusion_terms(title, source_text, dropped):
     """Strip agent-rule exclusion terms from ``title`` and record drops.
 
-    Source L3747. Returns ``(sanitised_title, dropped)``.
+    Returns ``(sanitised_title, dropped)``.
     """
     title = str(title or "")
     source_text = str(source_text or "")
@@ -197,7 +196,7 @@ def _strip_agent_exclusion_terms(title, source_text, dropped):
 def _valid_seo_title(text):
     """Return True if ``text`` is a non-trivial usable SEO title.
 
-    Source L3664. A title is valid when it is non-empty after stripping,
+    A title is valid when it is non-empty after stripping and
     contains at least one Hangul or ASCII letter.
     """
     text = str(text or "").strip()
@@ -209,21 +208,20 @@ def _valid_seo_title(text):
 
 
 # ---------------------------------------------------------------------------
-# Synonym dedup machinery (source L4247-L4316).
+# Synonym dedup machinery.
 #
-# T-201a-r6: ported the full implementation from sourcing.py. The previous
-# stub only collapsed exact-duplicate whitespace tokens and silently let
-# real synonyms (e.g. 화병/꽃병/플라워베이스) through.
+# The full implementation collapses synonym groups (e.g. 화병/꽃병/플라워베이스)
+# rather than only exact-duplicate whitespace tokens.
 # ---------------------------------------------------------------------------
 
 
 def _seo_title_units(title):
-    """Split a title string into normalised keyword units (source L4870)."""
+    """Split a title string into normalised keyword units."""
     return keyword_volume._clean_search_keyword(title, max_len=120).split()
 
 
 def _seo_semantic_group_key(term):
-    """Return a semantic group key for ``term`` (source L4247).
+    """Return a semantic group key for ``term``.
 
     Units that share a semantic group (e.g. colour variants, material
     variants) are treated as duplicates by ``_seo_add_title_unit``.
@@ -242,7 +240,7 @@ def _seo_semantic_group_key(term):
 
 
 def _seo_add_title_unit(units, term, *, allow_group_duplicate=False):
-    """Append ``term`` to ``units`` with dedup (source L4874).
+    """Append ``term`` to ``units`` with dedup.
 
     Returns True when at least one unit was added.
     """
@@ -268,7 +266,7 @@ def _seo_add_title_unit(units, term, *, allow_group_duplicate=False):
 
 
 def _seo_synonym_normalized_compact(text):
-    """Return a synonym-normalised compact form of ``text`` (source L4258).
+    """Return a synonym-normalised compact form of ``text``.
 
     Aliases within a synonym group are rewritten to the group's canonical
     (first) member so that ``화병`` and ``꽃병`` collapse to the same key.
@@ -304,7 +302,7 @@ def _seo_synonym_hits(text, group):
 
 
 def _seo_sanitize_synonym_duplicates(text, *, max_len=SEO_TITLE_TARGET_MAX_LEN):
-    """Collapse duplicate interior synonym tokens (source L4297).
+    """Collapse duplicate interior synonym tokens.
 
     Walks the title units; for each unit, compute its synonym-normalised
     key. If a unit is synonymous with one already kept, drop it. This
@@ -333,19 +331,20 @@ def _seo_sanitize_synonym_duplicates(text, *, max_len=SEO_TITLE_TARGET_MAX_LEN):
 
 
 # ---------------------------------------------------------------------------
-# Naming agent (source L3762-L3810, L5259-L5291).
+# Naming agent.
 #
-# Per the spec the param ``title_cn`` is renamed ``source_title``; a falsy
-# ``source_title`` raises ValueError before normalisation. This blocks
-# downstream code from silently passing an empty source title.
+# The param ``title_cn`` from the original pipeline is renamed
+# ``source_title`` here; a falsy ``source_title`` raises ValueError before
+# normalisation. This blocks downstream code from silently passing an empty
+# source title.
 # ---------------------------------------------------------------------------
 
 
 def _fallback_naming_agent(source_title, props, category_path):
     """Build a deterministic fallback naming result.
 
-    Source L3762 (param renamed). Returns a dict with keys
-    ``title``, ``dropped``, ``kept_keywords``, ``story_terms``.
+    Returns a dict with keys ``title``, ``dropped``, ``kept_keywords``,
+    ``story_terms``.
     """
     if not str(source_title or "").strip():
         raise ValueError("source_title must be a non-empty string for naming fallback")
@@ -379,12 +378,11 @@ def _fallback_naming_agent(source_title, props, category_path):
 def _normalize_naming_result(data, source_title, props, category_path):
     """Normalise an LLM naming-agent response.
 
-    Source L3786 (param ``title_cn`` renamed to ``source_title``).
     Falls back to :func:`_fallback_naming_agent` when ``data`` is missing,
     non-dict, or yields an invalid title.
 
     Raises:
-        ValueError: if ``source_title`` is falsy (spec requirement).
+        ValueError: if ``source_title`` is falsy.
     """
     if not str(source_title or "").strip():
         raise ValueError("source_title must be a non-empty string for naming normalisation")
@@ -420,8 +418,8 @@ def _normalize_naming_result(data, source_title, props, category_path):
 
 
 # ---------------------------------------------------------------------------
-# SEO search wiring (source L5017-L5257). Stub: the full planner depends
-# on the keyword volume client and LLM provider.
+# SEO search wiring. Stub: the full planner depends on the keyword volume
+# client and LLM provider.
 # ---------------------------------------------------------------------------
 
 
@@ -430,15 +428,15 @@ def _apply_search_seo_to_naming(
 ):
     """Refine a naming result with search-volume-aware SEO adjustments.
 
-    Source L5017. Returns an ``llm_hint`` descriptor that bundles the
-    current naming result and asks the host LLM to apply search-volume
-    refinements (re-ordering units, swapping low-volume terms). The host
-    returns a normalised naming-result dict.
+    Returns an ``llm_hint`` descriptor that bundles the current naming
+    result and asks the host LLM to apply search-volume refinements
+    (re-ordering units, swapping low-volume terms). The host returns a
+    normalised naming-result dict.
 
-    T-201a-r6: search-volume lookup failures are no longer silently
-    swallowed (``except Exception: volumes = {}``). When the lookup
-    raises, the exception propagates to the caller. A caller that wants
-    graceful degradation must catch it explicitly and decide.
+    Search-volume lookup failures are not silently swallowed
+    (``except Exception: volumes = {}``). When the lookup raises, the
+    exception propagates to the caller. A caller that wants graceful
+    degradation must catch it explicitly and decide.
     """
     from .common import _llm_hint
 
@@ -468,7 +466,7 @@ def _apply_search_seo_to_naming(
 
 
 # ---------------------------------------------------------------------------
-# Agent rules bundle (source L3683-L3710).
+# Agent rules bundle.
 #
 # Loads the packaged ``agents/*.md`` markdown assets. The assets ship
 # inside the wheel (see ``pyproject.toml`` force-include) and are also
@@ -483,9 +481,9 @@ _AGENT_RULES_CACHE: dict[str, str] = {}
 def _agent_rules_bundle(agent_filename):
     """Load and cache the packaged agent rule markdown bundle.
 
-    Source L3683. Reads ``<root>/agents/<agent_filename>`` (or the
-    wheel-bundled ``clossify/agents/<agent_filename>`` copy) and returns
-    the full markdown text. Results are cached per-filename.
+    Reads ``<root>/agents/<agent_filename>`` (or the wheel-bundled
+    ``clossify/agents/<agent_filename>`` copy) and returns the full
+    markdown text. Results are cached per-filename.
 
     Args:
         agent_filename: basename of the agent markdown file, e.g.
@@ -525,18 +523,16 @@ def _agent_rules_bundle(agent_filename):
                 return text
         except Exception:
             continue
-    raise FileNotFoundError(
-        f"Agent asset not found: agents/{agent_filename} " "(T-201a: _agent_rules_bundle)"
-    )
+    raise FileNotFoundError(f"Agent asset not found: agents/{agent_filename}")
 
 
 def _agent_llm_json(prompt, *, image_path=None, purpose="naming"):
     """Return an ``llm_hint`` for an agent-style LLM call.
 
-    Source L5223. The original shelled out to the LLM provider and
-    parsed the JSON response; the ported version returns an
-    ``llm_hint`` descriptor so the MCP host executes the call. The host
-    is expected to return parsed JSON.
+    The original shelled out to the LLM provider and parsed the JSON
+    response; the ported version returns an ``llm_hint`` descriptor so the
+    MCP host executes the call. The host is expected to return parsed
+    JSON.
 
     Args:
         prompt: the assembled prompt body.
@@ -564,7 +560,6 @@ def _agent_llm_json(prompt, *, image_path=None, purpose="naming"):
 def naming_agent(source_title, props, category_path):
     """Run the naming agent over a Korean source title.
 
-    Source L5259 (param renamed ``title_cn`` -> ``source_title``).
     Returns an ``llm_hint`` descriptor for the MCP host LLM. The host
     receives the source title, flattened prop terms, the category path,
     and the full ``naming_agent.md`` rule bundle as the instruction
@@ -603,13 +598,14 @@ def naming_agent(source_title, props, category_path):
 def build_seo_title(title_ko, props, category_path):
     """Build an SEO product title via the naming agent.
 
-    Source L7181. Delegates to :func:`naming_agent`, which returns either
-    a normalised result dict or an ``llm_hint`` descriptor (when the host
-    LLM must run). On invalid output the deterministic
+    Delegates to :func:`naming_agent`, which returns either a normalised
+    result dict or an ``llm_hint`` descriptor (when the host LLM must
+    run). On invalid output the deterministic
     :func:`_fallback_seo_title` is used.
 
-    T-201a-r6: moved here from :mod:`text_props` so that ``text_props``
-    no longer needs to import :mod:`copywriting` (resolving the cycle).
+    This helper lives here rather than in :mod:`text_props` so that
+    ``text_props`` does not need to import :mod:`copywriting` (which
+    would create an import cycle).
     """
     try:
         result = naming_agent(title_ko, props, category_path)

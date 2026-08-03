@@ -1,10 +1,10 @@
 """Search-volume and keyword helpers.
 
-Ported from sourcing.py (T-201a part 1/2). Depends on :mod:`common` and
-:mod:`text_props` (for prop sanitisation).
+Ported from the original sourcing pipeline. Depends on :mod:`common`
+and :mod:`text_props` (for prop sanitisation).
 
-T-201a-r6: the external-market residue (num_iid extraction, the upstream
-item fetcher, the Chinese-to-Korean title translator, the mobile and
+The external-market residue (num_iid extraction, the upstream item
+fetcher, the Chinese-to-Korean title translator, the mobile and
 short-link HTTP user-agent constants, the natural-Korean translation
 rules table) has been removed entirely — this product only ingests
 Korean user-supplied text and never collects from an external market.
@@ -19,14 +19,14 @@ from . import common
 from .text_props import _strip_banned_claims
 
 # ---------------------------------------------------------------------------
-# Naver SearchAd HTTP helpers (source L649-L718). Pure-Python; only the
+# Naver SearchAd HTTP helpers. Pure-Python; only the
 # signature helper is fully ported, the credential reader returns an
 # empty dict when config is missing so callers can degrade gracefully.
 # ---------------------------------------------------------------------------
 
 
 def _searchad_credentials():
-    """Read Naver SearchAd credentials from the config (source L649).
+    """Read Naver SearchAd credentials from the config.
 
     Returns an empty dict when any field is missing so callers can fall
     back to non-volume-aware paths.
@@ -61,7 +61,7 @@ def _searchad_signature(secret_key, timestamp, method, uri):
 
 
 # ---------------------------------------------------------------------------
-# Keyword parsing helpers (source L627-L718). Pure-Python.
+# Keyword parsing helpers. Pure-Python.
 # ---------------------------------------------------------------------------
 
 

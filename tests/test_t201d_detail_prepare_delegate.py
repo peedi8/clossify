@@ -1,6 +1,6 @@
-"""T-201d — 상세 렌더 + prepare 본체 + 위임 왕복 + 게이트 승격 검증 테스트.
+"""상세 렌더 + prepare 본체 + 위임 왕복 + 게이트 승격 검증 테스트.
 
-작업지시(T-201d) 의 Acceptance 반례 전체를 단위 테스트로 구현한다.
+본 테스트는 위임 왕복과 게이트 승격의 반례 전체를 단위 테스트로 구현한다.
 실제 네이버 API 호출, 파일시스템 사용을 차단(monkeypatch + tmp_path).
 """
 
@@ -482,7 +482,7 @@ class TestBypassBlocking:
             # "smartstore_notice_defaults") 를 직접 읽기 때문에,
             # CI(config.example.json)의 플레이스홀더 원산지와 충돌한다.
             # _notice_config mock 값과 일치하도록 common.cfg 도 함께 덮어쓴다.
-            # T-117 이후 공통 5 고시 필드도 비면 FAIL 되므로 함께 채운다.
+            # 공통 5 고시 필드도 비면 FAIL 되므로 함께 채운다.
             with mock.patch.object(
                 common,
                 "cfg",

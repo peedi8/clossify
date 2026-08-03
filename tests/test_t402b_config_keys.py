@@ -1,6 +1,6 @@
-"""T-402b — as_tel 설정 키 불일치 수리 검증 테스트.
+"""as_tel 설정 키 불일치 수리 검증 테스트.
 
-작업지시(T-402b)가 요구하는 시나리오:
+검증 시나리오:
   1. config.example.json 의 smartstore_notice_defaults 에 as_tel 항목이 존재.
   2. config.example.json 을 그대로 복사해 값만 채운 설정으로 build_payload 호출 시
      AS 전화번호가 payload 의 afterServiceInfo.afterServiceTelephoneNumber 에 정상
@@ -56,9 +56,9 @@ class TestCanonicalKeyPresent:
         cfg = _load_example_config()
         notice = cfg.get("smartstore_notice_defaults")
         assert isinstance(notice, dict), "smartstore_notice_defaults 섹션이 객체가 아님"
-        assert "as_tel" in notice, (
-            "smartstore_notice_defaults.as_tel (정본) 항목이 없음 — " "T-402b 결함 미수리"
-        )
+        assert (
+            "as_tel" in notice
+        ), "smartstore_notice_defaults.as_tel (정본) 항목이 없음 — as_tel 키 불일치 결함 미수리"
 
     def test_brand_as_tel_still_present(self):
         """brand.as_tel 은 에이전트 문서 치환용으로 유지됨."""
@@ -298,13 +298,14 @@ class TestNoNoOp:
 
 
 # --------------------------------------------------------------------------- #
-# 5. 키 대조 결과 — 잔여 불일치 명시 (T-402b 요구 5).
+# 5. 키 대조 결과 — 잔여 불일치 명시.
 # --------------------------------------------------------------------------- #
 class TestKeyCrossReference:
     """config.example.json 의 키와 코드가 읽는 키의 대조 결과.
 
-    본 티켓 범위(as_tel 불일치)는 수리됨. 다른 섹션(upstream/llm/fonts 등)의
-    불일치는 이 티켓 범위를 벗어나므로 보고만 한다 (수정하지 않는다).
+    as_tel 불일치는 수리됨. 예시에 있지만 코드가 읽지 않는 섹션 중
+    image_providers 는 어댑터 연동 전 미사용으로 예시 _comment 에 명시되어 있으므로
+    그 사실을 검증한다 (문서화 목적의 실제 단언).
     """
 
     def test_as_tel_mismatch_resolved(self):
@@ -316,20 +317,16 @@ class TestKeyCrossReference:
             "as_tel" in cfg["smartstore_notice_defaults"]
         ), "코드가 읽는 자리(smartstore_notice_defaults.as_tel)에 예시 항목이 없음"
 
-    def test_known_out_of_scope_mismatches_reported(self):
-        """범위 밖 불일치는 이 테스트에 명시적으로 기록한다 (수정하지 않음).
+    def test_image_providers_section_marked_unused(self):
+        """image_providers 섹션은 어댑터 연동 전 미사용이며 예시에 명시되어 있다.
 
-        코드가 읽지만 config.example.json 에 없는 섹션:
-          - upstream.base_url (common.OB)
-          - llm.vendor_a_cmd / vendor_b_cmd / vendor_b_model 등 (common.*)
-          - fonts.pretendard_* (templates._font_asset_path)
-          - brand.detail_header_path / detail_footer_path / header_html (templates)
-
-        예시에 있지만 코드가 읽지 않는 키:
-          - image_providers 섹션 전체 (어댑터 연동 전 미사용 — README 에 명시됨)
-          - brand.store_name / store_slug / vision_model (플레이스홀더 토큰만)
-
-        이들은 본 티켓(as_tel 불일치) 범위 밖이므로 보고만 한다.
+        코드가 이 섹션을 읽지 않는 것이 의도적임을 예시 _comment 로 확인한다.
+        (as_tel 본래 범위 밖이지만, 예시-코드 불일치 중 검증 가능한 항목.)
         """
-        # 이 테스트는 문서화 목적 — 실제 단언은 as_tel 범위만.
-        assert True, "out-of-scope mismatch inventory documented in test body"
+        cfg = _load_example_config()
+        ip = cfg.get("image_providers")
+        assert isinstance(ip, dict), "image_providers 섹션이 객체가 아님"
+        comment = str(ip.get("_comment") or "")
+        assert (
+            "미사용" in comment
+        ), "image_providers._comment 가 이 섹션이 현재 미사용임을 명시하지 않음"

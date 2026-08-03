@@ -1,6 +1,6 @@
-"""T-114 — 이식 취소된 계층의 설정 리더 잔재 제거 검증.
+"""이식 취소된 계층의 설정 리더 잔재 제거 검증.
 
-작업지시(T-114)가 요구하는 검증:
+검증 항목:
   1. common.py 에 삭제 대상 심볼이 잔존하지 않는다.
   2. 삭제 대상 심볼을 참조하는 호출부가 코드 범위에 잔존하지 않는다.
   3. 삭제된 계층의 설정 키(upstream.base_url, llm.vendor_*)가
@@ -28,7 +28,7 @@ from clossify import common
 
 _CONFIG_EXAMPLE_PATH = _PROJECT_ROOT / "config.example.json"
 
-# T-114 에서 삭제 대상으로 지정된 심볼 목록.
+# 삭제 대상으로 지정된 심볼 목록.
 _REMOVED_SYMBOLS = (
     "OB",
     "DEFAULT_VENDOR_A_CMD",
@@ -44,7 +44,7 @@ _REMOVED_SYMBOLS = (
     "_TRANSLATION_LLM_OPS_DEFAULT",
 )
 
-# T-114 에서 삭제 대상으로 지정된 설정 키 접두사/이름.
+# 삭제 대상으로 지정된 설정 키 접두사/이름.
 _DEAD_CONFIG_KEYS = (
     "base_url",  # upstream.base_url
     "vendor_a_cmd",
@@ -66,7 +66,7 @@ class TestRemovedSymbolsGone:
 
     @pytest.mark.parametrize("name", _REMOVED_SYMBOLS)
     def test_symbol_absent(self, name):
-        assert not hasattr(common, name), f"common.{name} 이 잔존함 — T-114 삭제 대상"
+        assert not hasattr(common, name), f"common.{name} 이 잔존함 — 삭제 대상"
 
     def test_no_dead_section_reads_in_source(self):
         """common.py 소스에 upstream/llm 섹션 읽기가 남아있지 않다."""

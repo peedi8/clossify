@@ -27,7 +27,7 @@ KNOWN_RESTRICTED_SELLER_TAGS = {"인테리어", "화병", "도자기", "꽃병"}
 MAX_PRODUCT_NAME_LEN = 50
 
 # 네이버 커머스 API originAreaInfo.originAreaCode 표준 코드 화이트리스트.
-# T-107: 특정 해외국 코드를 기본값으로 갖지 않는다. 원산지는 판매자가 config에
+# 특정 해외국 코드를 기본값으로 갖지 않는다. 원산지는 판매자가 config 에
 # 명시한 값만 허용하며, 화이트리스트 벗어남/누락 시 ValueError 로 등록 거부(fail-closed).
 _VALID_ORIGIN_AREA_CODES = frozenset(
     {
@@ -95,13 +95,13 @@ def _notice_config():
 
 
 def _kc_config():
-    """KC 인증정보 설정 블록을 config에서 읽는다 (T-107).
+    """KC 인증정보 설정 블록을 config 에서 읽는다.
 
     원본(해외 소싱 도구)은 ``kcCertifiedProductExclusionYn="KC_EXEMPTION_OBJECT"``
     와 ``kcExemptionType="OVERSEAS"`` 를 전 상품에 박았다. 후자는 "해외구매대행이라
     KC 면제" 라는 규제 신고로, 국내 직접판매에는 성립하지 않아 허위 신고가 된다.
 
-    T-107: KC 값은 config 에 명시된 경우에만 payload 에 싣는다. config 에 없으면
+    KC 값은 config 에 명시된 경우에만 payload 에 싣는다. config 에 없으면
     KC 필드를 아예 넣지 않는다(네이버가 요구하면 API 가 에러로 알려준다 —
     우리가 임의 값을 지어내 신고하는 것보다 안전). 단, 호출자가 알 수 있도록
     반환값 메타에 경고를 포함한다.
@@ -132,7 +132,7 @@ def _kc_config():
         block["kcCertifiedProductExclusionYn"] = exclusion
     if exemption:
         block["kcExemptionType"] = exemption
-    # T-117: KC 부분 블록 금지. config.example.json 의 설명("둘 중 하나가 비면
+    # KC 부분 블록 금지. config.example.json 의 설명("둘 중 하나가 비면
     # 전체 생략")과 실동작을 일치시킨다. 두 필수 키가 모두 갖춰졌을 때만 블록을
     # 싣고, 하나라도 없으면 블록 전체를 생략하며 경고 메타를 남긴다.
     if not (exclusion and exemption):
@@ -164,7 +164,7 @@ def _int_value(value, default):
 def _model_name_default(p):
     """모델명 기본값.
 
-    T-107: 외부 마켓 ID 필드(``num_iid``/``item_id`` 계열) 에서 특정 접두사를
+    외부 마켓 ID 필드(``num_iid``/``item_id`` 계열) 에서 특정 접두사를
     만들던 경로를 제거했다. 해당 ID 는 이 제품(셀러 본인 상품 국내 직접판매)에
     존재하지 않는다. 모델명은 config 또는 상품 입력에서만 받는다 — 입력이 없으면
     빈 문자열을 반환하고, 호출자는 필드를 생략한다.
@@ -173,7 +173,7 @@ def _model_name_default(p):
 
 
 def _seller_manufacturer_default(p, cfg_notice):
-    """제조자 기본값 후보 (T-117).
+    """제조자 기본값 후보.
 
     판매자가 실제 신고하는 규제값이므로 코드가 임의 문구를 지어내지 않는다.
     config/상품 입력 어디에도 값이 없으면 빈 문자열을 반환한다. 호출자는
@@ -199,7 +199,7 @@ def _seller_manufacturer_default(p, cfg_notice):
 def _resolve_origin_area_code(p, cfg_notice):
     """``originAreaInfo.originAreaCode`` 값을 화이트리스트로 검증(fail-closed).
 
-    T-107: 원본(해외 소싱 도구)의 ``"04"`` (특정 해외국) 기본값/폴백을 제거했다.
+    원본(해외 소싱 도구)의 ``"04"`` (특정 해외국) 기본값/폴백을 제거했다.
     원산지는 판매자가 실제 신고하는 값이어야 하며, 우리가 임의로 지정하면 안 된다.
 
     후보 순서: ``p.origin_code`` → ``cfg_notice.origin_area_code``.
@@ -224,7 +224,7 @@ def _resolve_origin_area_code(p, cfg_notice):
 def _notice_defaults(p):
     cfg_notice = _notice_config()
     product_name = _first_value(p.get("name"), p.get("title_ko"), default="상품명")
-    # T-117: AS 연락처는 규제 신고값. config/상품 입력에 없으면 빈 문자열.
+    # AS 연락처는 규제 신고값. config/상품 입력에 없으면 빈 문자열.
     # 컴플라이언스 검사가 afterServiceTelephoneNumber 누락을 FAIL 로 차단한다.
     as_tel = _first_value(
         p.get("as_tel"),
@@ -237,11 +237,11 @@ def _notice_defaults(p):
     manufacturer = _first_value(
         p.get("manufacturer"), default=_seller_manufacturer_default(p, cfg_notice)
     )
-    # T-107: "해외구매대행" 기본값 제거. 수입자는 판매자가 config/입력으로 제공.
+    # "해외구매대행" 기본값 제거. 수입자는 판매자가 config/입력으로 제공.
     # 값이 없으면 빈 문자열 — originAreaInfo.importer 필드가 비게 되고,
     # 네이버가 요구하면 API 가 에러로 알려준다(우리가 임의 값을 지어내지 않음).
     importer = _first_value(p.get("importer"), cfg_notice.get("importer"), default="")
-    # T-107: "중국" (해외 국가명) 기본값 제거 + fail-closed.
+    # "중국" (해외 국가명) 기본값 제거 + fail-closed.
     # 원산지 표시 문자열도 코드와 마찬가지로 config 또는 상품 입력에서만 받는다.
     made_in = _first_value(
         p.get("made_in"), p.get("origin_content"), cfg_notice.get("origin_content"), default=""
@@ -250,10 +250,10 @@ def _notice_defaults(p):
         raise ValueError(
             "config 에 원산지 설정이 필요합니다: smartstore_notice_defaults.origin_content"
         )
-    # T-107: "해당없음 / KC면제" 기본값 제거 — KC 면제 여부는 규제 신고이므로
+    # "해당없음 / KC면제" 기본값 제거 — KC 면제 여부는 규제 신고이므로
     # 임의값을 지어내면 안 됨. 값이 없으면 빈 문자열.
     cert_text = _first_value(p.get("cert_detail"), cfg_notice.get("cert_detail"), default="")
-    # T-117: 품질보증기준/반품비/환불불가/보상절차/고장대처 는 소비자 고시값.
+    # 품질보증기준/반품비/환불불가/보상절차/고장대처 는 소비자 고시값.
     # 코드가 만든 기본 문구를 넣지 않는다. 값이 없으면 빈 문자열이며
     # 컴플라이언스 검사가 필수 항목 누락을 지적한다.
     quality = _first_value(
@@ -303,12 +303,12 @@ def _notice_defaults(p):
         "made_in": made_in,
         "manufacturer": manufacturer,
         "importer": importer,
-        # T-117: manufacturer_importer 는 manufacturer/importer 둘 다 있을 때만
+        # manufacturer_importer 는 manufacturer/importer 둘 다 있을 때만
         # 합성한다. 어느 한쪽이라도 없으면 빈 문자열(임의 합성 금지).
         "manufacturer_importer": (
             f"{manufacturer} / {importer}" if (manufacturer and importer) else ""
         ),
-        # T-117: 제조일자 기본문구("상세페이지 참조") 자동 삽입 제거.
+        # 제조일자 기본문구("상세페이지 참조") 자동 삽입 제거.
         "manufacture_date": _first_value(
             p.get("manufacture_date"),
             p.get("manufacturedDate"),
@@ -339,7 +339,7 @@ def _notice_defaults(p):
     }
 
 
-# T-112: data/notice_types.json 을 단일 진실 공급원으로 사용해 35종 전체 고시
+# data/notice_types.json 을 단일 진실 공급원으로 사용해 35종 전체 고시
 # 타입을 동적 생성한다. 타입·노드명·필드를 코드에 하드코딩하지 않는다.
 _NOTICE_TYPES_CACHE: list | None = None
 _NOTICE_TYPE_INDEX: dict | None = None
@@ -519,7 +519,7 @@ def _is_furniture_notice(p):
 
 
 def _base_etc_notice(defaults):
-    """ETC 타입의 기본 본문 (T-117: 값이 있는 필드만 싣는다).
+    """ETC 타입의 기본 본문 — 값이 있는 필드만 싣는다.
 
     코드가 만든 기본 문구를 넣지 않는다. config/입력 어디에서도 값이 주어지지
     않은 필드는 payload 에서 생략하고, 컴플라이언스 검사가 해당 필드를 필수
@@ -548,11 +548,11 @@ def _base_etc_notice(defaults):
         notice["compensationProcedure"] = defaults["compensation_procedure"]
     if defaults.get("trouble_shooting_contents"):
         notice["troubleShootingContents"] = defaults["trouble_shooting_contents"]
-    # T-117: afterServiceDirector 는 manufacturer 와 as_tel 이 모두 있을 때만
+    # afterServiceDirector 는 manufacturer 와 as_tel 이 모두 있을 때만
     # 합성한다. 어느 한쪽이라도 비면 임의 문자열을 만들어 넣지 않는다.
     if defaults.get("manufacturer") and defaults.get("as_tel"):
         notice["afterServiceDirector"] = f"{defaults['manufacturer']} {defaults['as_tel']}"
-    # T-107: modelName 은 config/입력에 있을 때만. importer 도 값이 있을 때만.
+    # modelName 은 config/입력에 있을 때만. importer 도 값이 있을 때만.
     if defaults.get("model_name"):
         notice["modelName"] = defaults["model_name"]
     if defaults.get("importer"):
@@ -561,7 +561,7 @@ def _base_etc_notice(defaults):
 
 
 def _base_furniture_notice(p, defaults):
-    """FURNITURE 타입의 기본 본문 (T-117: 임의 문구 자동삽입 제거).
+    """FURNITURE 타입의 기본 본문 — 임의 문구 자동삽입 제거.
 
     소재/크기/구성품/안전기준 필드에 코드가 만든 "상세참조"/"해당없음 / 상세참조"
     같은 기본 문자열을 박던 옛 동작을 제거했다. 해당 필드들은 소비자 고시값이며
@@ -616,7 +616,7 @@ def _base_notice_body_for_type(p, defaults, notice_type, spec):
     # 나머지 33종: 공통 5필드 + afterServiceDirector(있는 타입만)로 시작.
     body = _common_notice_defaults(defaults)
     fields = spec.get("fields") or []
-    # T-117: afterServiceDirector/customerServicePhoneNumber 는 제조사·AS 전화가
+    # afterServiceDirector/customerServicePhoneNumber 는 제조사·AS 전화가
     # 모두 있을 때만 합성/입력한다. 어느 한쪽이라도 비면 임의 문자열을 넣지
     # 않고 컴플라이언스 검사가 필수 항목 누락으로 FAIL 지적한다.
     if "afterServiceDirector" in fields and defaults.get("manufacturer") and defaults.get("as_tel"):
@@ -634,7 +634,7 @@ def _base_notice_body_for_type(p, defaults, notice_type, spec):
 def _merge_notice(default_notice, user_notice):
     """사용자 notice 를 기본 notice 에 병합 (데이터 기반 노드명 사용).
 
-    T-112: 노드 키를 ``etc``/``furniture`` 로 고정하지 않고, 고시 타입에
+    노드 키를 ``etc``/``furniture`` 로 고정하지 않고, 고시 타입에
     해당하는 node 이름(data/notice_types.json)을 사용한다.
     사용자 입력은 같은 노드 키 아래에서 우선한다.
     """
@@ -671,7 +671,7 @@ def _merge_notice(default_notice, user_notice):
         user_body = {}
     user_fields = set()
     for field, value in user_body.items():
-        # T-113: 사용자가 명시적으로 제공한 값은 그대로 싣는다.
+        # 사용자가 명시적으로 제공한 값은 그대로 싣는다.
         # 특정 문자열("상세페이지 참조" 등)이라고 조용히 버리는 필터를 제거했다.
         # "상세페이지 참조" 는 한국 커머스에서 판매자가 제조일자·치수 등에 일상적으로
         # 쓰는 정당한 표기이며 시스템이 임의로 폐기할 값이 아니다.
@@ -686,7 +686,7 @@ def _merge_notice(default_notice, user_notice):
 
 
 def _product_info_notice(p, defaults):
-    """고시 payload 조립 (35종 전체 지원, T-112).
+    """고시 payload 조립 (35종 전체 지원).
 
     고시 타입이 무엇이든 ``data/notice_types.json`` 에서 해당 타입의 ``node``
     이름을 찾아 그 이름으로 본문을 싣는다. 타입이 데이터에 없으면 에러.
@@ -1178,7 +1178,7 @@ def build_payload(p, detail_html, images, status="SALE"):
     # 직접 호출하는 경로까지 보호하기 위해 여기서도 컷한다.
     product_name = str(p["name"])[:MAX_PRODUCT_NAME_LEN]
 
-    # T-107: originAreaInfo 는 필수지만 importer 는 값이 있을 때만 넣는다
+    # originAreaInfo 는 필수지만 importer 는 값이 있을 때만 넣는다
     # (빈 문자열을 보내면 API 가 400 을 반환할 수 있으나, 우리가 임의 수입사를
     # 지어내는 것보다 안전). KC 신고값도 config 에서만 받는다.
     origin_area_info = {
@@ -1188,7 +1188,7 @@ def build_payload(p, detail_html, images, status="SALE"):
     if defaults.get("importer"):
         origin_area_info["importer"] = defaults["importer"]
 
-    # T-107: KC 신고값 하드코딩(kcCertifiedProductExclusionYn="KC_EXEMPTION_OBJECT",
+    # KC 신고값 하드코딩(kcCertifiedProductExclusionYn="KC_EXEMPTION_OBJECT",
     # kcExemptionType="OVERSEAS") 제거. config 의 kc_declaration 블록이 있으면
     # 그 값을 그대로 싣고, 없으면 certificationTargetExcludeContent 필드 자체를
     # 생략한다(네이버가 요구하면 API 가 에러로 알려준다). 호출자가 알 수 있도록
@@ -1247,7 +1247,7 @@ def build_payload(p, detail_html, images, status="SALE"):
             },
         }
     }
-    # T-107: KC 설정 부재 경고를 페이로드 메타에 포함(조용한 생략 금지).
+    # KC 설정 부재 경고를 페이로드 메타에 포함(조용한 생략 금지).
     if kc_warning:
         payload["_kcWarning"] = kc_warning
     return payload

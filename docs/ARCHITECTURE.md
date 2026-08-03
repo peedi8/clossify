@@ -28,11 +28,11 @@
 
 | 모듈 | 역할 |
 |------|------|
-| `mcp_server` | stdio MCP 서버. 4개 도구 노출. 검증 sanitization, 컴플라이언스 게이트 회선 |
+| `mcp_server` | stdio MCP 서버. 6개 도구 노출(`check_config`, `upload_images`, `register_product`, `get_product`, `prepare_listing`, `submit_reviews`). 검증 sanitization, 컴플라이언스 게이트 회선 |
 | `naver_client` | 네이버 커머스 API 인증·페이로드 빌드·등록·조회·이미지 업로드 |
 | `images` | 이미지 입력 정규화. 로컬 가드(`validate_local_image`), SSRF 방어 외부 URL fetch(`fetch_external_image`), 통합 진입점(`attach_images`) |
 | `qa_agents` | 3분할 QA(이미지/카피/컴플라이언스) 결정론 검사 + 집계 + 등록 게이트(`qa_gate`) |
-| `register` | prepared payload 저장/로드, 등록 오케스트레이션. 현재 이미지 파이프라인·상세 렌더는 스텁 |
+| `register` | prepared payload 저장/로드, 등록 오케스트레이션. `prepare_listing`이 `detail_render.render_detail_html` 로 상세 HTML 을 조립한다. 이미지 입력은 `images.attach_images` 로 외부 URL fetch( SSRF 가드 적용) 와 로컬 파일 업로드를 수행한다 |
 | `agent_calls` | 클라이언트 LLM 위임 디스크립터(llm_hint) 생성(naming, qa_copy) |
 | `category_meta` | `data/category_meta.json` 로더. KC 필요 여부·예외 플래그·경로 조회 |
 | `category` | 카테고리 상위 모듈(qa_agents/register 의존) |
@@ -53,6 +53,12 @@
 - **범위**: 리프(`last=true`) 카테고리 전체(약 4,999건). `exceptionalCategories`에
   `KC_CERTIFICATION` 포함 시 KC 대상.
 - **구조**: `{generated_at, source, count, categories:[{id,name,wholeCategoryName,last,exceptionalCategories}]}`.
+- **커버리지(중요)**: 상세 조회가 실패해 `exceptionalCategories` 를 확정하지 못한
+  카테고리 91건이 최상위 `incomplete.ids` 에 별도 키로 명시된다(사유·건수 포함).
+  이 ID 들은 `exceptionalCategories: []` 로 남아 있어 비-KC 카테고리와 동일하게
+  보이나, `requires_kc()` 가 **불명(None)** 을 반환해 컴플라이언스 게이트가
+  fail-closed 차단한다. 자세한 내용은 `data/README.md` 와 아래 '6. 카테고리 메타
+  KC 판정 3-상태' 절을 본다.
 
 ### `certification_types.json`
 - **출처**: 동일 API의 `certificationInfos`. 인증 타입 마스터(57종). 모든 카테고리
@@ -79,18 +85,27 @@
 이미지 정규화(images.attach_images) ── 로컬 가드 / 외부 URL SSRF 가드 / CDN URL 통과
    |
    v
-상세페이지 렌더  ◀── 미구현(register._render_detail_html 스텁, NotImplementedError)
+상세페이지 렌더(detail_render.render_detail_html) ── register.prepare_listing 이 호출.
+   hero/intro/specs/options/notice 섹션을 조립해 HTML 문서를 만든다.
    |
    v
 컴플라이언스 결정론 검사(qa_agents._compliance_code_check)
    ├─ 고시 필수 필드(data/notice_types.json 기반, 타입별 node/fields)
+   │  (단, "상세참조"·"상세페이지 참조"·"해당없음"·"-" 등 안내문구 토큰은
+   │   미제공으로 간주해 FAIL. payload 전송은 그대로 하되 판정은 유효제공으로
+   │   보지 않는다 — 전송과 판정을 분리.)
    ├─ 원산지(config 값과 payload 값 일치, 빈 값 FAIL)
-   ├─ KC(category_meta.requires_kc() True 인데 정보 없으면 FAIL)
-   └─ AS 전화번호(빈 값 WARN)
+   ├─ KC(category_meta.requires_kc() 가 True 인데 정보 없으면 FAIL;
+   │  KC 필요 여부가 불명(incomplete.ids) 이면 FAIL — fail-closed)
+   └─ AS 전화번호(빈 값 FAIL — 코드가 임의값을 만들지 않으므로 판매자가 설정해야 함)
    |
    v
 [도구 회선 게이트] register_product 내 _run_compliance_gate
-   └─ FAIL 결정론 위반 → 네이버 API 호출 없이 거부. PENDING 은 차단 않고 pending_reviews 로 표기.
+   ├─ 결정론 위반(FAIL) → 네이버 API 호출 없이 거부.
+   ├─ prepared payload 가 존재하면 추가로 qa_agents.qa_gate(집계 게이트) 로
+   │  전체 FAIL·PENDING 차단 여부를 확인한다(게이트 label 이 "full").
+   └─ prepared 가 없으면 결정론-only("deterministic_only"). LLM 판단 미회신은
+      pending_reviews 로 응답에 표기만 한다(집계 게이트보다 약한 정책).
    |
    v
 네이버 커머스 등록(naver_client.register_product)
@@ -99,8 +114,10 @@
 등록 후 재검증(naver_client.get_product)  ◀── register_prepared_listing 경로에 존재
 ```
 
-> 상세 렌더 스텁 구간은 사용자가 직접 `detail_html` 인자를 `register_product`에
-> 전달하면 우회 가능(현재 MCP 도구의 정상 경로). 자동 렌더은 아님.
+> 사용자가 직접 `detail_html` 인자를 `register_product`에 전달하면 렌더 단계를
+> 건너뛴다. `prepare_listing` 도구를 거치면 `detail_render.render_detail_html` 이
+> 자동 조립한 HTML 이 prepared payload 에 저장되고, 이후 `register_product` 가
+> 그 값을 사용한다.
 
 ## 4. QA verdict 체계
 
@@ -109,19 +126,23 @@
 | verdict | 의미 | 게이트 |
 |---------|------|--------|
 | `PASS` | 합격 | 통과 |
-| `WARN` | 주의(결정론적 경고, 예: AS 전화번호 빈 값) | 통과 |
+| `WARN` | 주의(결정론적 경고) | 통과 |
 | `PENDING` | 판단이 이뤄진 **증거가 없음**. LLM 위임 회신 대기/미접합 | **차단** |
-| `FAIL` | 결정론적 위반(금지 표현/고시 필수 누락/원산지·KC 위반) | **차단** |
+| `FAIL` | 결정론적 위반(금지 표현/고시 필수 누락/원산지·KC 위반/AS 연락처 누락/KC 필요 여부 불명) | **차단** |
 
 **두 게이트 레이어 주의(정확한 구분)**:
 
 - **집계 게이트**(`qa_agents.qa_gate`): `FAIL`·`PENDING` 차단, `WARN`·`PASS` 통과.
   위임 미회신(PENDING)을 등록으로 넘기지 않는다(ADR-0002 "클라이언트 LLM이 관대해도
-  서버가 막는다"). `register_prepared_listing`이 호출.
+  서버가 막는다"). `register_prepared_listing`이 항상 호출.
 - **도구 회선 게이트**(`mcp_server.register_product`의 `_run_compliance_gate`):
-  현재 결정론 위반(`FAIL`)만 차단. LLM 판단(카피/이미지 QA)은 위임 왕복 연결 전이라
-  `pending_reviews` 리스트로 응답에 표기만 한다. 이는 집계 게이트보다 약한 정책이며,
-  연결 후 일원화 예정.
+  두 가지 경로가 있다(응답의 `gate` 필드로 구분).
+  - `deterministic_only` — prepared payload 가 없을 때. `qa_agents._compliance_code_check`
+    만 호출해 결정론 위반(`FAIL`)을 차단한다. LLM 판단(카피/이미지 QA)은 위임 왕복
+    연결 전이라 `pending_reviews` 리스트로 응답에 표기만 한다.
+  - `full` — 동일 product_key 의 prepared payload 가 존재할 때. 추가로
+    `qa_agents.qa_gate`(집계 게이트)를 호출해 `FAIL`·`PENDING` 모두 차단한다.
+    집계 게이트와 동일 강도.
 
 **핵심 원칙**: 판단이 이뤄졌다는 증거(`verdict` 키, 정규화된 값)가 없으면 `PENDING`.
 `_normalize_qa_result`는 `verdict` 누락·위임 디스크립터(llm_hint)가 결과 자리에 있는
@@ -146,3 +167,30 @@
 5. **데이터·규칙은 스냅샷** — `data/` 카테고리/고시 메타와 `agents/COMPLIANCE_RULES.md`
    규칙은 특정 시점 기준이며 플랫폼 정책 변경 시 갱신 대상이다. 기준일은
    `data/README.md` 와 각 데이터 파일의 `generated_at` 을 본다.
+6. **고시값은 코드가 만들지 않는다** — 원산지·AS 연락처·제조사·수입사·공통 5필드
+   모두 판매자가 config 또는 상품 입력으로 제공한 값만 payload 에 싣는다. 과거
+   버전의 안내문구 자동 채움("상세페이지 참조", "해당없음 / KC면제", "해외구매대행"
+   등)은 제거됐다. 값이 없으면 빈 문자열이거나 필드 생략이고, 컴플라이언스 게이트가
+   누락을 FAIL 로 차단한다.
+7. **상세참조 토큰은 전송 O, 판정 X** — 사용자가 명시적으로 준 "상세참조"·
+   "상세페이지 참조"·"해당없음" 등의 값은 payload 에 그대로 실려 네이버로 전송되지만,
+   컴플라이언스 판정에서는 미제공으로 간주해 FAIL 지적한다. 전송과 판정을 분리한
+   것이다. (`qa_agents._notice_field_missing` 의 `EMPTY_TOKENS` 집합이 이 토큰들을
+   관리한다.)
+
+## 6. 카테고리 메타 KC 판정 3-상태
+
+`category_meta.requires_kc(category_id)` 반환값이 3 종류다. KC 인증 필요 여부를
+확정할 수 없는 카테고리를 "불명" 상태로 분리해, 면제로 오판하는 허위 신고를 막는다.
+
+| 반환 | 조건 | 컴플라이언스 게이트 동작 |
+|------|------|------------------------|
+| `True` | `exceptionalCategories` 에 `KC_CERTIFICATION` 포함. | KC 선언 정보 없으면 FAIL 차단. |
+| `False` | `exceptionalCategories` 가 확정됐고 `KC_CERTIFICATION` 미포함. | KC 검사 생략(확정 비대상). |
+| `None` | `data/category_meta.json` 의 `incomplete.ids` 에 속한 카테고리. 상세 조회 실패(429) 로 `exceptionalCategories` 를 확정하지 못함(91건). | **FAIL 차단**(불명). 실제 KC 대상인지 확인되기 전까지 등록을 진행하지 않는다(fail-closed). |
+
+기본(`raise_if_incomplete=True`)은 `None` 대신 `IncompleteCategoryError` 를 발생시킨다.
+컴플라이언스 게이트는 `raise_if_incomplete=False` 로 호출해 `None` 을 받고, 이를
+"KC 필요 여부 불명" FAIL 위반으로 처리한다. `incomplete.ids` 에 속한 카테고리를
+등록하려면 `data/category_meta.json` 을 갱신해 상세 조회를 완료하거나(권장),
+해당 ID 의 `exceptionalCategories` 를 확정해 `incomplete.ids` 에서 제거해야 한다.

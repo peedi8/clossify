@@ -1,7 +1,7 @@
 """Detail HTML templates and brand assets.
 
-Ported from sourcing.py (T-201a part 1/2). Depends on :mod:`text_props`
-(for ``DETAIL_RENDER_WIDTH`` and ``_hesc``).
+Ported from the original sourcing pipeline. Depends on
+:mod:`text_props` (for ``DETAIL_RENDER_WIDTH`` and ``_hesc``).
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from . import common
 from .text_props import DETAIL_RENDER_WIDTH, _hesc
 
 # ---------------------------------------------------------------------------
-# Detail rendering limits and asset paths (source L3403-L3458).
+# Detail rendering limits and asset paths.
 #
 # The BRAND_* block references brand asset paths. The brand-name token
 # itself is forbidden (Hard Constraint 2), so the path-string constants
@@ -49,7 +49,7 @@ def _brand_asset_path(key: str) -> str:
     """
     raw = str(_brand_cfg().get(key) or "").strip()
     if not raw:
-        raise ValueError(f"brand.{key} is not configured (T-201a: brand asset path)")
+        raise ValueError(f"brand.{key} is not configured")
     return raw
 
 
@@ -75,14 +75,14 @@ def _font_asset_path(config_key: str, fallback_filename: str) -> str:
 def BRAND_RENDER_WIDTH() -> int:
     """Brand-bound render width (alias for DETAIL_RENDER_WIDTH).
 
-    Source L3403. Returns the shared render width so callers that
-    referenced the brand alias keep working.
+    Returns the shared render width so callers that referenced the
+    brand alias keep working.
     """
     return DETAIL_RENDER_WIDTH
 
 
 def BRAND_DETAIL_HEADER_PATH() -> Path:
-    """Brand detail header asset path (source L3404).
+    """Brand detail header asset path.
 
     Resolved from ``cfg()["brand"]["detail_header_path"]``. Raises
     ``ValueError`` when unset (the brand name is a forbidden token).
@@ -92,13 +92,13 @@ def BRAND_DETAIL_HEADER_PATH() -> Path:
 
 
 def BRAND_DETAIL_FOOTER_PATH() -> Path:
-    """Brand detail footer asset path (source L3405). Forbidden token."""
+    """Brand detail footer asset path. Forbidden token."""
     raw = _brand_asset_path("detail_footer_path")
     return Path(raw)
 
 
 def BRAND_DETAIL_HEADER_URI() -> str:
-    """Brand detail header ``file://`` URI (source L3406).
+    """Brand detail header ``file://`` URI.
 
     Derived from :func:`BRAND_DETAIL_HEADER_PATH`.
     """
@@ -106,7 +106,7 @@ def BRAND_DETAIL_HEADER_URI() -> str:
 
 
 def BRAND_DETAIL_FOOTER_URI() -> str:
-    """Brand detail footer ``file://`` URI (source L3407).
+    """Brand detail footer ``file://`` URI.
 
     Derived from :func:`BRAND_DETAIL_FOOTER_PATH`.
     """
@@ -114,7 +114,7 @@ def BRAND_DETAIL_FOOTER_URI() -> str:
 
 
 def PRETENDARD_MEDIUM_FONT_PATH() -> Path:
-    """Pretendard Medium font asset path (source L3408).
+    """Pretendard Medium font asset path.
 
     Resolved from ``cfg()["fonts"]["pretendard_medium"]``; falls back to
     a well-known bundled location under ``<root>/assets/fonts`` when the
@@ -125,7 +125,7 @@ def PRETENDARD_MEDIUM_FONT_PATH() -> Path:
 
 
 def PRETENDARD_BLACK_FONT_PATH() -> Path:
-    """Pretendard Black font asset path (source L3409).
+    """Pretendard Black font asset path.
 
     Resolved from ``cfg()["fonts"]["pretendard_black"]``; falls back to
     a well-known bundled location under ``<root>/assets/fonts``.
@@ -135,7 +135,7 @@ def PRETENDARD_BLACK_FONT_PATH() -> Path:
 
 
 def _pretendard_font_face_css() -> str:
-    """Build ``@font-face`` CSS for Pretendard (source L3441-L3455).
+    """Build ``@font-face`` CSS for Pretendard.
 
     Returns an empty string when neither font path resolves to an
     existing file. The generated CSS uses ``file://`` URLs so it renders
@@ -167,7 +167,7 @@ def _pretendard_font_face_css() -> str:
 
 
 def PRETENDARD_FONT_FACE_CSS() -> str:
-    """Module-level ``@font-face`` CSS cache (source L3458).
+    """Module-level ``@font-face`` CSS cache.
 
     Returns the cached CSS produced by :func:`_pretendard_font_face_css`.
     The cache is built lazily on first call and never invalidated
@@ -180,7 +180,7 @@ def PRETENDARD_FONT_FACE_CSS() -> str:
 
 
 def BRAND_HEADER_HTML() -> str:
-    """Brand header HTML fragment (source L3459).
+    """Brand header HTML fragment.
 
     Resolved from ``cfg()["brand"]["header_html"]`` (a string) or, when
     that is a path, the file contents. Raises ``ValueError`` when no
@@ -194,11 +194,11 @@ def BRAND_HEADER_HTML() -> str:
         path = Path(raw)
         if path.is_file():
             return path.read_text(encoding="utf-8")
-    raise ValueError("brand.header_html is not configured (T-201a: BRAND_HEADER_HTML L3459)")
+    raise ValueError("brand.header_html is not configured")
 
 
 # ---------------------------------------------------------------------------
-# Static CSS fragments (source L3423-L3440). Pure ASCII, no forbidden tokens.
+# Static CSS fragments. Pure ASCII, no forbidden tokens.
 # ---------------------------------------------------------------------------
 
 DETAIL_SINGLE_COLUMN_LOCK_CSS = (
@@ -231,13 +231,12 @@ OPTION_GRID_SECTION_CSS = (
 def build_korean_detail_html(d, naver_image_urls):
     """Build a Naver-compliant inline detail HTML from a product dict.
 
-    Source L3373. The original hard-coded Korean copy and a fixed brand
-    wrapper; both contain CJK which violates Hard Constraint 2 (CJK count
-    must stay 0 in source). This implementation therefore returns an
-    ``llm_hint`` descriptor asking the MCP host LLM to generate the
-    Korean detail HTML body from the product data, using the packaged
-    ``COPY_GUIDE.md`` and ``DESIGN_SYSTEM.md`` agent rules as the
-    instruction context.
+    The original hard-coded Korean copy and a fixed brand wrapper; both
+    contain CJK which violates Hard Constraint 2 (CJK count must stay 0
+    in source). This implementation therefore returns an ``llm_hint``
+    descriptor asking the MCP host LLM to generate the Korean detail
+    HTML body from the product data, using the packaged ``COPY_GUIDE.md``
+    and ``DESIGN_SYSTEM.md`` agent rules as the instruction context.
 
     The host LLM receives the product dict (string fields HTML-escaped),
     the uploaded Naver image URLs, the static CSS fragments this module

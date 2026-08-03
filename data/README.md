@@ -44,6 +44,16 @@
   `KC_CERTIFICATION` 이 포함되어 있으면 해당 카테고리는 KC 인증 관련
   처리가 필요함을 뜻한다. `certificationInfos` 는 모든 카테고리에서
   동일하므로 이 파일에는 **반복 저장하지 않는다** (용량 절약).
+- **커버리지와 불완전 카테고리(중요)**: 리프 카테고리 4,999건 중 **91건**은
+  상세 조회(`GET /categories/{id}`)가 429 Too Many Requests 로 실패했다.
+  이 카테고리들은 최상위 `incomplete` 키(`{ids, count, reason, impact}`)에
+  명시된다. 이 ID 들은 `exceptionalCategories` 가 빈 리스트로 남아 있어
+  `KC_CERTIFICATION` 포함 여부를 확정할 수 없다 — 즉 **KC 필요 여부 불명**이다.
+  `category_meta.requires_kc()` 는 이 ID 들에 대해 `False` 를 반환하지 않고
+  `None`(불명)을 알리며, 컴플라이언스 게이트는 불명을 **통과시키지 않는다**
+  (fail-closed). 실제 KC 대상을 면제로 오판하는 허위 신고를 막기 위해서다.
+  수집 스크립트를 다시 실행해 이 91건의 상세를 채우면 `incomplete` 목록은
+  비워진다.
 
 ### `certification_types.json`
 
@@ -64,12 +74,12 @@
   노드/필드 구조.
   - `verified`(35종): 공식 `create-product-product` 문서의 enum 정의에서
     직접 관측된 값. 각 항목은 출처 URL과 필드 목록을 함께 기록.
-    T-111b에서 16종이 verified로 확보됐고, T-111c에서 나머지 19종을
-    공식 문서로 확인해 승격함. 두 타입은 이름 정정: `FASHION_ITEM` ->
+    16종이 먼저 verified로 확보됐고, 나머지 19종을 공식 문서로 확인해
+    승격함. 두 타입은 이름 정정: `FASHION_ITEM` ->
     `FASHION_ITEMS`(복수), `MICRO_ELECTRONICS` -> `MICROELECTRONICS`
-    (underscore 제거). `CELLPHONE`의 필드도 T-111c에서 채움.
+    (underscore 제거). `CELLPHONE`의 필드도 같은 시기에 채움.
   - `unverified`(5종): `RENTAL_HA`, `LODGMENT_RESERVATION`,
-    `TRAVEL_PACKAGE`, `AIRLINE_TICKET`, `RENT_CAR`. T-111c에서 공식
+    `TRAVEL_PACKAGE`, `AIRLINE_TICKET`, `RENT_CAR`. 공식
     `create-product-product` 문서의 enum 리스트에서 새로 발견했으나
     필드 구조는 아직 읽지 않은 타입.
 - **총 개수**: 공식 `create-product-product` 문서의 정적 enum 정의에는
@@ -116,7 +126,9 @@ python scripts/fetch_category_meta.py
 제공한다:
 
 - `load_category_meta()` — 전체 메타 dict 로드
-- `requires_kc(category_id)` — KC 인증 필요 여부
+- `requires_kc(category_id)` — KC 인증 필요 여부. 3-상태:
+  `True`(필요)/`False`(불필요, 확정)/`None`(불명 — `incomplete.ids` 에 포함된
+  카테고리). 불명은 컴플라이언스 게이트에서 FAIL 로 차단된다.
 - `exceptional_flags(category_id)` — 예외 플래그 목록
 - `category_path(category_id)` — 전체 경로 문자열
 

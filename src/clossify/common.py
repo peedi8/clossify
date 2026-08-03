@@ -1,6 +1,6 @@
 """Shared constants and JSON IO helpers.
 
-Ported from sourcing.py (T-201a part 1/2) as the DAG root module.
+Ported from the original sourcing pipeline as the DAG root module.
 Symbols whose source values contain forbidden tokens (e.g. the as_tel
 literal) are resolved at runtime from config and raise ``ValueError``
 when the config key is absent (fail-closed). No ``NotImplementedError``
@@ -54,7 +54,7 @@ def cfg():
 # ---------------------------------------------------------------------------
 # Config section accessor. Used by live accessors below
 # (DEFAULT_AS_TEL). The ported layer that read "upstream" and "llm"
-# sections was removed in T-114 — those lanes are not part of this
+# sections was removed — those lanes are not part of this
 # product (text inference is owned by the MCP client).
 # ---------------------------------------------------------------------------
 
@@ -69,19 +69,19 @@ def _cfg_section(name: str) -> dict:
 
 
 def DEFAULT_AS_TEL() -> str:
-    """Default AS telephone literal (source L43).
+    """Default AS telephone literal.
 
     Resolved from ``cfg()["brand"]["as_tel"]``; raises ``ValueError`` when
     absent (the literal phone number is a forbidden token).
     """
     tel = str(_cfg_section("brand").get("as_tel") or "").strip()
     if not tel:
-        raise ValueError("brand.as_tel is not configured (T-201a: DEFAULT_AS_TEL source L43)")
+        raise ValueError("brand.as_tel is not configured")
     return tel
 
 
 # ---------------------------------------------------------------------------
-# JSON IO helpers (source L612-L624). Pure stdlib, no forbidden content.
+# JSON IO helpers. Pure stdlib, no forbidden content.
 # ---------------------------------------------------------------------------
 
 
@@ -103,7 +103,7 @@ def _write_json_file(path, data):
 
 
 # ---------------------------------------------------------------------------
-# Config coercion helpers (source L8484-L8502, L9270-L9274).
+# Config coercion helpers.
 # ---------------------------------------------------------------------------
 
 
@@ -138,7 +138,7 @@ def _safe_float(value, default=0.0):
 
 
 # ---------------------------------------------------------------------------
-# llm_hint descriptor contract (T-201a-r).
+# llm_hint descriptor contract.
 #
 # The MCP host (the external LLM client driving this MCP server) performs
 # all real LLM work. Functions that used to call an LLM CLI now return an

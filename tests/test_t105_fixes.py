@@ -1,8 +1,8 @@
-"""T-105 / T-106 수정사항 검증 테스트.
+"""등록 파이프라인 수정사항 검증 테스트.
 
-이 테스트는 T-105 의 8개 수정사항 각각에 대한 단위 테스트와
-T-106 의 3개 핵심 강화(fail-closed stock, build_payload name cut,
-sanitization 강화)에 대한 단위 테스트를 제공한다.
+이 테스트는 설정 중앙화, 업로드 검증, 이름 절삭 등 핵심 수정사항 각각에 대한
+단위 테스트와 fail-closed stock, build_payload name cut, sanitization 강화에
+대한 단위 테스트를 제공한다.
 외부 API 호출, 네트워크, 실제 config 파일 의존성을 최소화하도록 설계되었다.
 """
 
@@ -142,25 +142,25 @@ class TestFix6OriginAreaCode:
     """_resolve_origin_area_code 가 화이트리스트 밖 코드를 fail-closed 처리하는가."""
 
     def test_valid_code_accepted(self):
-        # T-107b: _resolve_origin_area_code 반환형이 문자열로 바뀌었다(코드만 반환).
+        # _resolve_origin_area_code 반환형이 문자열로 바뀌었다(코드만 반환).
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
             code = naver_client._resolve_origin_area_code({"origin_code": "04"}, {})
         assert code == "04"
 
     def test_invalid_code_raises(self):
-        # T-107b: 화이트리스트 밖 코드는 "04" 폴백 없이 ValueError(fail-closed).
+        # 화이트리스트 밖 코드는 "04" 폴백 없이 ValueError(fail-closed).
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
             with pytest.raises(ValueError):
                 naver_client._resolve_origin_area_code({"origin_code": "ZZ"}, {})
 
     def test_empty_code_raises(self):
-        # T-107b: 빈 코드도 조용한 기본값 없이 ValueError(fail-closed).
+        # 빈 코드도 조용한 기본값 없이 ValueError(fail-closed).
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
             with pytest.raises(ValueError):
                 naver_client._resolve_origin_area_code({}, {})
 
     def test_build_payload_uses_validated_code(self):
-        # T-107b: 유효한 코드는 그대로 payload 에 반영된다.
+        # 유효한 코드는 그대로 payload 에 반영된다.
         p = {
             "name": "테스트",
             "categoryId": "50002366",
@@ -358,12 +358,12 @@ class TestFix8Packaging:
 
 
 # ============================================================================ #
-# Acceptance — 4 MCP tools registered
+# 검증 — 6 MCP tools registered
 # ============================================================================ #
-class TestAcceptanceTools:
-    """MCP 서버가 정확히 4개의 도구를 등록했는가."""
+class TestToolRegistration:
+    """MCP 서버가 정확히 6개의 도구를 등록했는가."""
 
-    def test_four_tools_registered(self):
+    def test_six_tools_registered(self):
         tools = mcp_server.mcp.list_tools()
         # MCPServer.list_tools() 가 코루틴이면 async 로 실행.
         import asyncio
@@ -382,19 +382,19 @@ class TestAcceptanceTools:
             if name:
                 names.append(name)
         # 6개 도구: check_config, upload_images, register_product, get_product,
-        # prepare_listing, submit_reviews (T-201d)
+        # prepare_listing, submit_reviews
         assert len(tools) == 6, f"Expected 6 tools, got {len(tools)}: {names}"
 
 
 # ============================================================================ #
-# T-106 — Fail-closed option stock (Counterexample 1)
+# Fail-closed option stock (Counterexample 1)
 # ============================================================================ #
 class TestT106OptionStockFailClosed:
     """_option_stock 이 누락/불가 stock 에 대해 ValueError 를 발생시키는가.
 
     이전 버전은 stock 이 없거나 파싱 불가능할 때 가짜 기본값 99 를
     조용히 반환했다. 이는 재고 0 인 상품을 99개 있는 것처럼 등록하는
-    심각한 결함이다. T-106 은 이를 fail-closed 로 수정한다.
+    심각한 결함이다. 이를 fail-closed 로 수정한다.
     """
 
     def test_missing_stock_raises_value_error(self):
@@ -461,7 +461,7 @@ class TestT106OptionStockFailClosed:
 
 
 # ============================================================================ #
-# T-106 — build_payload name 50-char enforcement (Counterexample 2)
+# build_payload name 50-char enforcement (Counterexample 2)
 # ============================================================================ #
 class TestT106BuildPayloadNameCut:
     """build_payload 가 50자 초과 상품명을 자르는가.
@@ -527,7 +527,7 @@ class TestT106BuildPayloadNameCut:
 
 
 # ============================================================================ #
-# T-106 — Sanitization strengthening (Counterexample 3)
+# Sanitization strengthening (Counterexample 3)
 # ============================================================================ #
 class TestT106SanitizationStrengthened:
     """_sanitize_text 가 POSIX 경로, key=value 시크릿, traceback 을 마스킹하는가.

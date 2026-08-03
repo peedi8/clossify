@@ -34,6 +34,11 @@ gitleaks-report.json
 gitleaks-report.*
 .scan-*
 
-# 임시 주입 검증 파일 (acceptance 검사 후 즉시 삭제되지만 안전망)
+# 임시 주입 검증 파일 (검증 후 즉시 삭제되지만 안전망)
 *.secret-injection-test
 /tmp-injection-*
+
+# 카테고리 메타 수집 중간 산출물 — wheel 에 포함되지 않는 임시 파일.
+# 조회 진행상황(재개 가능)과 실패 카테고리 로그. 공개 추적 대상이 아님.
+data/.category_meta.progress.json
+data/.category_meta.failed.json

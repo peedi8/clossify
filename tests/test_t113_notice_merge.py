@@ -1,6 +1,6 @@
-"""T-113 — 사용자 고시 입력값 무음 폐기 제거 검증 테스트.
+"""사용자 고시 입력값 무음 폐기 제거 검증 테스트.
 
-작업지시(T-113)가 요구하는 시나리오:
+검증 시나리오:
   1. ``wear.packDateText = "상세페이지 참조"`` → payload 의 ``wear`` 노드에
      그 값이 **그대로 존재** (결함의 직접 반례).
   2. 다른 임의 문자열(``"2026-01"`` 등)도 그대로 존재.
@@ -43,7 +43,7 @@ _NOTICE_CFG_WITH_ORIGIN = {
     "trouble_shooting_contents": "고객센터 문의",
     "importer": "테스트수입사",
 }
-# T-117: common.cfg() mock 용 — origin 만 포함한 최소 config (컴플라이언스
+# common.cfg() mock 용 — origin 만 포함한 최소 config (컴플라이언스
 # 원산지 일치 검사에서 읽는 값). _notice_config 와 값이 일치해야 한다.
 _COMMON_CFG_ORIGIN_ONLY = {
     "smartstore_notice_defaults": {
@@ -84,7 +84,7 @@ def _build_notice(p):
 
 
 # --------------------------------------------------------------------------- #
-# 1. 오케 반례: "상세페이지 참조" 가 무음 폐기되지 않고 그대로 실린다.
+# 1. 핵심 반례: "상세페이지 참조" 가 무음 폐기되지 않고 그대로 실린다.
 # --------------------------------------------------------------------------- #
 class TestSilentDiscardRemoved:
     """특정 문자열이라고 조용히 버리는 필터가 제거되었는가."""
@@ -317,7 +317,7 @@ class TestRegisterProductE2E:
     def test_wear_with_detail_reference_passes_gate_and_calls_naver(self):
         """WEAR 필수 필드 전부 실질값 제공 → 등록 경로 진입.
 
-        T-117 개정: ``packDateText="상세페이지 참조"`` 는 더 이상 "채워짐" 으로
+        개정 정책: ``packDateText="상세페이지 참조"`` 는 더 이상 "채워짐" 으로
         인정되지 않는다(컴플라이언스 판정은 미제공으로 간주, 게이트 차단).
         따라서 게이트 통과 반례는 실질값(``2026-01``)을 주어야 한다. placeholder
         값이 payload 에 그대로 실리는 것은 별도 테스트(test_placeholder_*) 와
@@ -376,8 +376,8 @@ class TestRegisterProductE2E:
     def test_payload_carries_detail_reference_to_naver(self):
         """최종 payload 의 wear 노드에 "상세페이지 참조" 가 그대로 실리는가.
 
-        T-117: placeholder 값은 컴플라이언스 판정에서 "미제공" 이지만, 전송은
-        그대로 된다. 본 테스트는 전송 계약(T-113 본래 목적)을 검증한다.
+        placeholder 값은 컴플라이언스 판정에서 "미제공" 이지만, 전송은
+        그대로 된다. 본 테스트는 전송 동작을 검증한다.
         DRY_RUN 경로로 게이트를 건너뛰고 payload 만 캡처해 전송 여부를 본다.
         """
         captured_payload = {}
@@ -407,7 +407,7 @@ class TestRegisterProductE2E:
                     "cfg",
                     return_value=_COMMON_CFG_ORIGIN_ONLY,
                 ):
-                    # T-117: placeholder 값은 게이트를 통과하지 못하므로,
+                    # placeholder 값은 게이트를 통과하지 못하므로,
                     # 전송 검증은 COMMERCE_DRY_RUN 경로(게이트 우회)를 사용한다.
                     # 이것이 게이트 우회가 아닌 것은 — DRY_RUN 은 실제 네이버
                     # 호출이 일어나지 않는 공식 개발/테스트 모드다.
@@ -439,13 +439,13 @@ class TestRegisterProductE2E:
         )
 
     def test_placeholder_value_blocks_gate_but_is_transmitted(self):
-        """T-117 핵심 반례: placeholder 값 → payload 전송 O, 컴플라이언스 FAIL.
+        """핵심 반례: placeholder 값 → payload 전송 O, 컴플라이언스 FAIL.
 
         사용자가 ``상세페이지 참조`` 를 입력하면:
           1. payload 의 wear 노드에 그대로 실린다 (전송 O).
           2. 컴플라이언스 판정은 미제공으로 간주해 FAIL 차단한다 (판정 X).
 
-        두 가지를 구분하는 것이 T-117 의 핵심 정책이다.
+        두 가지를 구분하는 것이 본 정책의 핵심이다.
         """
         notice_override = {
             "productInfoProvidedNoticeType": "WEAR",
@@ -507,7 +507,7 @@ class TestRegisterProductE2E:
     def test_blocked_when_required_field_truly_missing(self):
         """필수 필드가 진짜로 누락된 경우(빈 문자열)에는 여전히 차단하는가.
 
-        이 테스트는 T-113 변경이 "필수 필드 누락 검사 자체를 무력화"하지
+        이 테스트는 본 변경이 "필수 필드 누락 검사 자체를 무력화"하지
         않았음을 보장한다. 빈 문자열은 여전히 누락으로 처리되어야 한다.
         """
         notice_override = {

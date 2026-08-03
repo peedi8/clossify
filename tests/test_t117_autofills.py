@@ -1,6 +1,6 @@
-"""T-117 — 규제 신고값 임의 삽입 잔존 제거 (오케 직접 반례 실행).
+"""규제 신고값 임의 삽입 잔존 제거 (직접 반례 실행).
 
-작업지시(T-117) 의 Acceptance 항목을 순서대로 검증한다:
+본 파일이 검증하는 항목을 순서대로 나열한다:
 
   1. **임의 삽입 0**: 최소 입력(상품명·가격·이미지·카테고리)만으로
      ``build_payload`` 호출 시, 고시 관련 필드에 **코드가 만든 문자열이
@@ -14,7 +14,7 @@
      **블록 전체 생략** + 경고 메타.
   5. **AS 미설정** → 컴플라이언스 FAIL(등록 차단), 기본 문자열 생성 0.
 
-이 테스트 파일은 작업지시가 요구하는 "반례" 를 코드로 고정한다 —
+이 테스트 파일은 요구되는 "반례" 를 코드로 고정한다 —
 회귀 방지 목적이다. 한글 리터럴만 사용, 외부 API 호출 없음.
 """
 
@@ -37,7 +37,7 @@ from clossify import common, mcp_server, naver_client, qa_agents
 # --------------------------------------------------------------------------- #
 
 # _notice_config 가 반환할 "판매자가 실제 신고하는 값" 없는 빈 config.
-# T-117 의 핵심 전제: 코드가 값을 지어내지 않는다 → config 가 비면 payload 도 비고
+# 본 검증의 핵심 전제: 코드가 값을 지어내지 않는다 → config 가 비면 payload 도 비고
 # 컴플라이언스가 FAIL 지적한다.
 _EMPTY_NOTICE_CFG: dict = {
     # origin 만 있고 나머지는 전부 비어 있다. origin_area_code/origin_content 는
@@ -219,7 +219,7 @@ class TestComplianceFailOnMinimumInput:
         assert any(
             "고시" in r and "필드" in r for r in rules
         ), f"고시 필수필드 누락 지적이 없음: {rules}"
-        # AS 연락처 누락 지적이 있어야 한다 (T-117 요구 4).
+        # AS 연락처 누락 지적이 있어야 한다 (요구 항목 4).
         assert any("A/S" in r or "AS" in r for r in rules), f"AS 연락처 누락 지적이 없음: {rules}"
         # 모든 위반의 severity 가 FAIL 인 항목이 하나 이상 있어야 한다.
         fail_severities = [
@@ -256,7 +256,7 @@ class TestComplianceFailOnMinimumInput:
 class TestPlaceholderDualPolicy:
     """사용자가 placeholder 값을 주면: payload 전송 O, 컴플라이언스 판정 X.
 
-    T-117 요구 2: "전송은 하되 '필수 항목이 채워졌다' 고 판정하지는 않는다."
+    정책 요구: "전송은 하되 '필수 항목이 채워졌다' 고 판정하지는 않는다."
     """
 
     def test_placeholder_value_transmitted_verbatim(self):
@@ -351,7 +351,7 @@ class TestPlaceholderDualPolicy:
         for token in tokens:
             body = {"field": token}
             missing = qa_agents._notice_field_missing(body, ["field"])
-            assert "field" in missing, f"토큰 {token!r} 이 missing 으로 판정되지 않음 (T-117 위반)"
+            assert "field" in missing, f"토큰 {token!r} 이 missing 으로 판정되지 않음 (정책 위반)"
 
     def test_real_value_not_treated_as_missing(self):
         """대조군: 실제 정보값은 missing 으로 판정되지 않는다."""
@@ -476,7 +476,7 @@ class TestAsContactMissingFails:
             ), f"AS 연락처 누락이 FAIL 이 아님 (WARN 잔존): {v}"
 
     def test_as_missing_severity_is_fail_not_warn(self):
-        """AS 연락처 누락 위반의 severity 가 정확히 'FAIL' 이다 (T-117 요구 4)."""
+        """AS 연락처 누락 위반의 severity 가 정확히 'FAIL' 이다 (요구 항목 4)."""
         payload = _build_payload_minimal()
         with mock.patch.object(common, "cfg", return_value=_COMMON_CFG_EMPTY):
             result = qa_agents._compliance_code_check(

@@ -1,4 +1,4 @@
-"""판단 위임 계약 구성 (T-201b-r).
+"""판단 위임 계약 구성.
 
 원본 ``sourcing.py`` 의 에이전트 프롬프트 조립 로직을 이식한다. 단,
 **LLM 을 직접 호출하지 않는다** — 대신 :func:`common._llm_hint()` 가 정의한
@@ -10,7 +10,7 @@
   2. **qa_copy_agent** — 카피/텍스트 품질 판단 (``QA_AGENTS.md`` +
      ``COMPLIANCE_RULES.md`` + ``COPY_GUIDE.md`` 규칙 적정성 판단)
 
-**프롬프트 조립 순서 보존 원칙** (작업지시 "축약 금지"):
+**프롬프트 조립 순서 보존 원칙** (프롬프트 축약 금지):
 원본 ``sourcing.py`` 의 프롬프트 조립 단계를 그대로 유지한다.
   1. 페르소나/역할 선언
   2. 준거 규칙 교차 참조 (COMPLIANCE_RULES 섹션 + 에이전트 md)
@@ -40,7 +40,7 @@ from .copywriting import (
 )
 
 # ---------------------------------------------------------------------------
-# 공용 헬퍼: 에이전트 규칙 텍스트 로더 (source L3675-L3687 보존).
+# 공용 헬퍼: 에이전트 규칙 텍스트 로더.
 #
 # ``copywriting._agent_rules_bundle()`` 을 재사용한다 — 패키지 내 2종 스키마/로더
 # 금지 원칙. 단일 진실 공급원.
@@ -48,7 +48,7 @@ from .copywriting import (
 
 
 def _agent_rule_text(filename):
-    """단일 ``agents/*.md`` 파일의 원문 텍스트를 반환 (source L3675).
+    """단일 ``agents/*.md`` 파일의 원문 텍스트를 반환.
 
     ``copywriting._agent_rules_bundle`` 은 파일별 캐시를 유지하므로, 본 함수는
     그 캐시를 통해 읽는 얇은 래퍼다. 읽기 실패 시 빈 문자열을 반환하여
@@ -64,13 +64,13 @@ def _rules_dict(*filenames):
     """복수 ``agents/*.md`` 파일을 ``{filename: text}`` 사전으로 로드.
 
     누락 파일은 빈 문자열로 채운다. 원본 ``qa_copy`` 가 ``_agent_rule_text``
-    을 3회 호출해 사전을 만들던 패턴(source L6409-L6411)을 보존한다.
+    을 3회 호출해 사전을 만들던 패턴을 보존한다.
     """
     return {name: _agent_rule_text(name) for name in filenames}
 
 
 # ---------------------------------------------------------------------------
-# naming_agent — 판단 위임 계약 (source L5259-L5291, 프롬프트 축약 금지).
+# naming_agent — 판단 위임 계약 (프롬프트 축약 금지).
 #
 # 원본은 ``_agent_llm_json`` → ``_llm_generate`` (CLI 디스패치) 를 호출했다.
 # 본 이식판은 ``common._llm_hint()`` 디스크립터를 반환하여 MCP 호스트 LLM 이
@@ -80,7 +80,7 @@ def _rules_dict(*filenames):
 
 
 def naming_agent(source_title, props, category_path):
-    """네이밍 에이전트 판단 위임 디스크립터 반환 (source L5259).
+    """네이밍 에이전트 판단 위임 디스크립터 반환.
 
     원본 프롬프트 조립 순서를 축약 없이 보존한다:
       1. 페르소나: "You are the Naming Agent."
@@ -161,7 +161,7 @@ def normalize_naming_response(data, source_title, props, category_path):
 
 
 # ---------------------------------------------------------------------------
-# qa_copy_agent — 카피/텍스트 QA 판단 위임 계약 (source L6403-L6440).
+# qa_copy_agent — 카피/텍스트 QA 판단 위임 계약.
 #
 # 원본은 ``_agent_llm_json(prompt, purpose="copy_qa")`` 로 LLM 을 호출했다.
 # 본 이식판은 ``common._llm_hint()`` 디스크립터를 반환한다. 호스트가
@@ -171,7 +171,7 @@ def normalize_naming_response(data, source_title, props, category_path):
 
 
 def qa_copy_agent(name, context, detail_text):
-    """카피 QA 판단 위임 디스크립터 반환 (source L6403).
+    """카피 QA 판단 위임 디스크립터 반환.
 
     원본 프롬프트 조립 순서를 축약 없이 보존한다:
       1. 페르소나: "You are qa_copy, the copy/text QA agent."

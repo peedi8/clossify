@@ -1,6 +1,6 @@
-"""품질 게이트 — 3분할 QA + 집계 + 등록 차단 (T-201b-r).
+"""품질 게이트 — 3분할 QA + 집계 + 등록 차단.
 
-원본 ``sourcing.py`` 의 QA 서브시스템을 이식하되, 작업지시의 핵심 개정사항을
+원본 ``sourcing.py`` 의 QA 서브시스템을 이식하되, 아래 핵심 개정사항을
 반영한다:
 
 1. **고시 검증 데이터 기반화**: 원본은 ``ETC``/``FURNITURE`` 2종만 하드코딩으로
@@ -30,7 +30,7 @@ from .text_props import BANNED_CLAIM_RE
 
 # ---------------------------------------------------------------------------
 # Verdict 상수. PENDING 은 본 이식판이 새로 도입한 "위임 미회신" 상태다.
-# 원본은 PASS/WARN/FAIL 만 있었으나, 작업지시가 PENDING 차단을 명시한다.
+# 원본은 PASS/WARN/FAIL 만 있었으나, PENDING 을 게이트 차단 상태로 명시한다.
 # ---------------------------------------------------------------------------
 PASS = "PASS"
 WARN = "WARN"
@@ -79,7 +79,7 @@ def _clamp_verdict(value, default=WARN):
 
 
 def _verdict_from_violations(violations, default=PASS):
-    """위반 목록에서 최악 verdict 산출 (source L5451-L5457 보존).
+    """위반 목록에서 최악 verdict 산출.
 
     FAIL-severity 위반이 하나라도 있으면 → FAIL; 아니면 WARN → WARN; 아니면 default.
      PENDING 은 위반 목록이 아닌 별도 경로(위임 미회신)에서만 부여된다.
@@ -97,9 +97,9 @@ def _verdict_from_violations(violations, default=PASS):
 
 
 def _normalize_qa_result(data):
-    """QA 응답 dict 를 정규화 (source L5294-L5326, T-201b-r2 개정).
+    """QA 응답 dict 를 정규화 (위임 미회신 fail-open 차단 개정).
 
-    **T-201b-r2 위임 미회신 fail-open 차단 (중대)**:
+    **위임 미회신 fail-open 차단 (중대)**:
     원본/초기 이식판은 ``verdict`` 키가 없으면 ``WARN`` 으로 떨어뜨렸고,
     ``WARN`` 은 게이트를 통과했다. 이는 LLM 판단 위임 디스크립터(``llm_hint``)
     가 결과 자리에 그대로 들어온 경우(판단이 실제로 이뤄지지 않음)를 등록으로
@@ -132,7 +132,7 @@ def _normalize_qa_result(data):
         }
     raw_verdict = data.get("verdict")
     verdict_present = raw_verdict is not None and str(raw_verdict).strip() != ""
-    # --- 위임 미회신 판정 (T-201b-r2 fail-open 차단) ---
+    # --- 위임 미회신 판정 (fail-open 차단) ---
     # 판단이 실제로 이뤄졌다는 증거가 없으면 PENDING.
     if not verdict_present:
         return {
@@ -189,7 +189,7 @@ def _normalize_qa_result(data):
 
 
 def _qa_agent_result(agent, verdict=PASS, violations=None, summary=""):
-    """에이전트 결과 dict 생성 (source L5519-L5526)."""
+    """에이전트 결과 dict 생성."""
     result = _normalize_qa_result(
         {"verdict": verdict, "violations": violations or [], "summary": summary}
     )
@@ -198,13 +198,13 @@ def _qa_agent_result(agent, verdict=PASS, violations=None, summary=""):
 
 
 def _normalize_agent_result(data, agent):
-    """개별 에이전트 결과 정규화 (source L5529-L5536, T-201b-r2 개정).
+    """개별 에이전트 결과 정규화 (위임 미회신 fail-open 차단 개정).
 
     원본의 동작 보존: verdict 를 정규화하고, ``agent`` 필드를 붙인다.
     추가 키는 그대로 합친다.
 
-    **T-201b-r2**: ``data`` 가 dict 가 아니거나 ``verdict`` 키가 없으면
-    PENDING 으로 판정한다 (위임 미회신 fail-open 차단).
+    ``data`` 가 dict 가 아니거나 ``verdict`` 키가 없으면 PENDING 으로
+    판정한다 (위임 미회신 fail-open 차단).
     """
     if not isinstance(data, dict):
         # dict 자체가 아님 — 판단이 이뤄졌다는 증거 없음. PENDING.
@@ -219,7 +219,7 @@ def _normalize_agent_result(data, agent):
 
 
 def _merge_code_check(result, code_check, key):
-    """서브 검사 결과를 부모 에이전트 결과에 병합 (source L5539-L5556).
+    """서브 검사 결과를 부모 에이전트 결과에 병합.
 
     서브 FAIL → 부모 FAIL 승격; 서브 WARN → 부모 PASS 를 WARN 으로 승격.
     PENDING 은 승격 대상이 아니다 (위임 미회신은 다른 경로에서 처리).
@@ -370,7 +370,7 @@ def _infer_notice_type(context):
 # ---------------------------------------------------------------------------
 # 컴플라이언스 코드검사 (원본 _compliance_code_check 대체, 데이터 기반).
 #
-# 작업지시가 명시하는 핵심 정책 변경:
+# 핵심 정책 변경:
 #   - 원산지: config 값과 payload 값이 **일치**하는지만 검사 (값 판정 X)
 #   - KC: category_meta.requires_kc() 가 True 인데 KC 정보가 없으면 지적
 #   - 고시 필드: data/notice_types.json 기반으로 타입별 필수 필드 누락 지적
@@ -381,16 +381,16 @@ def _infer_notice_type(context):
 def _notice_field_missing(notice_body, fields):
     """``notice_body`` 에서 누락된 필수 필드 이름 리스트 반환.
 
-    T-117: 안내 문구성 값(예: ``상세참조``, ``상세페이지 참조``, ``해당없음``,
+    안내 문구성 값(예: ``상세참조``, ``상세페이지 참조``, ``해당없음``,
     ``-``, 공백류)은 **미제공으로 취급**한다. 핵심 정책:
 
       - **전송은 하되 "필수 항목이 채워졌다"고 판정하지는 않는다** — 두 가지를
         구분한다. ``_merge_notice`` (naver_client) 가 사용자가 명시적으로 준
-        placeholder 값을 그대로 payload 에 싣는 것은 T-113 결정을 유지하되,
+        placeholder 값을 그대로 payload 에 싣는 것은 기존 결정을 유지하되,
         컴플라이언스 판정은 그 값을 "유효 제공" 으로 인정하지 않는다.
       - 사용자가 placeholder 없이 실질 정보를 주어야만 "채워짐" 이다.
     """
-    # T-117: 안내 문구/placeholder 토큰. 이 값들은 "미제공" 으로 간주한다.
+    # 안내 문구/placeholder 토큰. 이 값들은 "미제공" 으로 간주한다.
     # (원본 EMPTY_TOKENS 의 빈값 토큰에 placeholder 안내문구를 추가.)
     EMPTY_TOKENS = {
         "",
@@ -538,17 +538,37 @@ def _compliance_code_check(name, context, api_payload=None):
             }
         )
 
-    # --- KC 검사: category_meta.requires_kc() 기반 ---
+    # --- KC 검사: category_meta.requires_kc() 기반 (3-상태, fail-closed) ---
+    # requires_kc 는 True/False/None(불명) 을 반환한다. 상세 조회가 실패해 KC
+    # 필요 여부를 확정하지 못한 카테고리는 None 이며, 이를 False 처럼 통과시키면
+    # KC 대상을 면제로 오판하는 허위 신고가 된다. 불명은 FAIL 로 차단한다.
     category_id = ctx.get("category_id") or ctx.get("categoryId") or ctx.get("leaf_category_id")
     if category_id is not None:
         try:
             from . import category_meta
 
-            requires_kc = category_meta.requires_kc(category_id, raise_if_unknown=False)
+            requires_kc = category_meta.requires_kc(
+                category_id,
+                raise_if_unknown=False,
+                raise_if_incomplete=False,
+            )
         except Exception as exc:
             # fail-closed: category_meta 조회 실패 시 KC 검사를 건너뛰지 않고 예외 전파.
             raise RuntimeError(f"category_meta.requires_kc 조회 실패 (fail-closed): {exc}") from exc
-        if requires_kc:
+        if requires_kc is None:
+            # KC 필요 여부 불명 — 통과시키지 않는다(허위 신고 방지).
+            violations.append(
+                {
+                    "rule": "KC 필요 여부 불명",
+                    "severity": FAIL,
+                    "detail": (
+                        f"카테고리 {category_id} 의 KC 인증 필요 여부를 확정할 수 없습니다 "
+                        "(상세 조회 실패로 exceptionalCategories 미확정). "
+                        "실제 KC 대상인지 확인하기 전까지 등록을 차단한다(fail-closed)."
+                    ),
+                }
+            )
+        elif requires_kc:
             kc_block = (
                 detail_attr.get("certificationTargetExcludeContent")
                 if isinstance(detail_attr.get("certificationTargetExcludeContent"), dict)
@@ -565,10 +585,10 @@ def _compliance_code_check(name, context, api_payload=None):
                         ),
                     }
                 )
-        # requires_kc == False 면 KC 검사하지 않음 (작업지시).
+        # requires_kc == False 면 KC 검사하지 않음 (확정 불필요).
 
     # --- A/S 정보 검사 ---
-    # T-117: AS 연락처 미설정 시 기본 문자열 생성이 제거되었으므로, 컴플라이언스는
+    # AS 연락처 미설정 시 기본 문자열 생성이 제거되었으므로, 컴플라이언스는
     # 미설정을 FAIL 로 차단한다 (문서 서술과 일치). WARN 에 그치는 것은 fail-open.
     as_info = (
         detail_attr.get("afterServiceInfo")
@@ -607,7 +627,7 @@ def _compliance_code_check(name, context, api_payload=None):
 
 
 def _copy_code_check(name, detail_text, option_texts=None):
-    """카피/텍스트 결정론적 코드검사 (source L6082-L6128 보존).
+    """카피/텍스트 결정론적 코드검사.
 
     LLM 위임(qa_copy_agent)과 병행하여 실행되는 로컬 검사다. 결정론적으로
     잡을 수 있는 위반(금지어, 빈 제목 등)을 FAIL/WARN 으로 보고한다.
@@ -668,9 +688,9 @@ def _copy_code_check(name, detail_text, option_texts=None):
 
 
 def qa_image(detail_jpeg_path, name, context=None):
-    """이미지 QA (source L6351).
+    """이미지 QA.
 
-    본 이식판은 상세 JPEG 렌더 파이프라인이 T-201c 에 있으므로, 실제 픽셀
+    본 이식판은 상세 JPEG 렌더 파이프라인이 별도 모듈에 있으므로, 실제 픽셀
     검사는 스텁이 아닌 **파일 부재 시 FAIL** 처리한다. 렌더된 JPEG 이 존재하면
     로컬 결정론적 검사(여백/레이아웃)를 수행한다 — 단 PIL 이 없으면 예외를
     삼키지 않고 WARN 으로 보고한다 (fail-closed 원칙: 예외 삼켜 PASS 금지).
@@ -687,22 +707,22 @@ def qa_image(detail_jpeg_path, name, context=None):
             }
         )
         return _qa_agent_result("image", FAIL, violations, "상세 이미지 없음 — 이미지 QA 불가")
-    # 실제 픽셀 검사는 T-201c 의 렌더 파이프라인이 완성된 후 연결된다.
+    # 실제 픽셀 검사는 렌더 파이프라인이 완성된 후 연결된다.
     # 현재는 파일 존재만 확인하고 PASS 로 둔다 — 단 예외 삼킴 없이.
     return _qa_agent_result(
-        "image", PASS, [], "상세 이미지 존재 확인 (픽셀 검사는 T-201c 연동 예정)"
+        "image", PASS, [], "상세 이미지 존재 확인 (픽셀 검사는 렌더 파이프라인 연동 예정)"
     )
 
 
 def qa_copy(detail_jpeg_path, name, context=None):
-    """카피/텍스트 QA (source L6403-L6440).
+    """카피/텍스트 QA.
 
     본 이식판의 동작:
       1. 로컬 결정론적 코드검사(``_copy_code_check``) 실행 — 즉시 verdict 산출.
       2. ``agent_calls.qa_copy_agent`` 로 LLM 위임 디스크립터 생성.
       3. 위임 결과가 **아직 회신되지 않았으면**(llm_hint dict 인 경우) 해당
-         항목을 ``PENDING`` verdict 로 표시한다. 이것이 작업지시가 말하는
-         "위임 미회신 차단" 의 핵심이다.
+         항목을 ``PENDING`` verdict 로 표시한다. 이것이 "위임 미회신 차단"
+         의 핵심이다.
 
     호출자가 이미 LLM 회신 dict 을 ``context["copy_qa_response"]`` 로 전달한
     경우, 그 결과를 정규화하여 병합한다.
@@ -739,7 +759,7 @@ def qa_copy(detail_jpeg_path, name, context=None):
 
 
 def qa_compliance(detail_jpeg_path=None, name="", context=None, api_payload=None):
-    """컴플라이언스 QA (source L6443-L6446).
+    """컴플라이언스 QA.
 
     ``_compliance_code_check`` 로 위임. LLM 위임이 필요 없는 결정론적 검사다.
     """
@@ -757,7 +777,7 @@ _VERDICT_RANK = {PASS: 0, WARN: 1, PENDING: 2, FAIL: 3}
 
 
 def aggregate_qa_results(agent_results):
-    """3분할 QA 결과를 하나의 verdict 로 집계 (source L6466-L6493, 개정).
+    """3분할 QA 결과를 하나의 verdict 로 집계.
 
     원본과의 차이:
       - **PENDING verdict 도입**: 위임 미회신 항목은 PENDING 이며, 집계된
@@ -801,7 +821,7 @@ def aggregate_qa_results(agent_results):
 
 
 def run_qa_agents(detail_jpeg_path, name, context=None, api_payload=None):
-    """3개 QA 에이전트 순차 실행 후 집계 (source L6496-L6511).
+    """3개 QA 에이전트 순차 실행 후 집계.
 
     Args:
         detail_jpeg_path: 렌더된 상세 JPEG 경로.
@@ -822,7 +842,7 @@ def run_qa_agents(detail_jpeg_path, name, context=None, api_payload=None):
 
 
 def replace_qa_agent_result(qa, replacement):
-    """기존 집계 결과 내 한 에이전트 결과를 교체 (source L6514-L6529).
+    """기존 집계 결과 내 한 에이전트 결과를 교체.
 
     LLM 회신이 도착한 후 카피 QA verdict 를 갱신할 때 사용한다.
     """
@@ -844,7 +864,7 @@ def replace_qa_agent_result(qa, replacement):
 def qa_gate(payload):
     """등록 게이트 — QA 결과를 보고 등록 허용/차단 결정 (개정판).
 
-    **작업지시 핵심 반영 (위임 미회신 차단 — 중대)**:
+    **핵심 반영 (위임 미회신 차단 — 중대)**:
     원본은 ``verdict in ("PASS", "WARN")`` 일 때 통과시켰다. 이는 verdict 가
     없으면 WARN 으로 떨어지고, WARN 이 통과하는 문제가 있다. 본 이식판은
     ``PENDING`` verdict 를 **차단**한다 — LLM 판단이 아직 회신되지 않은

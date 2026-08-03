@@ -1,14 +1,14 @@
-"""상세 페이지 HTML 렌더 (T-201d) 및 조립 결과 문서(scene) 산출 (T-301).
+"""상세 페이지 HTML 렌더 및 조립 결과 문서(scene) 산출.
 
 본 모듈은 ``templates`` 가 제공하는 상세 템플릿·CSS·레이아웃 상수를 사용해
 최종 상세 HTML 문자열을 만든다. 원본 렌더 함수는 함수명에 금칙어가 포함되어
-있어 이식하지 않는다(작업지시 요구 1). 대신 새 이름으로 구현하되 레이아웃
-규칙(폭·마진·섹션 순서·CSS 조각)은 원본 상수를 그대로 쓴다.
+있어 이식하지 않는다. 대신 새 이름으로 구현하되 레이아웃 규칙(폭·마진·섹션
+순서·CSS 조각)은 원본 상수를 그대로 쓴다.
 
-T-301 확장: 본 모듈은 이제 HTML 문자열과 함께 **조립 결과 문서(scene)** 를
-산출한다. scene 는 동일한 조립 로직(``_assemble``)에서 나온 구조적 표현이며,
-편집 도구가 이를 읽어 조각 단위 수정을 할 수 있도록 공개된다. HTML 렌더와
-scene 는 **하나의 조립 결과를 공유**한다 — 두 개의 진실이 생기지 않는다.
+본 모듈은 HTML 문자열과 함께 **조립 결과 문서(scene)** 를 산출한다. scene 는
+동일한 조립 로직(``_assemble``)에서 나온 구조적 표현이며, 편집 도구가 이를
+읽어 조각 단위 수정을 할 수 있도록 공개된다. HTML 렌더와 scene 는 **하나의
+조립 결과를 공유**한다 — 두 개의 진실이 생기지 않는다.
 
 제품 전제:
   - 텍스트 추론은 MCP 클라이언트의 LLM 이 담당한다.
@@ -23,7 +23,7 @@ scene 는 **하나의 조립 결과를 공유**한다 — 두 개의 진실이 �
 입력: 상품 정보 dict + 이미지 CDN URL 리스트 + 옵션표.
 출력: HTML 문자열 — 단, LLM 판단이 필요한 카피는 ``llm_hint`` 위임
 디스크립터를 인라인 placeholder 로 남기고, 최종 HTML 확정은 위임 회신 후
-호출자가 다시 합성하도록 구조화한다. T-301 추가 출력: scene dict
+호출자가 다시 합성하도록 구조화한다. 추가 출력: scene dict
 (``build_scene``) — 같은 조립 결과의 구조적 직렬화.
 """
 
@@ -35,7 +35,7 @@ from . import common, templates
 from .text_props import DETAIL_RENDER_WIDTH, _detail_safe_text, _hesc
 
 # ---------------------------------------------------------------------------
-# T-301 — scene 문서 형식 상수.
+# scene 문서 형식 상수.
 #
 # scene 는 조립 결과의 구조적 표현이다. 버전 문자열은 하위호환 검사를 위해
 # 명시한다. ``origin`` 은 이 문서가 조립(compose)으로 만들어졌음을 표시한다.
@@ -51,7 +51,7 @@ SCENE_RENDERER = "clossify"
 # 원본 상세 페이지는 고정된 섹션 순서를 가졌다. 본 이식판도 동일 순서로
 # HTML 을 조립한다. 순서를 바꾸면 스캐너/게이트가 레이아웃 위반으로 잡을 수
 # 있다. 단, 각 섹션의 *내용* 이 빈 값이면 해당 섹션은 생략한다(사용자가
-# 주지 않은 사실을 채우지 않는다 — 작업지시 요구 1).
+# 주지 않은 사실을 채우지 않는다).
 # ---------------------------------------------------------------------------
 _SECTION_ORDER = ("hero", "intro", "specs", "options", "notice", "footer")
 
@@ -89,12 +89,11 @@ def _coerce_options(options):
 
 
 # ---------------------------------------------------------------------------
-# T-301 — 단일 조립 로직(``_assemble``).
+# 단일 조립 로직(``_assemble``).
 #
 # ``render_detail_html`` 과 ``build_scene`` 은 **같은 조립 결과**를 공유해야
-# 한다(작업지시 요구 1: "두 개의 진실이 생기면 안 됨"). 따라서 본 함수가
-# 상품 정보를 구조화된 섹션 리스트로 만들고, HTML 렌더와 scene 직렬화 양쪽이
-# 이 리스트를 소비한다.
+# 한다(두 개의 진실이 생기면 안 된다). 따라서 본 함수가 상품 정보를 구조화된
+# 섹션 리스트로 만들고, HTML 렌더와 scene 직렬화 양쪽이 이 리스트를 소비한다.
 #
 # 각 섹션 dict 의 공통 키:
 #   - ``id``      : 안정적 식별자(같은 입력 → 같은 id). 조각 단위 수정 지목용.
@@ -113,8 +112,8 @@ def _coerce_options(options):
 def _stable_id(*parts):
     """안정적 식별자 생성 — 입력이 같으면 같은 문자열.
 
-    작업지시: "id 는 안정적이어야 한다(같은 입력이면 같은 id)." 입력 부분들을
-    밑줄로 이어 붙여 만든다. 무작위성·시각 의존성 없음.
+    id 는 안정적이어야 한다(같은 입력이면 같은 id). 입력 부분들을 밑줄로
+    이어 붙여 만든다. 무작위성·시각 의존성 없음.
     """
     return "_".join(str(p) for p in parts if p != "" and p is not None)
 
@@ -122,8 +121,8 @@ def _stable_id(*parts):
 def _source(field, *, missing=False, verified=False):
     """``source`` dict 생성. ``field`` 는 입력 경로, ``missing`` 은 미제공 표시.
 
-    작업지시: "사용자가 제공하지 않아 비어 있는 항목은 생략하지 말고
-    ``value: ""`` 로 두고 ``source.missing: true`` 를 표시한다."
+    사용자가 제공하지 않아 비어 있는 항목은 생략하지 말고 ``value: ""`` 로
+    두고 ``source.missing: true`` 를 표시한다.
     """
     out = {"field": str(field or "")}
     if missing:
@@ -162,7 +161,7 @@ def _build_hero_section(urls):
 def _build_intro_section(product):
     """도입부 섹션 구조화 — 상품명/요약. 둘 다 비면 빈 HTML.
 
-    사용자가 주지 않은 사실을 채우지 않는다(작업지시 요구 1).
+    사용자가 주지 않은 사실을 채우지 않는다.
     """
     name = _detail_safe_text(product.get("name") or product.get("title_ko") or "")
     summary = _detail_safe_text(product.get("summary") or product.get("desc") or "")
@@ -205,7 +204,7 @@ def _build_specs_section(product):
     """스펙/속성 섹션 구조화 — product.props / attributes 에서 읽는다.
 
     HTML 은 값이 있는 행만 표시하지만, scene 는 누락 행도 ``missing: true`` 로
-    포함한다(작업지시: "생략하지 말고 value: '' 로 두고 missing 표시").
+    포함한다(생략하지 말고 ``value: ""`` 로 두고 missing 표시).
     """
     props = product.get("props") or product.get("attributes")
     rows = []
@@ -328,11 +327,11 @@ def _build_options_section(opts):
 def _flatten_notice_pairs(notice):
     """고시 dict 를 (라벨, 값, field경로) 튜플 리스트로 평탄화.
 
-    T-301b 결함 1 수정: 고시 본문이 중첩 dict/list 면 **파이썬 객체를 문자열화해
-    한 행에 넣지 않고** 각 leaf 필드마다 한 행으로 펼친다. ``notice.wear.material``
-    형태의 field 경로를 만들어 source.field 에 사용한다.
+    고시 본문이 중첩 dict/list 면 **파이썬 객체를 문자열화해 한 행에 넣지
+    않고** 각 leaf 필드마다 한 행으로 펼친다. ``notice.wear.material`` 형태의
+    field 경로를 만들어 source.field 에 사용한다.
 
-    평탄화 규칙(작업지시 요구 1):
+    평탄화 규칙:
       - 최상위 key 의 값이 scalar(문자열/숫자) 이면 ``(key, value, "notice.<key>")``
         한 행을 만든다(기존 동작 보존).
       - 최상위 key 의 값이 dict 이면 그 자식을 한 단계 더 펼친다:
@@ -393,9 +392,9 @@ def _flatten_notice_pairs(notice):
 def _notice_type_for_node(node_key):
     """``node_key`` 에 해당하는 고시 타입 스펙을 ``notice_types.json`` 에서 찾는다.
 
-    작업지시 요구 2: 미제공 필수 필드의 기준은 ``data/notice_types.json`` 의
-    해당 고시 타입 필수 필드 목록이다. 입력의 최상위 notice 키(예: ``wear``)가
-    고시 타입 node 이름과 일치하면 그 타입의 필수 필드를 가져온다.
+    미제공 필수 필드의 기준은 ``data/notice_types.json`` 의 해당 고시 타입 필수
+    필드 목록이다. 입력의 최상위 notice 키(예: ``wear``)가 고시 타입 node 이름과
+    일치하면 그 타입의 필수 필드를 가져온다.
 
     Returns:
         매칭되는 스펙 dict (``{type, node, fields, ...}``) 또는 ``None``.
@@ -421,24 +420,24 @@ def _notice_type_for_node(node_key):
 def _build_notice_section(product):
     """고시/안내 섹션 구조화 — notice dict 가 있으면 표로.
 
-    T-301b 수정:
-      - 고시 본문을 필드 단위 행으로 분해한다(결함 1). 중첩 dict/list 는
+    수정 내역:
+      - 고시 본문을 필드 단위 행으로 분해한다. 중첩 dict/list 는
         ``_flatten_notice_pairs`` 로 평탄화해 각 leaf 필드가 한 행이 된다.
         파이썬 객체를 문자열화해 value 에 넣지 않는다.
       - ``data/notice_types.json`` 의 해당 타입 필수 필드 중 사용자가 주지
-        않은 것은 ``value: ""`` + ``source.missing: true`` 행으로 남긴다(결함 2).
+        않은 것은 ``value: ""`` + ``source.missing: true`` 행으로 남긴다.
         필수 목록에 없는 임의 필드를 만들어내지는 않는다.
 
-    작업지시 요구 3(HTML 무회귀): HTML 은 이 티켓 전후로 동일해야 한다.
-    따라서 HTML 의 notice 테이블은 기존 로직(scalar 값만 가시 행으로 표시)을
-    유지한다. 중첩 dict 의 leaf 값이 가시 행에 추가되더라도, 빈 값/missing 행은
-    HTML 에 표시하지 않는 기존 규칙을 그대로 따른다. 결과적으로 scalar 값이
-    있는 입력에서 HTML 은 동일하다.
+    HTML 무회귀: HTML 은 수정 전후로 동일해야 한다. 따라서 HTML 의 notice
+    테이블은 기존 로직(scalar 값만 가시 행으로 표시)을 유지한다. 중첩 dict 의
+    leaf 값이 가시 행에 추가되더라도, 빈 값/missing 행은 HTML 에 표시하지
+    않는 기존 규칙을 그대로 따른다. 결과적으로 scalar 값이 있는 입력에서
+    HTML 은 동일하다.
     """
     notice = product.get("notice")
     rows = _flatten_notice_pairs(notice)
 
-    # --- 미제공 필수 필드 표시 (작업지시 요구 2) ---
+    # --- 미제공 필수 필드 표시 ---
     # notice 의 최상위 키가 고시 타입 node 이름이면, 그 타입의 필수 필드 중
     # 사용자가 주지 않은 것을 missing 행으로 추가한다.
     if isinstance(notice, dict) and notice:
@@ -556,12 +555,12 @@ def render_detail_html(product, image_urls, options=None):
     """상품 정보 + 이미지 CDN URL + 옵션표 로 상세 HTML 문자열을 만든다.
 
     본 함수는 결정론적이다 — LLM 추론을 호출하지 않는다. 사용자가 주지 않은
-    값은 채우지 않고 빈 섹션은 생략한다(작업지시 요구 1). 카피 문구(마케팅
-    카피) 확정이 필요한 부분은 호출자가 ``common._llm_hint`` 위임을 통해
-    별도로 얻어야 한다 — 본 함수는 직접 LLM 호출하지 않는다.
+    값은 채우지 않고 빈 섹션은 생략한다. 카피 문구(마케팅 카피) 확정이 필요한
+    부분은 호출자가 ``common._llm_hint`` 위임을 통해 별도로 얻어야 한다 —
+    본 함수는 직접 LLM 호출하지 않는다.
 
-    T-301: 본 함수는 이제 ``_assemble`` 의 구조화 결과를 소비해 HTML 을 만든다.
-    출력은 이전과 **바이트 수준으로 동일**해야 한다(HTML 무회귀).
+    본 함수는 ``_assemble`` 의 구조화 결과를 소비해 HTML 을 만든다.
+    출력는 이전과 **바이트 수준으로 동일**해야 한다(HTML 무회귀).
 
     Args:
         product: 상품 정보 dict (``name``, ``summary``, ``props``,
@@ -586,11 +585,11 @@ def render_detail_html(product, image_urls, options=None):
 
 
 def build_scene(product, image_urls, options=None):
-    """조립 결과를 편집 가능한 문서(scene)로 산출한다 (T-301 요구 1).
+    """조립 결과를 편집 가능한 문서(scene)로 산출한다.
 
     본 함수는 ``render_detail_html`` 과 **같은 조립 로직**(``_assemble``)을
     사용한다. HTML 렌더와 scene 는 하나의 조립 결과에서 나온다 — 두 개의 진실이
-    생기지 않는다(작업지시 요구 1).
+    생기지 않는다.
 
     scene 구조는 ``docs/scene-schema.md`` 에 공개되어 있다. 각 텍스트/값에는
     ``source`` 가 붙어 어느 입력 필드에서 왔는지 추적 가능하다. 사용자가
@@ -663,8 +662,8 @@ def needs_llm_for_copy(product):
 
     상세 페이지의 마케팅 카피는 LLM 판단이 필요하다. 본 함수는
     ``common._llm_hint`` 디스크립터를 만들어 호출자(위임 왕복 호스트)에게
-    넘긴다. 본 모듈 자체는 LLM 을 호출하지 않는다(작업지시 요구 1:
-    "LLM 판단이 필요하면 ``common._llm_hint`` 위임(직접 호출 금지)").
+    넘긴다. 본 모듈 자체는 LLM 을 호출하지 않는다(LLM 판단이 필요하면
+    ``common._llm_hint`` 위임(직접 호출 금지)).
 
     Returns:
         ``llm_hint`` dict. ``product`` 가 dict 가 아니거나 상품명이 없으면

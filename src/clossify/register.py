@@ -1,6 +1,6 @@
-"""등록 오케스트레이션 (T-201b-r).
+"""등록 오케스트레이션.
 
-원본 ``sourcing.py`` 의 등록 파이프라인을 이식하되, 작업지시의 핵심 개정사항을
+원본 ``sourcing.py`` 의 등록 파이프라인을 이식하되, 핵심 개정사항을
 반영한다:
 
 1. **URL 입력 거부**: 요청 dict 에 ``url``/``source_url``/``item_url``/
@@ -10,7 +10,7 @@
    않으면 ``sha1(상품명 + 가격)[:12]`` 로 생성. 빈 문자열/공백 키는 거부.
 3. **가격 KRW 직입력**: 원가/환율/해외배송 기반 계산은 이식하지 않는다.
 4. **이미지 파이프라인**: 리터치·시트 병합·상세 렌더 의존 지점은 명시 스텁
-   (``NotImplementedError("T-201c: ...")``).
+   (``NotImplementedError``).
 5. **중복 정의 처리**: 원본에 같은 이름 함수가 두 번 정의된 것이 있으면
    뒤 정의만 가져간다 — 본 모듈에서는 ``inject_prepared_qa`` 의 단일 정의로
    통합하고 이 사실을 보고한다.
@@ -30,7 +30,7 @@ from pathlib import Path
 from . import common, qa_agents
 
 # ---------------------------------------------------------------------------
-# URL 입력 거부 (작업지시 핵심).
+# URL 입력 거부 (핵심 정책).
 #
 # 외부 마켓 수집은 본 제품에서 지원하지 않는다. ``url``/``source_url``/
 # ``item_url``/``detail_url`` 키 중 하나라도 존재하면 거부한다 — 값이 비어
@@ -43,7 +43,7 @@ _URL_INPUT_KEYS = frozenset({"url", "source_url", "item_url", "detail_url"})
 def _reject_url_inputs(d):
     """URL 기반 수집 키가 존재하면 ``ValueError`` 를 발생시킨다.
 
-    작업지시: "값이 비어 있어도 키 존재만으로 거부한다."
+    정책: "값이 비어 있어도 키 존재만으로 거부한다."
     """
     if isinstance(d, dict):
         present = sorted(k for k in _URL_INPUT_KEYS if k in d)
@@ -55,7 +55,7 @@ def _reject_url_inputs(d):
 
 
 # ---------------------------------------------------------------------------
-# product_key 생성 (작업지시 핵심).
+# product_key 생성 (핵심 정책).
 #
 # 외부 마켓 ID 를 쓰지 않는다. ``sha1(상품명 + 가격)[:12]`` 로 생성.
 # 빈 문자열/공백 키는 거부 (디렉터리 충돌·무음 덮어쓰기 방지).
@@ -73,7 +73,7 @@ def _sanitize_product_key(key):
 def make_product_key(name, price):
     """상품명 + 가격 으로 product_key 생성 (``sha1[:12]``).
 
-    작업지시: "호출자가 주지 않으면 ``sha1(상품명 + 가격)[:12]`` 로 생성."
+    규칙: "호출자가 주지 않으면 ``sha1(상품명 + 가격)[:12]`` 로 생성."
 
     Args:
         name: 상품명 (한국어).
@@ -151,7 +151,7 @@ def _prepared_payload_path(product_key):
 
 
 def write_prepared_payload(payload):
-    """prepared payload 를 디스크에 쓴다 (source L12660-L12667 보존).
+    """prepared payload 를 디스크에 쓴다.
 
     payload 는 ``product_key`` 키를 포함해야 한다. 버전 스탬프로
     ``common.PREPARED_PAYLOAD_VERSION`` 을 읽어 ``version`` 필드에 설정한다.
@@ -170,17 +170,17 @@ def write_prepared_payload(payload):
 
 
 def read_prepared_payload(path):
-    """prepared payload JSON 을 읽는다 (source L12670-L12676 보존)."""
+    """prepared payload JSON 을 읽는다."""
     return common._read_json_file(path, None)
 
 
 def load_prepared_payload(*, product_key=None):
     """product_key 로 prepared payload 를 로드.
 
-    작업지시가 원본의 ``prepare_token`` 기반 접근 제어를 단순화했다 —
-    본 이식판은 product_key 만으로 로드한다 (외부 마켓 ID 불가).
+    본 이식판은 product_key 만으로 로드한다 (외부 마켓 ID 불가,
+    원본의 ``prepare_token`` 기반 접근 제어는 단순화했다).
 
-    버전 검사(T-201d): payload 의 ``version`` 이 ``common.PREPARED_PAYLOAD_VERSION``
+    버전 검사: payload 의 ``version`` 이 ``common.PREPARED_PAYLOAD_VERSION``
     과 불일치하면 ``ValueError`` 로 명시 거부한다. 스키마 변경 후 조용한
     승격(fallback)을 허용하지 않는다. ``common.py`` 는 쓰기 범위 밖이므로
     상수는 읽어 비교만 한다.
@@ -209,7 +209,7 @@ def load_prepared_payload(*, product_key=None):
 
 
 def iter_prepared_payload_paths():
-    """모든 prepared payload 경로를 mtime 역순으로 yield (source L12678-L12681)."""
+    """모든 prepared payload 경로를 mtime 역순으로 yield."""
     base = _prepared_dir()
     if not base.exists():
         return []
@@ -230,13 +230,13 @@ def _utc_now_iso():
 
 
 def _build_product_dict(d, seo_title, category_id):
-    """Naver 등록용 상품 dict 구성 (source L12864-L12898, 개정).
+    """Naver 등록용 상품 dict 구성.
 
-    작업지시 반영:
+    반영 규칙:
       - 가격은 KRW 직접 입력 (``d.salePrice`` 또는 ``d.sell_price``).
       - ``num_iid``/외부 마켓 ID 사용 금지 — modelName 은 config/입력만.
       - notice 기본값은 ``naver_client._notice_defaults`` 에 위임 (KC/원산지
-        하드코딩 금지는 이미 naver_client T-107 반영됨).
+        하드코딩 금지).
     """
     if not isinstance(d, dict):
         raise ValueError("상품 입력은 dict 여야 합니다.")
@@ -274,15 +274,15 @@ def _apply_qa_to_payload(payload, qa_result):
 
 
 def register_prepared_listing(d):
-    """prepared payload 를 로드해 네이버 상품 등록을 수행 (source L13326-L13478).
+    """prepared payload 를 로드해 네이버 상품 등록을 수행.
 
-    T-201d 스키마 확정 반영:
+    스키마 확정 반영:
       - payload 의 ``images.listing_urls`` / ``images.detail_urls`` (CDN URL) 을
         읽는다(예전 ``listing_image_paths``/``detail_segment_paths`` 경로 기반
         키는 더 이상 사용하지 않는다).
       - ``detail_html`` 필드를 읽어 그대로 네이버 페이로드에 넣는다.
       - **이미지 0장 거부**: ``listing_urls`` 가 비어 있으면 ``ValueError``
-        (무음 통과 금지 — 작업지시 요구 2).
+        (무음 통과 금지).
 
     흐름:
       1. URL 입력 거부 검사
@@ -300,7 +300,7 @@ def register_prepared_listing(d):
     product_key = resolve_product_key(d)
     payload = load_prepared_payload(product_key=product_key)
 
-    # --- T-201d payload 스키마: images.listing_urls / images.detail_urls ---
+    # --- payload 스키마: images.listing_urls / images.detail_urls ---
     images_block = payload.get("images") or {}
     if not isinstance(images_block, dict):
         images_block = {}
@@ -315,7 +315,7 @@ def register_prepared_listing(d):
         if isinstance(u, str) and u.strip()
     ]
 
-    # 이미지 0장 거부 (무음 통과 금지 — 작업지시 요구 2).
+    # 이미지 0장 거부 (무음 통과 금지).
     if not listing_urls:
         raise ValueError(
             "prepared payload 에 리스팅 이미지(listing_urls)가 0장입니다. "
@@ -329,7 +329,7 @@ def register_prepared_listing(d):
         return {"ok": False, "blocked": True, "reason": reason, "product_key": product_key}
 
     product = payload.get("product") or {}
-    # prepared detail_html 를 그대로 사용(작업지시 요구 2: payload 의 detail_html).
+    # prepared detail_html 를 그대로 사용(payload 의 detail_html).
     detail_html = str(payload.get("detail_html") or "")
     if not detail_html:
         # detail_html 이 없으면 등록 거부(무음 통과 금지).
@@ -356,7 +356,7 @@ def register_prepared_listing(d):
     ok = _is_register_success(status_code, body)
     origin_product_no = _extract_origin_product_no(body)
 
-    # 등록 후 조회 재검증 (원본에 없는 단계 — 작업지시가 요구).
+    # 등록 후 조회 재검증 (원본에 없는 단계).
     verify = None
     if ok and origin_product_no:
         try:
@@ -415,11 +415,11 @@ def _extract_origin_product_no(body):
 
 
 def register_listing(d):
-    """하위호환 등록 디스패처 (source L13584-L13594, 개정).
+    """하위호환 등록 디스패처.
 
-    작업지시 반영:
+    반영 규칙:
       - URL 입력은 ``_reject_url_inputs`` 에서 이미 거부됨.
-      - ``prepare_listing`` 본체는 T-201d 에서 구현되었다. 본 함수는
+      - ``prepare_listing`` 본체는 별도 구현되어 있다. 본 함수는
         product_key 가 있거나 name+salePrice 가 있을 때 등록(commit)만 수행.
       - 그 외의 경우 ``prepare_listing`` 을 먼저 호출하라는 안내와 함께
         ``ValueError`` (무동작 스텁 금지).
@@ -441,7 +441,7 @@ def register_listing(d):
 
 
 # ---------------------------------------------------------------------------
-# T-201d — 위임 왕복 검증 공유 헬퍼 + submit_reviews.
+# 위임 왕복 검증 공유 헬퍼 + submit_reviews.
 #
 # 신뢰 모델(타협 불가):
 #   - 제출 가능 agent 는 {"image","copy"} 로 고정. compliance 제출은 ValueError.
@@ -460,15 +460,15 @@ _VERDICT_RANK = {"PASS": 0, "WARN": 1, "PENDING": 2, "FAIL": 3}
 
 
 def _worse_verdict(server_verdict, client_verdict):
-    """서버 verdict 와 클라이언트 verdict 를 병합한다 (작업지시 요구 4).
+    """서버 verdict 와 클라이언트 verdict 를 병합한다.
 
     신뢰 모델(타협 불가):
       - **PENDING → PASS 허용**: 서버 verdict 가 PENDING(미회신) 이면 클라이언트
         회신을 그대로 채택한다. PENDING 은 "아직 검수 안 됨" 이지 "나쁨" 이
         아니므로, 클라이언트가 PASS/WARN/FAIL 어떤 것이든 회신하면 그것이
-        최종 verdict 가 된다(작업지시: "PENDING → PASS 로만 상향할 수 있다").
+        최종 verdict 가 된다("PENDING → PASS 로만 상향할 수 있다").
       - **FAIL → PASS 차단**: 서버 verdict 가 PENDING 이 아니면(FAIL/WARN/PASS)
-        더 나쁜 쪽을 채택한다(작업지시: "FAIL → PASS 는 불가능하다").
+        더 나쁜 쪽을 채택한다("FAIL → PASS 는 불가능하다").
 
     예시:
       - (PENDING, PASS) → PASS  ✓ 업그레이드 허용
@@ -491,7 +491,7 @@ def _worse_verdict(server_verdict, client_verdict):
 def _validate_review_submission(d):
     """``submit_reviews`` / ``inject_prepared_qa`` 공유 검증 경로.
 
-    agent 이름과 verdict 값을 엄격 검증한다(작업지시 요구 4). 검증 실패 시
+    agent 이름과 verdict 값을 엄격 검증한다. 검증 실패 시
     ``ValueError``. 기본값으로 떨어뜨리지 않는다.
 
     Returns:
@@ -560,7 +560,7 @@ def _validate_review_submission(d):
 def submit_reviews(product_key, reviews):
     """클라이언트 LLM 의 판단 결과를 prepared payload 의 QA 기록에 병합.
 
-    신뢰 모델(작업지시 요구 4 — 타협 불가):
+    신뢰 모델(타협 불가):
       - **덮어쓰기가 아니라 병합**: 서버 verdict 와 클라이언트 회신의 *더 나쁜
         쪽* 을 채택한다(FAIL > PENDING > WARN > PASS).
       - 서버가 기록한 violations 은 **절대 삭제하지 않는다**.
@@ -647,7 +647,7 @@ def submit_reviews(product_key, reviews):
 
 
 # ---------------------------------------------------------------------------
-# inject_prepared_qa — T-201d 봉인(작업지시 요구 4).
+# inject_prepared_qa — 봉인.
 #
 # 원본의 두 정의 중 뒤쪽(다중 agent 입력 지원)을 가져왔으나, 이 경로는 임의
 # agents 를 검증 없이 받아들이는 무검증 형제 문이다. ``submit_reviews`` 와 *동일한
@@ -658,12 +658,12 @@ def submit_reviews(product_key, reviews):
 
 
 def inject_prepared_qa(d):
-    """외부 검수 결과를 prepared payload 에 반영 (T-201d 봉인판).
+    """외부 검수 결과를 prepared payload 에 반영 (봉인판).
 
     본 함수는 ``submit_reviews`` 와 **동일한 검증 경로**(``_validate_review_submission``)
     를 공유한다 — agent 이름/verdict 엄격 검증, compliance 제출 거부. 과거 이 함수는
     임의 agents 리스트를 검증 없이 받아 결정론 검사(compliance) 결과를 외부에서
-    뒤집을 수 있었다(무검증 형제 문). T-201d 에서 이 경로를 봉인했다.
+    뒤집을 수 있었다(무검증 형제 문). 본 경로를 봉인했다.
 
     Args:
         d: ``{"product_key": ..., "reviews": [...]}`` 또는 ``{"product_key": ...,
@@ -678,7 +678,7 @@ def inject_prepared_qa(d):
 
 
 # ---------------------------------------------------------------------------
-# T-201d — prepare_listing 본체 (작업지시 요구 3).
+# prepare_listing 본체.
 #
 # 흐름(IN 목록만 실행):
 #   1. URL 입력 거부 검사(URL 키 존재 시 ValueError).
@@ -686,7 +686,7 @@ def inject_prepared_qa(d):
 #   3. detail_render.render_detail_html 로 상세 HTML.
 #   4. 카테고리/고시 컨텍스트 구성(최소 — category_id 정도).
 #   5. JPEG 비의존 QA만 실행 — 이미지 QA는 PENDING 등록, 카피 QA도 LLM 필요시 PENDING.
-#   6. prepared payload 저장(T-201d 스키마).
+#   6. prepared payload 저장.
 #   7. 결과 반환(needs_llm, needs_user 포함).
 #
 # OUT(이번 스코프 아님 — 스텁도 만들지 않는다): 이미지 리터치·업스케일, OCR 정리,
@@ -696,7 +696,7 @@ def inject_prepared_qa(d):
 
 
 def prepare_listing(d, *, attach_fn=None):
-    """상품 정보 + 이미지 소스 로 prepared payload 를 만든다 (T-201d).
+    """상품 정보 + 이미지 소스 로 prepared payload 를 만든다.
 
     본 함수는 등록 전 단계를 수행한다: 이미지 정규화, 상세 HTML 렌더, QA 집계
     (이미지 QA 는 PENDING 등록 — JPEG 의존 항목은 이 파이프라인에서 실행하지
@@ -713,7 +713,7 @@ def prepare_listing(d, *, attach_fn=None):
           - ``product_key``: ``sha1(name+price)[:12]``.
           - ``images``: ``{"listing_urls": [...], "detail_urls": [...]}``.
           - ``detail_html``: 상세 HTML 문자열.
-          - ``scene``: 조립 결과 문서(T-301). ``detail_html`` 과 같은 조립
+          - ``scene``: 조립 결과 문서. ``detail_html`` 과 같은 조립
             결과에서 나온 구조적 표현. ``docs/scene-schema.md`` 참조.
           - ``needs_llm``: LLM 위임이 필요한 항목 리스트.
           - ``needs_user``: 사용자 입력이 필요한 항목 리스트.
@@ -769,7 +769,7 @@ def prepare_listing(d, *, attach_fn=None):
     detail_urls = list(listing_urls)
 
     # --- 2. 상세 HTML 렌더 (detail_render.render_detail_html) ---
-    # T-301: scene 도 같은 입력에서 산출한다(요구 2: detail_html 과 scene 은
+    # scene 도 같은 입력에서 산출한다(detail_html 과 scene 은
     # 같은 조립 결과에서 나와야 한다 — 불일치 금지). build_scene 은
     # render_detail_html 과 동일한 _assemble 로직을 공유하므로, 같은 입력을
     # 넣으면 두 출력은 정합이다.
@@ -787,7 +787,7 @@ def prepare_listing(d, *, attach_fn=None):
     category_id = str(d.get("categoryId") or d.get("category_id") or "").strip()
 
     # --- 4. JPEG 비의존 QA 실행 ---
-    # 작업지시 요구 3 QA 규칙:
+    # QA 규칙:
     #   - 이미지 QA 는 래스터 이미지를 요구하므로 실행하지 않고 PENDING 등록.
     #     FAIL 로 만들지 않는다(정상 상품 전건 차단 방지).
     #   - 카피 QA 도 LLM 판단이 필요하면 PENDING.

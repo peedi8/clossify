@@ -1,6 +1,6 @@
-"""카테고리 분류 — 토큰 기반 후보 산출 + LLM 확정 (T-201b-r).
+"""카테고리 분류 — 토큰 기반 후보 산출 + LLM 확정.
 
-원본 ``sourcing.py`` L6582-L7071 의 카테고리 분류 파이프라인을 이식한다.
+카테고리 분류 파이프라인.
 구조:
   1. 입력 텍스트(제목 + 속성 + 상세)에서 토큰 스펙 산출
   2. ``category_meta`` 의 4,999건 카테고리 메타데이터를 후보 검증에 활용
@@ -8,9 +8,10 @@
   4. 강한 단일 후보가 있으면 확정; 분명치 않으면 ``common._llm_hint()`` 로
      MCP 호스트 LLM 에게 상위 후보 중 하나를 선택하도록 위임
 
-원본은 ``.local/naver_categories.json`` 에서만 카테고리를 읽었으나, 본 이식판은
-``category_meta`` 모듈(``data/category_meta.json``, 4,999건)을 우선 사용한다.
-``category_meta`` 가 조회 불가능하면 빈 후보로 떨어지며, LLM 위임으로 넘어간다.
+과거 버전은 ``.local/naver_categories.json`` 에서만 카테고리를 읽었으나, 본
+이식판은 ``category_meta`` 모듈(``data/category_meta.json``, 4,999건)을 우선
+사용한다. ``category_meta`` 가 조회 불가능하면 빈 후보로 떨어지며, LLM 위임으로
+넘어간다.
 
 의존 방향: ``agent_calls`` (상위) → ``category`` (본 모듈).
 ``common``, ``seo``, ``text_props``, ``category_meta`` 는 어디서든 import 가능.
@@ -24,7 +25,7 @@ from . import common
 from .text_props import _compact_spaces, _props_summary, _strip_banned_claims
 
 # ---------------------------------------------------------------------------
-# 카테고리 타입 별칭 (source L6672-L6706).
+# 카테고리 타입 별칭.
 #
 # 고가중치 "canonical type" 토큰과 그 별칭들. 한국어 리터럴은 토큰 매칭에 필요.
 # ---------------------------------------------------------------------------
@@ -134,7 +135,7 @@ def _category_rows():
 
 
 def _normalize_category_match_text(text):
-    """토큰 매칭용 텍스트 정규화 (source L6619-L6624).
+    """토큰 매칭용 텍스트 정규화.
 
     금지 표현 제거 → 한국어/라틴 경계에 공백 삽입 → 소문자화 →
     비영숫자 실행을 단일 공백으로 축약.
@@ -148,7 +149,7 @@ def _normalize_category_match_text(text):
 
 
 def _category_input_has_term(text, term):
-    """``text`` 안에 ``term`` 이 단어 단위로 존재하는지 (source L6627-L6634).
+    """``text`` 안에 ``term`` 이 단어 단위로 존재하는지.
 
     음수 lookaround 로 부분문자열 오정합(예: "접시" 가 "디저트접시세트" 에
     걸리는 것)을 방지한다.
@@ -160,7 +161,7 @@ def _category_input_has_term(text, term):
 
 
 def _category_input_text(title_ko, props, desc_text="", *, include_desc=False):
-    """토큰 매칭용 입력 해스택 구성 (source L6752-L6756)."""
+    """토큰 매칭용 입력 해스택 구성."""
     parts = [str(title_ko or ""), _props_summary(props, max_terms=20)]
     if include_desc:
         parts.append(str(desc_text or "")[:1200])
@@ -168,7 +169,7 @@ def _category_input_text(title_ko, props, desc_text="", *, include_desc=False):
 
 
 def _category_token_specs(title_ko, props, desc_text=""):
-    """가중 토큰 스펙 리스트 산출 (source L6759-L6801).
+    """가중 토큰 스펙 리스트 산출.
 
     세 패스:
       1. 타입 별칭 (고가중치 130-260)
@@ -233,7 +234,7 @@ def _category_token_specs(title_ko, props, desc_text=""):
 
 
 def _category_candidates_from_tokens(token_specs, *, limit=20):
-    """토큰 스펙 vs 카테고리 행 scoring (source L6804-L6876).
+    """토큰 스펙 vs 카테고리 행 scoring.
 
     각 (spec, row) 쌍에 대해:
       - 정확 leaf 일치: +weight*3
@@ -284,7 +285,7 @@ def _category_candidates_from_tokens(token_specs, *, limit=20):
 
 
 def _strong_category_candidate(candidates):
-    """강한 단일 후보 판정 (source L6879-L6891).
+    """강한 단일 후보 판정.
 
     조건:
       - 정확 leaf 일치 + score≥500 + margin≥120, 또는
@@ -303,11 +304,10 @@ def _strong_category_candidate(candidates):
 
 
 # ---------------------------------------------------------------------------
-# LLM 위임 — 카테고리 확정 (source L6930-L6979).
+# LLM 위임 — 카테고리 확정.
 #
-# 원본은 ``_llm_generate(prompt, op="category")`` 로 CLI 호출했다. 본 이식판은
-# ``common._llm_hint()`` 디스크립터를 반환하여 MCP 호스트가 상위 후보 중 하나를
-# 선택하도록 위임한다.
+# 이 모듈은 ``common._llm_hint()`` 디스크립터를 반환하여 MCP 호스트가 상위
+# 후보 중 하나를 선택하도록 위임한다.
 # ---------------------------------------------------------------------------
 
 
@@ -360,12 +360,12 @@ def _llm_response_candidate_id(response):
 
 
 # ---------------------------------------------------------------------------
-# 공용 진입점 — classify_category (source L6982-L7071).
+# 공용 진입점 — classify_category.
 # ---------------------------------------------------------------------------
 
 
 def classify_category(title_ko, props, desc_text="", *, fallback=None):
-    """카테고리 분류 공용 진입점 (source L6982-L7071, 개정).
+    """카테고리 분류 공용 진입점.
 
     알고리즘:
       1. 토큰 스펙 산출 → 후보 scoring (``limit=20``)

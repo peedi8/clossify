@@ -1,13 +1,13 @@
-"""T-109 — MCP 표면의 QA 게이트 우회 차단 검증 테스트.
+"""MCP 표면의 QA 게이트 우회 차단 검증 테스트.
 
-작업지시(T-109)가 요구하는 시나리오:
+검증 시나리오:
   1. 차단 반례: 의류 카테고리 + 고시 필수 필드(material, size 등) 누락 →
      register_product 가 네이버를 호출하지 않고 거부.
   2. 차단 반례2: KC 필요 카테고리(50000151) + KC 정보 없음 → 거부.
   3. 통과 반례: 의류 + 필수 필드 완비 + config 원산지 일치 → 등록 경로 진입.
   4. 미차단 확인: LLM 판단 미회신만 있는 경우 → 차단되지 않고 pending_reviews 표기.
   5. check_config 가 원산지 설정 여부를 보고하되 값은 반환하지 않음.
-  6. 도구 4개 등록 유지.
+  6. 도구 6개 등록 유지.
 
 모든 테스트는 실제 네이버 API 를 호출하지 않는다 — monkeypatch 로 네트워크 차단.
 """
@@ -38,7 +38,7 @@ _CLOTHING_CATEGORY = "50021299"
 _KC_CATEGORY = "50000151"
 
 # notice_config mock: origin 이 설정된 정상 config.
-# T-117: 5개 공통 고시 필드(returnCostReason 등)도 config 에서 제공하는 것이
+# 5개 공통 고시 필드(returnCostReason 등)도 config 에서 제공하는 것이
 # 정상 판매자 설정이다. 코드가 임의 문구를 만들어 채우지 않으므로 테스트
 # 픽스처에서 명시적으로 제공한다.
 _NOTICE_CFG_WITH_ORIGIN = {
@@ -382,9 +382,9 @@ class TestLlmPendingNotBlocked:
     def test_pending_reviews_present_on_success(self):
         """결정론 게이트 통과 시 pending_reviews 가 응답에 포함되는가.
 
-        LLM 판단(카피/이미지 QA)은 위임 왕복(T-201c) 연동 전까지 항상
-        미회신 상태다. 작업지시는 이것이 등록을 차단하지 않되,
-        응답에 표기하라고 요구한다.
+        LLM 판단(카피/이미지 QA)은 위임 왕복 연동 전까지 항상
+        미회신 상태다. 이 경우 등록을 차단하지 않되,
+        응답에 표기한다.
         """
         notice_override = {
             "productInfoProvidedNoticeType": "WEAR",
@@ -521,7 +521,7 @@ class TestCheckConfigOrigin:
         assert "거부" in hint or "차단" in hint or "register_product" in hint
 
     def test_origin_value_not_leaked(self, tmp_path, monkeypatch):
-        """원산지 값 자체가 반환값에 노출되지 않는가 (작업지시: 값 반환 금지)."""
+        """원산지 값 자체가 반환값에 노출되지 않는가 (값 반환 금지)."""
         secret_origin = "매우특정한원산지값_노출되면안됨"
         cfg = {
             "naver": {
@@ -565,12 +565,12 @@ class TestCheckConfigOrigin:
 
 
 # --------------------------------------------------------------------------- #
-# 도구 4개 등록 유지 (시그니처 변경 없음).
+# 도구 6개 등록 유지 (시그니처 변경 없음).
 # --------------------------------------------------------------------------- #
 class TestToolRegistrationPreserved:
-    """T-109 변경 후에도 4개 도구가 등록되어 있는가."""
+    """변경 후에도 6개 도구가 등록되어 있는가."""
 
-    def test_four_tools_registered(self):
+    def test_six_tools_registered(self):
         import asyncio
 
         tools = mcp_server.mcp.list_tools()
