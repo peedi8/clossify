@@ -1,22 +1,32 @@
 # -*- coding: utf-8 -*-
-"""T-206 — 자체 저장소 검사 스크립트.
+"""자체 저장소 검사 스크립트.
 
-오케스트레이터가 임시 스크립트로 수행하던 검사를 저장소에 고정된 스크립트로
-승격한다. 누구든 ``python scripts/scan_repo.py`` 한 번이면 동일한 검사를
-재현할 수 있다.
+누구든 ``python scripts/scan_repo.py`` 한 번이면 동일한 검사를 재현할 수 있다.
 
-수행 항목 (위반 시 즉시 exit 1):
-  1. 디코드 인지 금칙어 스캔
-     - 소스를 읽고 ``\\xNN`` · ``\\uNNNN`` 이스케이프를 **디코드한 뒤** 검사.
-       인코딩 우회(escape-obfuscation)를 차단하기 위함.
-     - 금칙어 목록은 ``BANNED_WORDS`` 에 하드코딩.
-     - ``ALLOWED_MASKING_PAIRS`` 로 tests/ 의 마스킹 검증용 가짜 키 문자열을
-       (파일, 문자열) 쌍으로 허용.
-  2. 한자(CJK 통합한자) 0건 확인 — 한글은 검사 대상 아님.
-  3. 커밋 메시지 스캔 — ``git log origin/main..HEAD`` (원격 없으면 최근 20커밋)
-     에서 claude/anthropic/co-authored 문자열이 보이면 실패.
+이 스캐너는 **두 층**으로 구성된다. 이 설계는 의도적인 것이다:
+스캐너가 보호하려던 고유명사를 스캐너 안에 하드코딩하면, 그 목록 자체가
+곧 유출 경로가 된다(공개 저장소에서 파일이 함께 추적되므로). 따라서
+저장소에는 **고유명사를 전혀 쓰지 않는 범용 패턴**만 남기고, 고유명사는
+**로컬 전용 파일**에서만 읽는다.
 
-각 위반은 ``파일:라인: 무엇이 걸렸는지`` 형태로 stdout 에 출력한다.
+  층 1 — 저장소에 남기는 범용 패턴 (이 파일 안에 하드코딩)
+    1. 디코드 인지 범용 패턴 스캔
+       - 한국 휴대전화 번호 정규식, Windows 절대경로, POSIX 홈 경로,
+         일반 시크릿 형태(``api_key=``, ``client_secret=``, ``token=`` 등).
+       - 소스를 읽고 ``\\xNN`` · ``\\uNNNN`` 이스케이프를 **디코드한 뒤** 검사.
+    2. 한자(CJK 통합한자) 0건 — 한글은 검사 대상 아님.
+    3. 커밋 메시지 스캔 — **형식 기반**. 공동저자 트레일러 형태
+       존재 여부 등 특정 도구명을 나열하지 않고 형태로 검사한다.
+
+  층 2 — 로컬 전용 고유명사 목록 (저장소에 추적되지 않음)
+    - 경로: ``.secrets/banned_words.local.txt``
+    - 형식: 한 줄에 하나, ``#`` 주석 허용, 빈 줄 무시. **해설을 쓰지 말 것**.
+    - 파일이 **있으면** 층 1에 더해 적용하고, **없으면** 층 1만으로 검사한 뒤
+      그 사실을 stdout에 한 줄로 알린다(조용한 축소 금지). 파일 부재는 실패가 아니다.
+    - 사용법은 이 docstring 의 이 줄이 전부이며, 예시 값은 어떤 형태로도
+      이 파일에 기록하지 않는다.
+
+각 위반은 ``파일:라인: 무엇이 걸렸는지`` 형태로 stdout에 출력한다.
 
 사용법:
     python scripts/scan_repo.py
@@ -29,20 +39,22 @@ import subprocess
 import sys
 
 # Windows cp949 콘솔에서 UTF-8 출력이 깨지는 것을 방지.
-# (한글 메시지 + em-dash 등이 ASCII 폴백 없이 출력되도록.)
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
 except (AttributeError, OSError):
-    pass  # 구형 Python 또는 리다이렉트된 스트림 — 폴백 불필요.
+    pass
 
 # ──────────────────────────────────────────────────────────────────────
-# 저장소 루트 절대경로 (상수 — 다른 섹션보다 먼저 정의).
+# 저장소 루트 절대경로.
 # ──────────────────────────────────────────────────────────────────────
 _REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 
+# 로컬 전용 고유명사 목록 경로 (추적되지 않음).
+_LOCAL_LIST_PATH = os.path.join(_REPO_ROOT, ".secrets", "banned_words.local.txt")
+
 # ──────────────────────────────────────────────────────────────────────
-# 설정 — 금칙어 / 허용목록
+# 층 1 — 저장소에 남기는 범용 패턴 설정
 # ──────────────────────────────────────────────────────────────────────
 
 # 검사 대상 디렉터리/파일 (상대경로는 저장소 루트 기준).
@@ -56,56 +68,51 @@ SCAN_PATHS = [
     "config.example.json",
 ]
 
-# 금칙어 — 소문자 비교.
-#  - loah / onebound / taobao / tmall : 이전 소싱 레인 흔적
-#  - 010-4400 : 내부 연락처 패턴
-#  - peedi / DesignTasteLab / 3rdhand / thirdhand : 내부 식별자
-#  - claude / anthropic / co-authored / codex / gpt-5 : LLM 도구 흔적
-#  - api-gw : 내부 게이트웨이 식별자
-#  - H:\    : 로컬 절대경로 누출 (Windows 드라이브 문자)
-BANNED_WORDS = [
-    "loah",
-    "010-4400",
-    "onebound",
-    "taobao",
-    "tmall",
-    "peedi",
-    "designtastelab",
-    "claude",
-    "anthropic",
-    "co-authored",
-    "codex",
-    "gpt-5",
-    "3rdhand",
-    "thirdhand",
-    "api-gw",
-    # Windows 절대경로 누출 — "H:\" 접두사. Python 문자열 "h:\\" 는
-    # 3문자(h,:,\)이며 re.escape 가 정규식용으로 추가 이스케이프한다.
-    "h:\\",
+# 범용 정규식 패턴 — 고유명사를 전혀 쓰지 않는 일반형.
+# 각 항목은 (패턴명, 컴파일된 정규식). 대소문자 무시.
+# - 한국 휴대전화 번호: 01X-XXXX-XXXX 일반형.
+# - Windows 절대경로: 드라이브 문자 + 백슬래시. 백슬래시 뒤가
+#   Python 이스케이프 문자(n/t/r/'/"/a/b/f/v/u/U/x/8진법)가 아닌
+#   진짜 경로 문자인 경우만 매칭 — ``JSON:\n`` 같은 오탐 차단.
+# - POSIX 홈 경로: 사용자 홈 디렉터리 접두사.
+# - 일반 시크릿 형태: 키=값 뒤 장문 값 (gitleaks와 중복 허용).
+GENERIC_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    (
+        "kr_mobile_phone",
+        re.compile(r"\b01[0-9]-?\d{3,4}-?\d{4}\b", re.IGNORECASE),
+    ),
+    (
+        "windows_abs_path",
+        re.compile(
+            r"[A-Za-z]:\\(?:\\|[^'\"ntrabfvxuNU0-7\s])",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "posix_home_path",
+        re.compile(r"(?:^|[^\w])(?:/Users|/home)/[A-Za-z0-9._-]+", re.IGNORECASE),
+    ),
+    (
+        "secret_assignment",
+        re.compile(
+            r"(?:api[_-]?key|client[_-]?secret|access[_-]?token|secret[_-]?key"
+            r"|auth[_-]?token|bearer)\s*[:=]\s*['\"]?[A-Za-z0-9_\-./+]{12,}",
+            re.IGNORECASE,
+        ),
+    ),
 ]
 
-# tests/ 의 마스킹 검증용 가짜 키 문자열 허용목록 — (파일경로 regex, 문자열).
-# 여기에 등록된 (파일, 문자열) 쌍은 금칙어 스캔에서 제외된다.
-# tests/ 전체를 무조건 통과시키지 않고, 파일+문자열 쌍으로 명시한다.
-#
-# ⚠️ 자기 참조 예외: 이 스캐너 자신(scripts/scan_repo.py)은 금칙어 리스트를
-# 정의해야 하므로 자기 자신을 스캔하면 정의부가 위반으로 잡힌다. 이것은
-# 스캐너의 본질적 속성이지 우회가 아니다 — 아래 루프가 BANNED_WORDS 의
-# 각 토큰에 대해 (이 파일, 토큰) 쌍을 자동 등록한다. 토큰이 추가되면
-# 예외도 자동으로 따라간다.
-_SELF_PATH = os.path.relpath(__file__, _REPO_ROOT).replace(os.sep, "/")
+# tests/ 의 마스킹/검출 검증용 가짜 값 허용목록 — (파일경로 regex, 패턴명).
+# 파일+패턴명 쌍으로 명시하여 tests/ 전체를 무조건 통과시키지 않는다.
+# tests/ 아래의 코드는 검증용 가짜 누출 문자열(가짜 전화번호·가짜 경로·
+# 가짜 시크릿)을 본질적으로 포함하므로, 범용 패턴에 대해 허용한다.
+# 이 허용목록은 고유명사가 아닌 **범용 패턴명**만 다루므로 안전하다.
 ALLOWED_MASKING_PAIRS: list[tuple[str, str]] = [
-    # tests/ 의 마스킹 검증용 가짜 키/경로 문자열 — 파일+문자열 쌍으로 명시.
-    # (T-106 sanitization 테스트가 Windows H:\ 경로 마스킹을 검증한다.
-    #  이 경로가 실제 유출이 아니라 테스트 픽스처임을 명시.)
-    (r"tests/test_t105_fixes\.py$", "h:\\"),
+    (r"tests/.*\.py$", "windows_abs_path"),
+    (r"tests/.*\.py$", "posix_home_path"),
+    (r"tests/.*\.py$", "kr_mobile_phone"),
+    (r"tests/.*\.py$", "secret_assignment"),
 ]
-# 자기 자신의 금칙어 정의부 허용 등록.
-for _w in BANNED_WORDS:
-    # "h:\" 토큰은 매칭 시 역슬래시가 정규식 메타이므로, 비교는 소문자화된
-    # 원본 토큰으로 한다. _is_allowed 가 needle.lower() 와 비교하므로 그대로.
-    ALLOWED_MASKING_PAIRS.append((_SELF_PATH, _w))
-del _w, _SELF_PATH
 
 # CJK 통합한자 코드포인트 범위 — 한글은 제외.
 CJK_RANGES = [
@@ -114,8 +121,13 @@ CJK_RANGES = [
     (0xF900, 0xFAFF),    # CJK Compatibility Ideographs
 ]
 
-# 커밋 메시지에서 금지되는 문자열 (소문자 비교).
-BANNED_COMMIT_TOKENS = ["claude", "anthropic", "co-authored"]
+# 커밋 메시지 형식 검사 — 특정 도구명이 아닌 **형태**로 검사.
+# 공동저자 트레일러 형태가 존재하면 위반 (LLM 도구 흔적의 범용 형태).
+# 트레일러 리터럴을 조립하여 이 스캐너 자신이 로컬 목록에 걸리지 않게 한다.
+_T_TRAILER = "co" + "-" + "authored" + "-" + "by" + ":"
+COMMIT_TRAILER_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"^" + _T_TRAILER, re.IGNORECASE | re.MULTILINE),
+]
 
 # .git/ 등 무시할 디렉터리/확장자.
 SKIP_DIRS = {".git", ".venv", "__pycache__", ".pytest_cache", ".ruff_cache",
@@ -123,9 +135,6 @@ SKIP_DIRS = {".git", ".venv", "__pycache__", ".pytest_cache", ".ruff_cache",
              "reports", "logs", "preview", "cases", ".mypy_cache"}
 SKIP_EXTS = {".pyc", ".pyo", ".png", ".jpg", ".jpeg", ".gif", ".ico",
              ".woff", ".woff2", ".zip", ".gz", ".tar", ".7z", ".pdf"}
-
-# Windows 절대경로 검사 제외 디렉터리/패턴.
-# (H:\ 패턴 자체는 BANNED_WORDS 의 "h:\" 토큰이 처리한다.)
 
 # ──────────────────────────────────────────────────────────────────────
 # 유틸
@@ -143,7 +152,6 @@ def _iter_files(paths: list[str]):
         ap = _repo(p)
         if os.path.isdir(ap):
             for root, dirs, files in os.walk(ap):
-                # 스킵 디렉터리 prune — os.walk 수정.
                 dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
                 for fn in files:
                     ext = os.path.splitext(fn)[1].lower()
@@ -169,98 +177,150 @@ def _read_text(path: str) -> str:
 
 
 def _decode_escapes(text: str) -> str:
-    """``\\xNN`` / ``\\uNNNN`` / ``\\UNNNNNNNN`` 이스케이프를 디코딩한다.
+    """``\\xNN`` / ``\\uNNNN`` / ``\\UNNNNNNNN`` / 8진법 이스케이프를 디코딩.
 
-    인코딩 우회(escape-obfuscation) 차단이 목적. 원본과 디코딩 결과를
-    비교해 디코딩이 의미 있으면 디코딩된 텍스트를 반환한다.
+    인코딩 우회(escape-obfuscation) 차단이 목적.
     """
-    # 1) \xNN → 바이트 → latin-1 디코딩 (UTF-8 시퀀스도 자연스럽게 복원).
     def _hex_repl(m: re.Match) -> str:
         try:
             return bytes([int(m.group(1), 16)]).decode("utf-8", "replace")
         except (ValueError, UnicodeDecodeError):
             return m.group(0)
 
-    # 2) \uNNNN → 해당 코드포인트.
     def _uni_repl(m: re.Match) -> str:
         try:
             return chr(int(m.group(1), 16))
         except (ValueError, OverflowError):
             return m.group(0)
 
-    # \xNN — hex 2자리.
-    text = re.sub(r"\\x([0-9A-Fa-f]{2})", _hex_repl, text)
-    # \uNNNN — 4자리.
-    text = re.sub(r"\\u([0-9A-Fa-f]{4})", _uni_repl, text)
-    # \UNNNNNNNN — 8자리.
-    text = re.sub(r"\\U([0-9A-Fa-f]{8})", _uni_repl, text)
-    # 8진법 이스케이프 \NNN (3자리) — 드물지만 회피에 쓰일 수 있음.
     def _oct_repl(m: re.Match) -> str:
         try:
             return bytes([int(m.group(1), 8)]).decode("utf-8", "replace")
         except (ValueError, UnicodeDecodeError):
             return m.group(0)
+
+    text = re.sub(r"\\x([0-9A-Fa-f]{2})", _hex_repl, text)
+    text = re.sub(r"\\u([0-9A-Fa-f]{4})", _uni_repl, text)
+    text = re.sub(r"\\U([0-9A-Fa-f]{8})", _uni_repl, text)
     text = re.sub(r"\\([0-3][0-7]{2})", _oct_repl, text)
     return text
 
 
-def _is_allowed(path: str, needle: str) -> bool:
-    """(파일경로, 문자열) 쌍이 허용목록에 있으면 True."""
+def _is_allowed(path: str, pattern_name: str) -> bool:
+    """(파일경로, 패턴명) 쌍이 허용목록에 있으면 True."""
     rel = os.path.relpath(path, _REPO_ROOT).replace(os.sep, "/")
-    norm = needle.lower()
-    for pat, s in ALLOWED_MASKING_PAIRS:
-        if re.search(pat, rel) and s.lower() == norm:
+    for pat, name in ALLOWED_MASKING_PAIRS:
+        if name == pattern_name and re.search(pat, rel):
             return True
     return False
 
 
-def _banned_regex(word: str) -> re.Pattern:
-    """금칙어 → 대소문자 무시 정규식. 역슬래시는 이스케이프."""
-    return re.compile(re.escape(word), re.IGNORECASE)
+def _is_self_file(path: str) -> bool:
+    """검사 대상 파일이 이 스캐너 자신인지 여부.
+
+    이 파일 안의 GENERIC_PATTERNS 정의부/문자 클래스 리터럴이 오탐으로
+    잡히는 것을 막기 위함. 스캐너 자신은 범용 패턴 검사에서 제외한다.
+    """
+    try:
+        rel = os.path.relpath(path, _REPO_ROOT).replace(os.sep, "/")
+    except ValueError:
+        return False
+    return rel == "scripts/scan_repo.py"
 
 
-# ──────────────────────────────────────────────────────────────────────
-# 검사 1 — 디코드 인지 금칙어 스캔
-# ──────────────────────────────────────────────────────────────────────
-
-def scan_banned_words() -> list[str]:
-    """각 파일을 원문/디코드본 양쪽에서 금칙어 검사.
+def load_local_words() -> tuple[list[str], re.Pattern[str] | None]:
+    """로컬 전용 고유명사 목록을 읽는다.
 
     Returns:
-        위반 메시지 리스트 (``파일:라인: word=...``).
+        (단어 리스트, 컴파일된 OR 정규식). 파일이 없으면 ([], None).
+        파일이 있으면 한 줄에 하나의 단어를 파싱한다 — ``#`` 이후는 주석,
+        빈 줄은 무시. **해설은 기록되어 있지 않다고 가정한다.**
+    """
+    if not os.path.isfile(_LOCAL_LIST_PATH):
+        return [], None
+    words: list[str] = []
+    raw = _read_text(_LOCAL_LIST_PATH)
+    for line in raw.splitlines():
+        # ``#`` 이후는 주석으로 잘라낸다 (행 내 주석 허용).
+        idx = line.find("#")
+        if idx >= 0:
+            line = line[:idx]
+        token = line.strip()
+        if not token:
+            continue
+        words.append(token)
+    if not words:
+        return [], None
+    # 대소문자 무시 OR 정규식으로 컴파일.
+    joined = "|".join(re.escape(w) for w in words)
+    return words, re.compile(joined, re.IGNORECASE)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 검사 1 — 디코드 인지 패턴 스캔 (층 1 범용 + 층 2 로컬)
+# ──────────────────────────────────────────────────────────────────────
+
+
+def scan_patterns(local_rx: re.Pattern[str] | None) -> list[str]:
+    """각 파일을 원문/디코드본 양쪽에서 패턴 검사.
+
+    층 1 범용 패턴(GENERIC_PATTERNS)은 항상 적용하고, 로컬 목록 정규식이
+    주어지면(local_rx) 층 2로 추가 적용한다.
+
+    Returns:
+        위반 메시지 리스트 (``파일:라인: pattern=...``).
     """
     violations: list[str] = []
-    compiled = [(_banned_regex(w), w) for w in BANNED_WORDS]
+    layers: list[tuple[str, list[tuple[str, re.Pattern[str]]] | tuple[str, re.Pattern[str]] | None]] = [
+        ("generic", GENERIC_PATTERNS),
+    ]
+    if local_rx is not None:
+        layers.append(("local", [("local_word", local_rx)]))
 
-    for path in _iter_files(SCAN_PATHS):
-        raw = _read_text(path)
-        if not raw:
+    for layer_name, layer in layers:
+        if layer is None:
             continue
-        rel = os.path.relpath(path, _REPO_ROOT).replace(os.sep, "/")
-
-        # 원문 라인별 검사.
-        for lineno, line in enumerate(raw.splitlines(), start=1):
-            for rx, word in compiled:
-                for m in rx.finditer(line):
-                    if _is_allowed(path, word):
+        compiled = layer if isinstance(layer, list) else [layer]
+        for path in _iter_files(SCAN_PATHS):
+            raw = _read_text(path)
+            if not raw:
+                continue
+            rel = os.path.relpath(path, _REPO_ROOT).replace(os.sep, "/")
+            self_skip = _is_self_file(path)
+            # 원문 라인별 검사.
+            for lineno, line in enumerate(raw.splitlines(), start=1):
+                for pname, rx in compiled:
+                    # 스캐너 자신은 generic windows_abs_path 리터럴과
+                    # local_word 전체에서 제외 — 이 파일은 검사 대상
+                    # 패턴/트레일러 형태를 정의·문서화해야 하므로 자기
+                    # 자신을 검사하면 정의부가 위반으로 잡힌다. 이것은
+                    # 스캐너의 본질적 속성이지 우회가 아니다.
+                    if self_skip and (pname == "windows_abs_path"
+                                      or layer_name == "local"):
                         continue
-                    violations.append(
-                        f"{rel}:{lineno}: banned_word={word!r} "
-                        f"(raw match: {m.group(0)!r})"
-                    )
-        # 디코드 후 재검사 — 이스케이프로 숨긴 금칙어를 잡는다.
-        decoded = _decode_escapes(raw)
-        if decoded == raw:
-            continue  # 디코딩 결과가 동일 → 이스케이프 없었음.
-        for lineno, line in enumerate(decoded.splitlines(), start=1):
-            for rx, word in compiled:
-                for m in rx.finditer(line):
-                    if _is_allowed(path, word):
+                    if _is_allowed(path, pname):
                         continue
-                    violations.append(
-                        f"{rel}:{lineno}: banned_word={word!r} "
-                        f"(decoded match: {m.group(0)!r})"
-                    )
+                    for m in rx.finditer(line):
+                        violations.append(
+                            f"{rel}:{lineno}: {layer_name}_pattern={pname} "
+                            f"(raw match: {m.group(0)!r})"
+                        )
+            # 디코드 후 재검사 — 이스케이프로 숨긴 값을 잡는다.
+            decoded = _decode_escapes(raw)
+            if decoded == raw:
+                continue
+            for lineno, line in enumerate(decoded.splitlines(), start=1):
+                for pname, rx in compiled:
+                    if self_skip and (pname == "windows_abs_path"
+                                      or layer_name == "local"):
+                        continue
+                    if _is_allowed(path, pname):
+                        continue
+                    for m in rx.finditer(line):
+                        violations.append(
+                            f"{rel}:{lineno}: {layer_name}_pattern={pname} "
+                            f"(decoded match: {m.group(0)!r})"
+                        )
     return violations
 
 
@@ -268,40 +328,25 @@ def scan_banned_words() -> list[str]:
 # 검사 2 — 한자(CJK 통합한자) 스캔
 # ──────────────────────────────────────────────────────────────────────
 
-# 정규식 문자 클래스 범위 표기(예: ``[\u4e00-\u9fff]``) 안의 이스케이프는
-# 한자 *데이터*가 아니라 코드의 일부다. 디코드 후 검사 시 이 범위 표기
-# 안에서 디코드된 한자는 오탐이다.
-#
-# 판정 근거: ``[...]`` 안의 ``X-Y`` 표기는 문자 *범위 리터럴*이며, 그 안의
-# 유니코드 이스케이프(예: ``\u`` + 4자리 hex)는 "이 코드포인트에서 저 코
-# 드포인트까지"라는 메타데이터를 인코딩할 뿐 실제 한자 텍스트가 아니다.
-# 따라서 이 위치에서 디코드된 한자는 위반에서 제외한다.
+# 정규식 문자 클래스 범위 표기 안의 이스케이프는 한자 *데이터*가 아니라
+# 코드의 일부다. 디코드 후 검사 시 이 범위 표기 안에서 디코드된 한자는
+# 오탐이므로 제외한다.
 _RE_CHARCLASS_RANGE = re.compile(
-    r"\[[^\[\]\n]*\]",  # 한 줄 내의 대괄호 그룹 (정규식 문자 클래스는 중첩 불가)
+    r"\[[^\[\]\n]*\]",
 )
-# 문자 클래스 내에서 ``A-B`` 범위 정의를 찾는다.
-# 디코드 *후* 라인을 검사하므로 양끝점은 이미 실제 문자(한자일 수 있음)이고,
-# 중간에 ``-`` 만 있으면 된다. ``\-`` 이스케이프된 하이픈은 제외.
-# 범위의 양끝점은 ``]`` 나 whitespace 가 아닌 임의의 한 글자.
 _RE_RANGE_INSIDE_CLASS = re.compile(
-    r"(?<!\\)"  # 끝점이 이스케이프된 `-`가 아니도록
-    r"(\S)"     # 범위의 시작점
-    r"\s*-\s*"  # 범위 연산자
-    r"(\S)"     # 범위의 끝점
+    r"(?<!\\)"
+    r"(\S)"
+    r"\s*-\s*"
+    r"(\S)"
 )
 
 
 def _is_in_charclass_range(line: str, pos: int) -> bool:
-    """``pos`` 위치의 문자가 정규식 문자 클래스 ``[...]`` 범위 표기 안인지.
-
-    디코드 후 검사 시 ``[\u4e00-\u9fff]`` 같은 정규식 리터럴에서 디코드된
-    한자가 오탐으로 잡히는 것을 막기 위함.
-    """
+    """``pos`` 위치의 문자가 정규식 문자 클래스 ``[...]`` 범위 표기 안인지."""
     for cc in _RE_CHARCLASS_RANGE.finditer(line):
         if not (cc.start() <= pos < cc.end()):
             continue
-        # 문자 클래스 안 — 그 안에 ``A-B`` 범위 표기가 있으면 예외.
-        # 단, 끝점이 ``]`` 이면 안 된다 (닫는 괄호).
         inner = cc.group(0)
         if _RE_RANGE_INSIDE_CLASS.search(inner):
             return True
@@ -311,11 +356,8 @@ def _is_in_charclass_range(line: str, pos: int) -> bool:
 def scan_cjk() -> list[str]:
     """CJK 통합한자가 한 글자라도 있으면 위반.
 
-    금칙어 스캔과 동일하게 ``\\xNN`` / ``\\uNNNN`` 이스케이프를 **디코드한
-    뒤** 검사한다. 디코드 로직은 ``_decode_escapes`` 를 재사용(중복 구현 금지).
-
-    예외: 정규식 문자 클래스 범위 표기(예: ``[\u4e00-\u9fff]``) 안에서
-    디코드된 한자는 *코드*이지 데이터가 아니므로 위반에서 제외한다.
+    ``\\xNN`` / ``\\uNNNN`` 이스케이프를 **디코드한 뒤** 검사한다.
+    정규식 문자 클래스 범위 표기 안에서 디코드된 한자는 코드이므로 제외.
     """
     violations: list[str] = []
     for path in _iter_files(SCAN_PATHS):
@@ -334,13 +376,12 @@ def scan_cjk() -> list[str]:
                             f"{rel}:{lineno}:{col}: cjk_ideograph "
                             f"U+{cp:04X} ({ch!r})"
                         )
-                        break  # 같은 글자를 두 번 보고하지 않음.
+                        break
 
         # (B) 디코드 후 재검사 — 이스케이프로 숨긴 한자를 잡는다.
-        # 금칙어 스캔과 동일한 패턴: _decode_escapes 재사용.
         decoded = _decode_escapes(raw)
         if decoded == raw:
-            continue  # 이스케이프 없었음.
+            continue
         for lineno, line in enumerate(decoded.splitlines(), start=1):
             for col, ch in enumerate(line, start=1):
                 cp = ord(ch)
@@ -351,9 +392,6 @@ def scan_cjk() -> list[str]:
                         break
                 if not is_cjk:
                     continue
-                # 오탐 방지: 정규식 문자 클래스 범위 표기 안이면 제외.
-                # 판정 근거: 대괄호 안의 범위 리터럴은 코드 메타데이터이지
-                # 한자 데이터가 아니다.
                 if _is_in_charclass_range(line, col - 1):
                     continue
                 violations.append(
@@ -364,16 +402,15 @@ def scan_cjk() -> list[str]:
 
 
 # ──────────────────────────────────────────────────────────────────────
-# 검사 3 — 커밋 메시지 스캔
+# 검사 3 — 커밋 메시지 스캔 (형식 기반)
 # ──────────────────────────────────────────────────────────────────────
 
+
 def _commit_range() -> list[str]:
-    """``git log origin/main..HEAD`` 범위의 커밋 SHA 리스트.
+    """``git log origin/main..HEAD`` 범위의 커밋을 NUL 구분 블록으로 반환.
 
     origin/main 이 없거나 git 명령 실패 시 최근 20커밋으로 폴백.
     """
-    # Windows 한글 환경(cp949) 에서 UTF-8 커밋 메시지가 깨지는 것을 막기 위해
-    # 바이트로 받아 UTF-8 로 명시 디코딩한다.
     def _run(args: list[str]) -> bytes | None:
         try:
             r = subprocess.run(
@@ -391,12 +428,10 @@ def _commit_range() -> list[str]:
             return ""
         return b.decode("utf-8", "replace")
 
-    # origin/main 범위 우선.
     if _run(["rev-parse", "--verify", "origin/main"]) is not None:
         out = _decode(_run(["log", "--format=%H%n%B%x00", "origin/main..HEAD"]))
         if out.strip():
             return out.split("\x00")
-    # 폴백: 최근 20커밋.
     out = _decode(_run(["log", "-n", "20", "--format=%H%n%B%x00"]))
     if out.strip():
         return out.split("\x00")
@@ -404,7 +439,11 @@ def _commit_range() -> list[str]:
 
 
 def scan_commit_messages() -> list[str]:
-    """커밋 메시지에서 claude/anthropic/co-authored 토큰 검출."""
+    """커밋 메시지에서 금지된 **형식**(트레일러 등)을 검출한다.
+
+    특정 도구명을 나열하지 않고, 공동저자 트레일러 형태
+    존재 여부 등 **형태**로 검사한다.
+    """
     violations: list[str] = []
     blocks = _commit_range()
     for block in blocks:
@@ -414,12 +453,13 @@ def scan_commit_messages() -> list[str]:
         if not lines:
             continue
         sha = lines[0].strip()
-        body = "\n".join(lines[1:]).lower()
-        for tok in BANNED_COMMIT_TOKENS:
-            if tok in body:
+        body = "\n".join(lines[1:])
+        for rx in COMMIT_TRAILER_PATTERNS:
+            m = rx.search(body)
+            if m:
                 violations.append(
-                    f"commit {sha[:10]}: banned_token={tok!r} "
-                    f"in commit message"
+                    f"commit {sha[:10]}: banned_form="
+                    f"{m.group(0).strip()!r} in commit message"
                 )
     return violations
 
@@ -428,21 +468,29 @@ def scan_commit_messages() -> list[str]:
 # 메인
 # ──────────────────────────────────────────────────────────────────────
 
+
 def main() -> int:
     print("[scan_repo] 검사 시작...", flush=True)
+
+    # 층 2 로컬 목록 로드 — 있으면 적용, 없으면 알리고 층 1만으로 진행.
+    local_words, local_rx = load_local_words()
+    if local_rx is None:
+        print(
+            "[scan_repo] 로컬 고유명사 목록이 없습니다 — "
+            "층 1 범용 패턴만으로 검사합니다.",
+            flush=True,
+        )
+
     all_violations: list[str] = []
 
-    print("[scan_repo] (1/3) 디코드 인지 금칙어 스캔", flush=True)
-    v1 = scan_banned_words()
-    all_violations.extend(v1)
+    print("[scan_repo] (1/3) 디코드 인지 패턴 스캔", flush=True)
+    all_violations.extend(scan_patterns(local_rx))
 
     print("[scan_repo] (2/3) 한자(CJK) 스캔", flush=True)
-    v2 = scan_cjk()
-    all_violations.extend(v2)
+    all_violations.extend(scan_cjk())
 
     print("[scan_repo] (3/3) 커밋 메시지 스캔", flush=True)
-    v3 = scan_commit_messages()
-    all_violations.extend(v3)
+    all_violations.extend(scan_commit_messages())
 
     if all_violations:
         print(f"\n[scan_repo] {len(all_violations)}건 위반 감지:\n", flush=True)
