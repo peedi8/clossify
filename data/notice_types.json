@@ -154,8 +154,9 @@
       "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
       "node": "etc",
       "label_ko": "기타 재화 상품 요약 정보",
-      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "itemName", "modelName", "certificateDetails", "manufacturer", "afterServiceDirector", "customerServicePhoneNumber"],
-      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product"
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "itemName", "modelName", "certificateDetails", "manufacturer", "afterServiceDirector"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "required_fields_note": "customerServicePhoneNumber 는 afterServiceDirector 와 상호배제(A/S 연락처 단일 노출 정책)이므로 필수 목록에서 제외. afterServiceDirector 만 필수. 공식 문서의 필드 스키마에는 둘 다 열거되어 있으나, 네이버 커머스 플랫폼은 A/S 연락처를 단일 채널로 노출하므로 둘을 동시에 필수로 선언하면 한쪽이 항상 비어 컴플라이언스가 FAIL 하는 모순이 발생한다. 물리 재화(WEAR/SHOES/BAG 등)가 afterServiceDirector 만 쓰는 패턴과 일관되게 afterServiceDirector 를 필수로 둔다."
     },
     {
       "type": "FASHION_ITEMS",

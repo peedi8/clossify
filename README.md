@@ -91,8 +91,11 @@ cp config.example.json .local/config.json
 
 ### 필수 실값(경고)
 
-아래 값은 **판매자가 실제 신고하는 진짜 값**이어야 한다. 안내문구/플레이스홀더를
-넣으면 컴플라이언스 게이트가 등록을 거부한다(fail-closed, 조용한 기본값 없음).
+아래 값은 **판매자가 실제 신고하는 진짜 값**이어야 한다. 안내문구/플레이스홀더
+(`상세참조`/`상세페이지 참조`/`해당없음` 및 공백·표기 변형 포함)를 넣으면
+컴플라이언스 게이트가 등록을 거부한다(fail-closed, 조용한 기본값 없음). 단,
+사용자가 명시적으로 입력한 안내문구 값은 payload 에 그대로 전송된다(전송과
+판정은 분리).
 
 - `smartstore_notice_defaults.origin_area_code` / `origin_content` — 원산지
 - `smartstore_notice_defaults.manufacturer`/`importer`/`model_name` — 해당 시

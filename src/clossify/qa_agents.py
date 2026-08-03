@@ -378,21 +378,45 @@ def _infer_notice_type(context):
 # ---------------------------------------------------------------------------
 
 
-def _notice_field_missing(notice_body, fields):
-    """``notice_body`` 에서 누락된 필수 필드 이름 리스트 반환.
+def _normalize_placeholder_value(raw):
+    """고시 필드 값을 placeholder 판정용으로 정규화.
 
-    안내 문구성 값(예: ``상세참조``, ``상세페이지 참조``, ``해당없음``,
-    ``-``, 공백류)은 **미제공으로 취급**한다. 핵심 정책:
+    정규화 규칙 (합리적 범위, 과잉 차단 금지):
+      1. 양끝 공백 제거 (str.strip).
+      2. 전각 공백(U+3000) 및 전각/반각 공백류를 ASCII 공백으로 통일.
+      3. 내부 공백 런을 단일 공백으로 축소 — ``"상 세  참 조"`` 같은
+         공백 삽입 변형이 ``"상 세 참 조"`` 로 모이도록.
+      4. 소문자 변환(영문 토큰 N/A, NULL 등 대소문자 차이 흡수).
+      5. 위 결과를 (a) 공백을 "유지한 표준형", (b) 공백을 "완전 제거한
+         축약형" 두 가지로 반환 — 판정 쪽에서 두 형태 모두 안내문구
+         집합과 대조한다(공백 삽입 변형까지 잡기 위함).
 
-      - **전송은 하되 "필수 항목이 채워졌다"고 판정하지는 않는다** — 두 가지를
-        구분한다. ``_merge_notice`` (naver_client) 가 사용자가 명시적으로 준
-        placeholder 값을 그대로 payload 에 싣는 것은 기존 결정을 유지하되,
-        컴플라이언스 판정은 그 값을 "유효 제공" 으로 인정하지 않는다.
-      - 사용자가 placeholder 없이 실질 정보를 주어야만 "채워짐" 이다.
+    인자로 전달된 값은 문자열로 캐스트한다 (None 안전).
+
+    Returns:
+        ``(standard_form, compact_form)`` — 둘 다 str.
     """
-    # 안내 문구/placeholder 토큰. 이 값들은 "미제공" 으로 간주한다.
-    # (원본 EMPTY_TOKENS 의 빈값 토큰에 placeholder 안내문구를 추가.)
-    EMPTY_TOKENS = {
+    text = str(raw or "")
+    # (1) 전각 공백(U+3000) 및 다양한 공백류을 ASCII 스페이스로 통일.
+    #     전각/반각 통일: 네이버 셀러 입력기가 전각 스페이스를 넣는 경우가 있다.
+    text = text.replace("\u3000", " ")
+    # (2) 양끝 공백 제거.
+    text = text.strip()
+    # (3) 소문자 변환.
+    text = text.lower()
+    # (4) 내부 공백 런 축소.
+    standard = re.sub(r"\s+", " ", text)
+    # (5) 공백 완전 제거 형태 (공백 삽입 우회 판정용).
+    compact = re.sub(r"\s+", "", text)
+    return standard, compact
+
+
+# 안내문구/placeholder 표준 집합(정규화 후 대조).
+# 공백을 제거한 compact 형태와 공백을 유지한 standard 형태 양쪽에 대해 대조.
+# 하드코딩 나열이 아니라 "실질 정보가 없는 값" 판정의 기준선 역할 —
+# 정상 값(예: "면 100%", "2026-01", "어깨 42cm")은 여기에 절대 들지 않는다.
+_PLACEHOLDER_TOKENS_STANDARD = frozenset(
+    {
         "",
         "-",
         "n/a",
@@ -412,18 +436,57 @@ def _notice_field_missing(notice_body, fields):
         "별도표시",
         "별도 표시",
     }
+)
+# compact 형태(공백 제거) 대조 집합 — standard 집합에서 공백을 없앤 것.
+_PLACEHOLDER_TOKENS_COMPACT = frozenset(
+    re.sub(r"\s+", "", tok) for tok in _PLACEHOLDER_TOKENS_STANDARD
+)
+
+
+def _is_placeholder_value(raw):
+    """정규화 후 안내문구 집합 대조 + 구두점만 값 휴리스틱.
+
+    "실질 정보가 없는 값" 으로 판정되면 True.
+      - 정규화(공백 통일/축소·전각반각 통일·소문자) 후 알려진 안내문구
+        집합(standard/compact 양쪽)과 대조.
+      - 괄호/구두점/공백만 남은 값도 미제공으로 간주.
+
+    과잉 차단 금지: 정상 값(예: ``면 100%``, ``2026-01``, ``어깨 42cm``)은
+    안내문구 집합에 없으므로 판정을 통과한다.
+    """
+    standard, compact = _normalize_placeholder_value(raw)
+    if standard in _PLACEHOLDER_TOKENS_STANDARD:
+        return True
+    if compact in _PLACEHOLDER_TOKENS_COMPACT:
+        return True
+    # 괄호/구두점/공백만 남은 값도 미제공으로 간주.
+    stripped = re.sub(r"[\s\-\.\,\(\)\[\]\{\}\/]", "", compact)
+    if not stripped:
+        return True
+    return False
+
+
+def _notice_field_missing(notice_body, fields):
+    """``notice_body`` 에서 누락된 필수 필드 이름 리스트 반환.
+
+    안내 문구성 값(예: ``상세참조``, ``상세페이지 참조``, ``해당없음``,
+    ``-``, 공백류)은 **미제공으로 취급**한다. 핵심 정책:
+
+      - **전송은 하되 "필수 항목이 채워졌다"고 판정하지는 않는다** — 두 가지를
+        구분한다. ``_merge_notice`` (naver_client) 가 사용자가 명시적으로 준
+        placeholder 값을 그대로 payload 에 싣는 것은 기존 결정을 유지하되,
+        컴플라이언스 판정은 그 값을 "유효 제공" 으로 인정하지 않는다.
+      - 사용자가 placeholder 없이 실질 정보를 주어야만 "채워짐" 이다.
+      - **변형 우회 차단**: 판정 시 값을 정규화한 뒤 비교한다(공백 제거·
+        전각/반각 통일 등). 공백 삽입/표기 차이로 안내문구가 "채워짐" 으로
+        우회되지 않도록 한다 (``_is_placeholder_value`` 참고).
+    """
     missing = []
     if not isinstance(notice_body, dict):
         return list(fields)
     for field in fields:
         raw = notice_body.get(field)
-        text = str(raw or "").strip().lower()
-        if text in EMPTY_TOKENS:
-            missing.append(field)
-            continue
-        # 추가: 괄호/구두점만 있는 값(예: ".", "()", "-") 도 미제공으로 간주.
-        stripped = re.sub(r"[\s\-\.\,\(\)\[\]\{\}\/]", "", text)
-        if not stripped:
+        if _is_placeholder_value(raw):
             missing.append(field)
     return missing
 
@@ -918,9 +981,11 @@ __all__ = [
     "_compliance_code_check",
     "_copy_code_check",
     "_infer_notice_type",
+    "_is_placeholder_value",
     "_load_notice_types",
     "_merge_code_check",
     "_normalize_agent_result",
+    "_normalize_placeholder_value",
     "_normalize_qa_result",
     "_notice_field_missing",
     "_notice_type_spec",
