@@ -94,7 +94,7 @@ def _list_strings(value, *, limit=20):
     if isinstance(value, str):
         parsed = _jsonish_loads(value)
         items = parsed if isinstance(parsed, list) else [value]
-    elif isinstance(value, (list, tuple)):
+    elif isinstance(value, list | tuple):
         items = value
     else:
         return []
@@ -110,7 +110,7 @@ def _list_strings(value, *, limit=20):
 
 def _normalize_dropped_entries(value, *, limit=20):
     """Normalise a list of "dropped keyword" rows into ``{word, reason}``."""
-    rows = value if isinstance(value, (list, tuple)) else []
+    rows = value if isinstance(value, list | tuple) else []
     out: list[dict] = []
     for row in rows:
         if isinstance(row, dict):

@@ -84,10 +84,18 @@ cp config.example.json .local/config.json
 
 ## 개발자용
 
+> **ruff 버전 주의(T-205b)**: CI(`.github/workflows/ci.yml`)는 `ruff==0.6.9` 로
+> 고정되어 있다. 로컬에서 상위 버전을 쓰면 셀렉터 해석 차이로 "로컬은 통과, CI 는
+> 실패"가 발생한다(실제로 `ISC004`/`RUF059` 셀렉터가 상위 버전에만 있어 0.6.9 에서
+> 설정 파싱이 exit 2 로 실패한 사례가 있었다). 반드시 CI 와 **동일한 버전**을 설치할
+> 것. 아래 명령으로 개발 의존성을 설치하면 `pyproject.toml` 의
+> `[project.optional-dependencies] dev` 에 `ruff==0.6.9` 가 고정되어 있다.
+
 ```sh
-ruff check .                  # 린트(CI와 동일 구성)
-pytest                        # 기존 테스트
-python scripts/scan_repo.py   # 금칙어·한자·커밋메시지 스캔, 위반 시 exit 1
+pip install -e ".[dev]"            # ruff==0.6.9 포함 개발 의존성 설치
+ruff check .                       # 린트 — CI 와 동일 명령/구성
+pytest                             # 기존 테스트
+python scripts/scan_repo.py        # 금칙어·한자·커밋메시지 스캔, 위반 시 exit 1
 ```
 
 pre-commit(gitleaks 등) 설정은 저장소 참고. 자세한 설계·모듈 의존·데이터 자산은

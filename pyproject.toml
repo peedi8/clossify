@@ -20,9 +20,14 @@ dependencies = [
 clossify = "clossify.mcp_server:main"
 
 [project.optional-dependencies]
+# T-205b — CI(.github/workflows/ci.yml) 가 ruff==0.6.9 로 고정되어 있다. 로컬에서
+# 다른 버전을 쓰면 셀렉터 해석 차이로 "로컬은 통과, CI 는 실패" 가 발생한다
+# (직전 티켓이 이 함정에 걸렸다: ISC004/RUF059 셀렉터가 상위 버전에만 있어
+# 0.6.9 에서는 설정 파싱이 exit 2 로 실패). 따라서 개발 환경도 동일 버전을
+# 고정한다. 런타임 의존성(dependencies)은 건드리지 않는다.
 dev = [
     "pytest",
-    "ruff",
+    "ruff==0.6.9",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -100,10 +105,15 @@ ignore = [
     # 대부분이어로 의미를 해치지 않으면서 결합하기 어렵다. 순수 스타일 규칙이므로
     # 본 CI 그린화 티켓 범위에서는 무시한다(별도 포맷터 도입 티켓에서 재검토).
     "SIM117",
-    # ISC004 (implicit-string-concatenation-in-collection-literal): 1건, 문자열
-    # 인접 결합. 명시적 + 로 바꾸는 것이 가독성에 나은지는 논쟁적이며 현 위치는
-    # 의도적 결합이다.
-    "ISC004",
+    # [제거됨 T-205b] 직전 티켓이 "ISC004"(implicit-string-concatenation-in-
+    # collection-literal) 를 끄려 했으나 ruff==0.6.9 에는 ISC003 까지만 존재한다
+    # (ISC004 는 상위 버전에 추가됨). CI 가 0.6.9 로 고정되어 있으므로
+    # 존재하지 않는 셀렉터를 두면 설정 파싱이 exit 2 로 실패한다. 따라서
+    # 셀렉터 자체를 제거한다. 원래 의도(문자열 인접 결합 1건 허용)는
+    # 보고에 기록하며, 0.6.9 범위에서는 별도 ISC003 도 활성화되지 않으므로
+    # 현 위치의 인접 결합은 ISC 계열 위반으로 잡히지 않는다.
+    # "ISC004",  # removed — see T-205b
+
     # PLW1510 (subprocess-run-without-check): 1건. 외부 도구 호출이 아닌 내부
     # 보조 스크립트 런치이며 check=True 가 필요한 실패 의미가 없다.
     "PLW1510",
@@ -141,10 +151,12 @@ ignore = [
     # RUF005 (collection-literal-concatenation): a + [b] → [*a, b] 권장.
     # 기존 리스트 결합 형태가 의도를 더 명확히 드러내는 지점이 많다.
     "RUF005",
-    # RUF059 (unused-unpacked-variable): 튜플 언패 중 미사용 슬롯. _ 로 바꾸라는
-    # 규칙이나 헤더 행의 위치를 나타내는 등 의미 있는 자리를 _ 로 묻으면 가독성
-    # 저하. (_ 는 "의도적 무시" 표준이지만 본 프로젝트 일부 슬롯은 이름이 문서.)
-    "RUF059",
+    # [제거됨 T-205b] 직전 티켓이 "RUF059"(unused-unpacked-variable) 를 끄려 했으나
+    # ruff==0.6.9 의 RUF0xx 계열은 RUF034 까지만 존재한다(RUF059 는 상위 버전에
+    # 추가됨). 존재하지 않는 셀렉터이므로 제거한다. 원래 의도(튜플 언패 미사용
+    # 슬롯을 _ 로 묻지 않고 이름으로 둔 위치 유지)는 보고에 기록한다. 0.6.9 범위
+    # 에서는 해당 패턴을 잡는 규칙이 없으므로 별도 조치 없이 현 코드가 통과한다.
+    # "RUF059",  # removed — see T-205b
     # FURB110 (if-exp-instead-of-or-operator): x if c else y → c or y 권장.
     # 의미가 다른 경우(거짓값 허용)가 있어 기계 적용이 위험.
     "FURB110",

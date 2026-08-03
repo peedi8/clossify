@@ -352,7 +352,7 @@ def _flatten_prop_terms(value, *, limit=30, clean=True):
             for nested in v.values():
                 walk(nested)
             return
-        if isinstance(v, (list, tuple, set)):
+        if isinstance(v, list | tuple | set):
             for item in v:
                 walk(item)
             return

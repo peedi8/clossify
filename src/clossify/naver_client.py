@@ -787,11 +787,11 @@ def _collect_invalid_inputs(body):
             if isinstance(invalids, list):
                 found.extend([x for x in invalids if isinstance(x, dict)])
             for child in value.values():
-                if isinstance(child, (dict, list)):
+                if isinstance(child, dict | list):
                     visit(child)
         elif isinstance(value, list):
             for child in value:
-                if isinstance(child, (dict, list)):
+                if isinstance(child, dict | list):
                     visit(child)
 
     visit(body)
@@ -991,7 +991,7 @@ def _option_group_list(p):
         return [groups.get(f"optionGroupName{i}") for i in range(1, 4) if groups.get(f"optionGroupName{i}")]
     if isinstance(groups, str):
         return [groups]
-    if isinstance(groups, (list, tuple)):
+    if isinstance(groups, list | tuple):
         return [str(x) for x in groups if x]
     return []
 
@@ -1002,7 +1002,7 @@ def _option_width(opts):
         if not isinstance(option, dict):
             continue
         names = option.get("names")
-        if isinstance(names, (list, tuple)):
+        if isinstance(names, list | tuple):
             width = max(width, min(3, len([x for x in names if x])))
         for i in range(1, 4):
             if option.get(f"optionName{i}"):
@@ -1029,7 +1029,7 @@ def _build_option_info(p, opts):
     for option in opts:
         if not isinstance(option, dict):
             continue
-        names = option.get("names") if isinstance(option.get("names"), (list, tuple)) else None
+        names = option.get("names") if isinstance(option.get("names"), list | tuple) else None
         combo, key = {}, []
         for i in range(1, width + 1):
             value = option.get(f"optionName{i}")

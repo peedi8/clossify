@@ -62,7 +62,7 @@ def _coerce_str_list(values, *, label):
     if isinstance(values, str):
         # 문자열 단독 입력은 1장으로 간주하지 않는다 — 리스트가 아니면 빈 리스트.
         return []
-    if not isinstance(values, (list, tuple)):
+    if not isinstance(values, list | tuple):
         return []
     out = []
     for v in values:
@@ -78,7 +78,7 @@ def _coerce_options(options):
     """
     if options is None:
         return []
-    if not isinstance(options, (list, tuple)):
+    if not isinstance(options, list | tuple):
         return []
     out = []
     for opt in options:
@@ -209,7 +209,7 @@ def _build_specs_section(product):
             k = _detail_safe_text(key)
             v = _detail_safe_text(value)
             rows.append((k, v, f"props.{key}"))
-    elif isinstance(props, (list, tuple)):
+    elif isinstance(props, list | tuple):
         for item in props:
             if isinstance(item, dict):
                 k = _detail_safe_text(item.get("name") or item.get("label") or "")
@@ -344,7 +344,7 @@ def _flatten_notice_pairs(notice):
 
     def _scalar_text(v):
         """scalar 만 문자열로. dict/list 는 빈 문자열(문자열화 금지)."""
-        if isinstance(v, (dict, list, tuple)):
+        if isinstance(v, dict | list | tuple):
             return ""
         return _detail_safe_text(v)
 
@@ -354,7 +354,7 @@ def _flatten_notice_pairs(notice):
             field_path = ".".join(prefix_parts + [str(key)])
             if isinstance(value, dict) and value:
                 _walk_dict(value, prefix_parts + [str(key)])
-            elif isinstance(value, (list, tuple)):
+            elif isinstance(value, list | tuple):
                 for i, item in enumerate(value):
                     item_field = f"{field_path}[{i}]"
                     if isinstance(item, dict) and item:
@@ -371,7 +371,7 @@ def _flatten_notice_pairs(notice):
             if isinstance(value, dict) and value:
                 # 중첩 dict — 자식 필드를 펼친다(필드 단위 행).
                 _walk_dict(value, [f"notice.{key}"])
-            elif isinstance(value, (list, tuple)):
+            elif isinstance(value, list | tuple):
                 for i, item in enumerate(value):
                     item_field = f"{field_path}[{i}]"
                     if isinstance(item, dict) and item:

@@ -233,7 +233,7 @@ def _seo_material_source_text(source_context, *, max_len=1800):
                 if key in value:
                     add_value(value.get(key))
             return
-        if isinstance(value, (list, tuple, set)):
+        if isinstance(value, list | tuple | set):
             for item in value:
                 add_value(item)
             return
