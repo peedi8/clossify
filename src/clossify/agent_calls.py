@@ -28,6 +28,7 @@
 의존 방향: ``copywriting`` (상위) → ``agent_calls`` (본 모듈).
 ``common``, ``text_props`` 등은 어디서든 import 가능.
 """
+
 from __future__ import annotations
 
 import json
@@ -44,6 +45,7 @@ from .copywriting import (
 # ``copywriting._agent_rules_bundle()`` 을 재사용한다 — 패키지 내 2종 스키마/로더
 # 금지 원칙. 단일 진실 공급원.
 # ---------------------------------------------------------------------------
+
 
 def _agent_rule_text(filename):
     """단일 ``agents/*.md`` 파일의 원문 텍스트를 반환 (source L3675).
@@ -76,6 +78,7 @@ def _rules_dict(*filenames):
 # :func:`copywriting._normalize_naming_result` 로 정규화한다.
 # ---------------------------------------------------------------------------
 
+
 def naming_agent(source_title, props, category_path):
     """네이밍 에이전트 판단 위임 디스크립터 반환 (source L5259).
 
@@ -105,9 +108,7 @@ def naming_agent(source_title, props, category_path):
         ValueError: ``source_title`` 이 빈 문자열/공백인 경우.
     """
     if not str(source_title or "").strip():
-        raise ValueError(
-            "source_title must be a non-empty string for naming_agent"
-        )
+        raise ValueError("source_title must be a non-empty string for naming_agent")
     from .text_props import _flatten_prop_terms
 
     rules = _rules_dict("COMPLIANCE_RULES.md", "naming_agent.md")
@@ -168,6 +169,7 @@ def normalize_naming_response(data, source_title, props, category_path):
 # :mod:`qa_agents` 의 정규화 함수로 처리한다.
 # ---------------------------------------------------------------------------
 
+
 def qa_copy_agent(name, context, detail_text):
     """카피 QA 판단 위임 디스크립터 반환 (source L6403).
 
@@ -193,9 +195,7 @@ def qa_copy_agent(name, context, detail_text):
     Returns:
         ``llm_hint`` 디스크립터 dict.
     """
-    rules = _rules_dict(
-        "COMPLIANCE_RULES.md", "QA_AGENTS.md", "COPY_GUIDE.md"
-    )
+    rules = _rules_dict("COMPLIANCE_RULES.md", "QA_AGENTS.md", "COPY_GUIDE.md")
     payload = {
         "name": str(name or ""),
         "context": context if isinstance(context, dict) else {},

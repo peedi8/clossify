@@ -3,6 +3,7 @@
 작업지시(T-201d) 의 Acceptance 반례 전체를 단위 테스트로 구현한다.
 실제 네이버 API 호출, 파일시스템 사용을 차단(monkeypatch + tmp_path).
 """
+
 from __future__ import annotations
 
 import json
@@ -63,14 +64,12 @@ class TestUrlRejection:
 
     @pytest.mark.parametrize("url_key", ["url", "source_url", "item_url", "detail_url"])
     def test_prepare_rejects_url_key(self, url_key):
-        d = {"name": "테스트", "salePrice": 10000,
-             "image_sources": ["x.png"], url_key: "http://x"}
+        d = {"name": "테스트", "salePrice": 10000, "image_sources": ["x.png"], url_key: "http://x"}
         with pytest.raises(ValueError, match="URL 기반"):
             register.prepare_listing(d, attach_fn=_fake_attach_ok)
 
     def test_prepare_url_with_images_still_rejected(self):
-        d = {"name": "테스트", "salePrice": 10000,
-             "url": "http://x", "images": ["a.png"]}
+        d = {"name": "테스트", "salePrice": 10000, "url": "http://x", "images": ["a.png"]}
         with pytest.raises(ValueError, match="URL 기반"):
             register.prepare_listing(d, attach_fn=_fake_attach_ok)
 
@@ -87,8 +86,7 @@ class TestZeroImageRejection:
             register.prepare_listing(d, attach_fn=_fake_attach_ok)
 
     def test_prepare_rejects_rejected_images(self, isolated_prepared_dir):
-        d = {"name": "테스트", "salePrice": 10000,
-             "image_sources": ["bad.png"]}
+        d = {"name": "테스트", "salePrice": 10000, "image_sources": ["bad.png"]}
         with pytest.raises(ValueError, match="거부"):
             register.prepare_listing(d, attach_fn=_fake_attach_rejected)
 
@@ -115,7 +113,9 @@ class TestZeroImageRejection:
 class TestPayloadKeyAlignment:
     """prepare_listing 이 쓴 키를 register_prepared_listing 이 읽는가."""
 
-    def test_prepare_writes_and_register_reads_listing_urls(self, isolated_prepared_dir, monkeypatch):
+    def test_prepare_writes_and_register_reads_listing_urls(
+        self, isolated_prepared_dir, monkeypatch
+    ):
         """prepare_listing 이 images.listing_urls 를 쓰고,
         register_prepared_listing 이 그 키를 읽어 네이버에 반영하는가."""
         d = {
@@ -138,10 +138,14 @@ class TestPayloadKeyAlignment:
         naver_calls = []
 
         def fake_build(product, detail_html, image_urls, status="SALE"):
-            naver_calls.append({
-                "product": product, "detail_html": detail_html,
-                "image_urls": list(image_urls), "status": status,
-            })
+            naver_calls.append(
+                {
+                    "product": product,
+                    "detail_html": detail_html,
+                    "image_urls": list(image_urls),
+                    "status": status,
+                }
+            )
             return {"originProduct": {"originProductNo": "test-no"}}
 
         def fake_register(api_payload):
@@ -151,16 +155,19 @@ class TestPayloadKeyAlignment:
             return (200, {"originProduct": {"originProductNo": origin_no}})
 
         # submit_reviews 로 image/copy PENDING → PASS 해소.
-        register.submit_reviews(payload["product_key"], [
-            {"agent": "image", "verdict": "PASS"},
-            {"agent": "copy", "verdict": "PASS"},
-        ])
+        register.submit_reviews(
+            payload["product_key"],
+            [
+                {"agent": "image", "verdict": "PASS"},
+                {"agent": "copy", "verdict": "PASS"},
+            ],
+        )
         # compliance 는 submit_reviews 로 제출할 수 없다(결정론 검사).
         # 테스트의 목적은 URL 키 정합이지 compliance 게이트가 아니므로,
         # compliance 를 PASS 로 직접 덮어쓴다(테스트 격리).
         _p = register.load_prepared_payload(product_key=payload["product_key"])
         _qa = _p.get("qa") or {}
-        for _row in (_qa.get("agents") or []):
+        for _row in _qa.get("agents") or []:
             if isinstance(_row, dict) and _row.get("agent") == "compliance":
                 _row["verdict"] = qa_agents.PASS
                 _row["violations"] = []
@@ -174,18 +181,13 @@ class TestPayloadKeyAlignment:
         monkeypatch.setattr(naver_client, "get_product", fake_get)
 
         result = register.register_prepared_listing(
-            {"product_key": payload["product_key"],
-             "name": "테스트상품", "salePrice": 20000}
+            {"product_key": payload["product_key"], "name": "테스트상품", "salePrice": 20000}
         )
-        assert result["ok"] is True, (
-            f"register_prepared_listing 실패: {result}"
-        )
+        assert result["ok"] is True, f"register_prepared_listing 실패: {result}"
         # naver_client.build_payload 가 listing_urls 를 받았는가.
         assert len(naver_calls) == 1
         received_urls = naver_calls[0]["image_urls"]
-        assert len(received_urls) == 2, (
-            f"이미지가 0장으로 넘어감(무음 실패): {received_urls}"
-        )
+        assert len(received_urls) == 2, f"이미지가 0장으로 넘어감(무음 실패): {received_urls}"
 
 
 # --------------------------------------------------------------------------- #
@@ -228,9 +230,15 @@ class TestSubmitReviews:
         for agent_name, verdict in agents_dict.items():
             agent_rows.append(
                 qa_agents._qa_agent_result(
-                    agent_name, verdict,
-                    [{"rule": "서버위반", "severity": verdict,
-                      "detail": f"서버가 {agent_name}={verdict} 산출"}],
+                    agent_name,
+                    verdict,
+                    [
+                        {
+                            "rule": "서버위반",
+                            "severity": verdict,
+                            "detail": f"서버가 {agent_name}={verdict} 산출",
+                        }
+                    ],
                     f"{agent_name} {verdict}",
                 )
             )
@@ -257,79 +265,90 @@ class TestSubmitReviews:
         assert allowed_before is False
 
         # submit_reviews 로 image PENDING → PASS.
-        result = register.submit_reviews(pkey, [
-            {"agent": "image", "verdict": "PASS"},
-        ])
+        result = register.submit_reviews(
+            pkey,
+            [
+                {"agent": "image", "verdict": "PASS"},
+            ],
+        )
         # 집계에 PENDING 이 없어야 함.
         agent_verdicts = [
-            qa_agents._clamp_verdict(r.get("verdict"))
-            for r in (result.get("agents") or [])
+            qa_agents._clamp_verdict(r.get("verdict")) for r in (result.get("agents") or [])
         ]
-        assert "PENDING" not in agent_verdicts, (
-            f"PENDING 이 남아있음: {agent_verdicts}"
-        )
+        assert "PENDING" not in agent_verdicts, f"PENDING 이 남아있음: {agent_verdicts}"
 
     def test_server_fail_stays_fail_on_client_pass(self, isolated_prepared_dir):
         """② 서버 copy=FAIL 인데 클라이언트 copy=PASS → 여전히 FAIL."""
         pkey = register.make_product_key("fail보존", 10000)
         self._make_payload_with_qa(pkey, {"image": "PASS", "copy": "FAIL"})
-        result = register.submit_reviews(pkey, [
-            {"agent": "copy", "verdict": "PASS"},
-        ])
+        result = register.submit_reviews(
+            pkey,
+            [
+                {"agent": "copy", "verdict": "PASS"},
+            ],
+        )
         # FAIL 이 보존되어야 함.
         copy_verdict = None
-        for row in (result.get("agents") or []):
+        for row in result.get("agents") or []:
             if row.get("agent") == "copy":
                 copy_verdict = qa_agents._clamp_verdict(row.get("verdict"))
-        assert copy_verdict == "FAIL", (
-            f"서버 FAIL 이 클라이언트 PASS 로 덮어씌워짐: {copy_verdict}"
-        )
+        assert copy_verdict == "FAIL", f"서버 FAIL 이 클라이언트 PASS 로 덮어씌워짐: {copy_verdict}"
         # 서버 violations 보존.
         all_violations = result.get("violations") or []
         has_server_violation = any(
-            "서버위반" in str(v.get("detail") or "")
-            or "서버위반" in str(v.get("rule") or "")
-            for v in all_violations if isinstance(v, dict)
+            "서버위반" in str(v.get("detail") or "") or "서버위반" in str(v.get("rule") or "")
+            for v in all_violations
+            if isinstance(v, dict)
         )
-        assert has_server_violation, (
-            f"서버 violations 이 삭제됨: {all_violations}"
-        )
+        assert has_server_violation, f"서버 violations 이 삭제됨: {all_violations}"
 
     def test_compliance_submission_rejected(self, isolated_prepared_dir):
         """③ agent=compliance 제출 → ValueError."""
         pkey = register.make_product_key("컴플라이언스거부", 10000)
         self._make_payload_with_qa(pkey, {"image": "PASS", "copy": "PASS"})
         with pytest.raises(ValueError, match="제출 불가 agent"):
-            register.submit_reviews(pkey, [
-                {"agent": "compliance", "verdict": "PASS"},
-            ])
+            register.submit_reviews(
+                pkey,
+                [
+                    {"agent": "compliance", "verdict": "PASS"},
+                ],
+            )
 
     def test_unknown_agent_rejected(self, isolated_prepared_dir):
         """④ 알 수 없는 agent → ValueError."""
         pkey = register.make_product_key("알수없는agent", 10000)
         self._make_payload_with_qa(pkey, {"image": "PASS", "copy": "PASS"})
         with pytest.raises(ValueError, match="제출 불가 agent"):
-            register.submit_reviews(pkey, [
-                {"agent": "unknown_agent", "verdict": "PASS"},
-            ])
+            register.submit_reviews(
+                pkey,
+                [
+                    {"agent": "unknown_agent", "verdict": "PASS"},
+                ],
+            )
 
     def test_unknown_verdict_rejected(self, isolated_prepared_dir):
         """④ 알 수 없는 verdict → ValueError."""
         pkey = register.make_product_key("알수없는verdict", 10000)
         self._make_payload_with_qa(pkey, {"image": "PASS", "copy": "PASS"})
         with pytest.raises(ValueError, match="알 수 없는 verdict"):
-            register.submit_reviews(pkey, [
-                {"agent": "image", "verdict": "GREAT"},
-            ])
+            register.submit_reviews(
+                pkey,
+                [
+                    {"agent": "image", "verdict": "GREAT"},
+                ],
+            )
 
     def test_missing_verdict_rejected(self, isolated_prepared_dir):
         """④ verdict 누락 → ValueError."""
         pkey = register.make_product_key("verdict누락", 10000)
         self._make_payload_with_qa(pkey, {"image": "PASS", "copy": "PASS"})
         with pytest.raises(ValueError, match="verdict 가 누락"):
-            register.submit_reviews(pkey, [
-                {"agent": "image"},
-            ])
+            register.submit_reviews(
+                pkey,
+                [
+                    {"agent": "image"},
+                ],
+            )
 
     def test_no_reply_stays_pending(self, isolated_prepared_dir):
         """⑤ 회신하지 않으면 PENDING 유지 → 등록 차단."""
@@ -354,9 +373,12 @@ class TestBypassBlocking:
         pkey = register.make_product_key(name, price)
         # PENDING 상태 payload 저장.
         agent_rows = [
-            qa_agents._qa_agent_result("image", "PENDING",
+            qa_agents._qa_agent_result(
+                "image",
+                "PENDING",
                 [{"rule": "대기", "severity": "PENDING", "detail": "육안 확인 필요"}],
-                "PENDING"),
+                "PENDING",
+            ),
             qa_agents._qa_agent_result("copy", "PASS", [], "PASS"),
         ]
         qa = qa_agents.aggregate_qa_results(agent_rows)
@@ -366,34 +388,48 @@ class TestBypassBlocking:
             "images": {"listing_urls": ["http://x.png"], "detail_urls": []},
             "detail_html": "<html></html>",
             "qa": qa,
-            "needs_llm": [], "needs_user": [],
+            "needs_llm": [],
+            "needs_user": [],
         }
         register.write_prepared_payload(payload)
 
         # naver 호출 추적.
         naver_calls = []
-        monkeypatch.setattr(naver_client, "register_product",
-                            lambda payload: naver_calls.append(payload) or (200, {}))
+        monkeypatch.setattr(
+            naver_client,
+            "register_product",
+            lambda payload: naver_calls.append(payload) or (200, {}),
+        )
 
         # COMMERCE_DRY_RUN 이 아닌 상태에서 register_product 직접 호출.
         monkeypatch.delenv("COMMERCE_DRY_RUN", raising=False)
         # 결정론 compliance 게이트는 이 테스트의 대상이 아니므로 통과시킨다.
         # (prepared_qa_gate 차단을 관찰하기 위함.)
-        monkeypatch.setattr(mcp_server, "_run_compliance_gate",
-                            lambda *a, **kw: {
-                                "blocked": False, "violations": [],
-                                "needs_user": [], "pending_reviews": [],
-                            })
+        monkeypatch.setattr(
+            mcp_server,
+            "_run_compliance_gate",
+            lambda *a, **kw: {
+                "blocked": False,
+                "violations": [],
+                "needs_user": [],
+                "pending_reviews": [],
+            },
+        )
         # _notice_config / _kc_config 를 mock 하여 config 파일 의존을 제거한다.
         # CI 환경(config.example.json)에서는 origin_area_code 가 플레이스홀더라
         # build_payload 단계에서 ValueError 가 발생하기 때문이다. 이 테스트의
         # 대상은 prepared_qa_gate 우회 차단이지 원산지 검사가 아니다.
-        monkeypatch.setattr(naver_client, "_notice_config",
-                            lambda: {"origin_area_code": "04", "origin_content": "중국",
-                                     "as_tel": "070-1234-5678",
-                                     "manufacturer": "테스트제조사"})
-        monkeypatch.setattr(naver_client, "_kc_config",
-                            lambda: ({}, ""))
+        monkeypatch.setattr(
+            naver_client,
+            "_notice_config",
+            lambda: {
+                "origin_area_code": "04",
+                "origin_content": "중국",
+                "as_tel": "070-1234-5678",
+                "manufacturer": "테스트제조사",
+            },
+        )
+        monkeypatch.setattr(naver_client, "_kc_config", lambda: ({}, ""))
         result = mcp_server.register_product(
             name=name,
             price=price,
@@ -403,13 +439,11 @@ class TestBypassBlocking:
         )
         assert result["ok"] is False
         # 네이버 API 가 호출되지 않아야 한다.
-        assert len(naver_calls) == 0, (
-            f"네이버 API 가 호출됨(우회 허용): {len(naver_calls)}회"
-        )
+        assert len(naver_calls) == 0, f"네이버 API 가 호출됨(우회 허용): {len(naver_calls)}회"
         # prepared_qa_gate 로 차단되었는가.
-        assert result.get("blocked_by") == "prepared_qa_gate", (
-            f"prepared_qa_gate 가 아닌 다른 원인으로 차단됨: {result.get('blocked_by')}"
-        )
+        assert (
+            result.get("blocked_by") == "prepared_qa_gate"
+        ), f"prepared_qa_gate 가 아닌 다른 원인으로 차단됨: {result.get('blocked_by')}"
 
     def test_no_prepared_marks_deterministic_only(self, isolated_prepared_dir, monkeypatch):
         """prepared 가 없는 신규 호출은 gate=deterministic_only."""
@@ -418,29 +452,44 @@ class TestBypassBlocking:
         notice_override = {
             "productInfoProvidedNoticeType": "WEAR",
             "etc": {
-                "material": "면 100%", "color": "블랙", "size": "FREE",
-                "caution": "물세탁", "packDateText": "2024-01-01",
+                "material": "면 100%",
+                "color": "블랙",
+                "size": "FREE",
+                "caution": "물세탁",
+                "packDateText": "2024-01-01",
                 "warrantyPolicy": "7일교환",
             },
         }
-        with mock.patch.object(naver_client, "_notice_config",
-                               return_value={
-                                   "origin_area_code": "04", "origin_content": "중국",
-                                   "as_tel": "070-1234-5678",
-                                   "manufacturer": "테스트제조사",
-                               }), mock.patch.object(naver_client, "_kc_config",
-                               return_value=({}, "")):
+        with (
+            mock.patch.object(
+                naver_client,
+                "_notice_config",
+                return_value={
+                    "origin_area_code": "04",
+                    "origin_content": "중국",
+                    "as_tel": "070-1234-5678",
+                    "manufacturer": "테스트제조사",
+                },
+            ),
+            mock.patch.object(naver_client, "_kc_config", return_value=({}, "")),
+        ):
             # _compliance_code_check 가 common.cfg().get(
             # "smartstore_notice_defaults") 를 직접 읽기 때문에,
             # CI(config.example.json)의 플레이스홀더 원산지와 충돌한다.
             # _notice_config mock 값과 일치하도록 common.cfg 도 함께 덮어쓴다.
-            with mock.patch.object(common, "cfg", return_value={
-                "smartstore_notice_defaults": {
-                    "origin_area_code": "04", "origin_content": "중국",
+            with mock.patch.object(
+                common,
+                "cfg",
+                return_value={
+                    "smartstore_notice_defaults": {
+                        "origin_area_code": "04",
+                        "origin_content": "중국",
+                    },
                 },
-            }):
-                with mock.patch.object(naver_client, "register_product",
-                                       return_value=(200, {"originProductNo": "x"})):
+            ):
+                with mock.patch.object(
+                    naver_client, "register_product", return_value=(200, {"originProductNo": "x"})
+                ):
                     result = mcp_server.register_product(
                         name="신규상품결정론만",
                         price=99999,
@@ -460,6 +509,7 @@ class TestSixTools:
 
     def test_six_tools_registered(self):
         import asyncio
+
         tools = mcp_server.mcp.list_tools()
         if hasattr(tools, "__await__"):
             try:
@@ -470,6 +520,7 @@ class TestSixTools:
 
     def test_tool_names(self):
         import asyncio
+
         tools = mcp_server.mcp.list_tools()
         if hasattr(tools, "__await__"):
             try:
@@ -477,8 +528,14 @@ class TestSixTools:
             except RuntimeError:
                 tools = asyncio.get_event_loop().run_until_complete(tools)
         names = {getattr(t, "name", None) for t in tools}
-        expected = {"check_config", "upload_images", "register_product",
-                    "get_product", "prepare_listing", "submit_reviews"}
+        expected = {
+            "check_config",
+            "upload_images",
+            "register_product",
+            "get_product",
+            "prepare_listing",
+            "submit_reviews",
+        }
         assert names == expected, f"도구 이름 불일치: {names}"
 
 
@@ -525,18 +582,22 @@ class TestInjectSealed:
             qa_agents._qa_agent_result("copy", "PASS", [], "PASS"),
         ]
         qa = qa_agents.aggregate_qa_results(agent_rows)
-        register.write_prepared_payload({
-            "product_key": pkey,
-            "version": common.PREPARED_PAYLOAD_VERSION,
-            "images": {"listing_urls": ["http://x.png"], "detail_urls": []},
-            "detail_html": "<html></html>",
-            "qa": qa,
-        })
-        with pytest.raises(ValueError, match="제출 불가 agent"):
-            register.inject_prepared_qa({
+        register.write_prepared_payload(
+            {
                 "product_key": pkey,
-                "reviews": [{"agent": "compliance", "verdict": "PASS"}],
-            })
+                "version": common.PREPARED_PAYLOAD_VERSION,
+                "images": {"listing_urls": ["http://x.png"], "detail_urls": []},
+                "detail_html": "<html></html>",
+                "qa": qa,
+            }
+        )
+        with pytest.raises(ValueError, match="제출 불가 agent"):
+            register.inject_prepared_qa(
+                {
+                    "product_key": pkey,
+                    "reviews": [{"agent": "compliance", "verdict": "PASS"}],
+                }
+            )
 
     def test_inject_rejects_bad_verdict(self, isolated_prepared_dir):
         pkey = register.make_product_key("봉인verdict", 10000)
@@ -545,15 +606,19 @@ class TestInjectSealed:
             qa_agents._qa_agent_result("copy", "PASS", [], "PASS"),
         ]
         qa = qa_agents.aggregate_qa_results(agent_rows)
-        register.write_prepared_payload({
-            "product_key": pkey,
-            "version": common.PREPARED_PAYLOAD_VERSION,
-            "images": {"listing_urls": ["http://x.png"], "detail_urls": []},
-            "detail_html": "<html></html>",
-            "qa": qa,
-        })
-        with pytest.raises(ValueError, match="알 수 없는 verdict"):
-            register.inject_prepared_qa({
+        register.write_prepared_payload(
+            {
                 "product_key": pkey,
-                "reviews": [{"agent": "image", "verdict": "BAD"}],
-            })
+                "version": common.PREPARED_PAYLOAD_VERSION,
+                "images": {"listing_urls": ["http://x.png"], "detail_urls": []},
+                "detail_html": "<html></html>",
+                "qa": qa,
+            }
+        )
+        with pytest.raises(ValueError, match="알 수 없는 verdict"):
+            register.inject_prepared_qa(
+                {
+                    "product_key": pkey,
+                    "reviews": [{"agent": "image", "verdict": "BAD"}],
+                }
+            )

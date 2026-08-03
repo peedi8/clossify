@@ -16,6 +16,7 @@
 인증 토큰, API 호출, 페이로드 빌딩의 모든 복잡도는 ``naver_client`` 에 캡슐화되어
 있으며, 본 모듈은 그것을 MCP 도구로 얇게 감쌀 뿐이다.
 """
+
 from __future__ import annotations
 
 import json
@@ -64,9 +65,14 @@ _SENSITIVE_PATTERNS = [
         re.IGNORECASE,
     ),
     # Windows 파일시스템 경로 전체 (드라이브 문자 포함, 사용자명/비사용자명 무관)
-    re.compile(r"([A-Za-z]:[\\/](?:Users|home|private|secret|config|\.local|Desktop|Documents)[\\/])[^\"'<>\s]+", re.IGNORECASE),
+    re.compile(
+        r"([A-Za-z]:[\\/](?:Users|home|private|secret|config|\.local|Desktop|Documents)[\\/])[^\"'<>\s]+",
+        re.IGNORECASE,
+    ),
     # POSIX 시스템/사용자 디렉토리 경로
-    re.compile(r"(/(?:home|Users|etc|var|root|tmp|opt|srv|private|secret)/[^\"'<>\s]+)", re.IGNORECASE),
+    re.compile(
+        r"(/(?:home|Users|etc|var|root|tmp|opt|srv|private|secret)/[^\"'<>\s]+)", re.IGNORECASE
+    ),
     # traceback 헤더 및 File 프레임 (독립적으로도 매칭)
     re.compile(r"Traceback\s*\(most\s+recent\s+call\s+last\)", re.IGNORECASE),
     re.compile(r'(File\s+"[^"]+",\s*line\s+\d+[^\n]*)', re.IGNORECASE),
@@ -88,12 +94,22 @@ def _sanitize_text(text: str) -> str:
 
 # raw API 응답에서 LLM에게 노출해도 안전한 키만 남기고 나머지는 제거.
 # 네이버 커머스 API 에러 응답에서 디버그에 유용한 최소 필드만 허용.
-_SAFE_BODY_KEYS = frozenset({
-    "code", "message", "status", "detail",
-    "invalidInputs", "name", "type", "reason", "invalidReason",
-    "originProductNo", "channelProductNo",
-    naver_client.SELLER_TAG_AUTOSTRIP_KEY,
-})
+_SAFE_BODY_KEYS = frozenset(
+    {
+        "code",
+        "message",
+        "status",
+        "detail",
+        "invalidInputs",
+        "name",
+        "type",
+        "reason",
+        "invalidReason",
+        "originProductNo",
+        "channelProductNo",
+        naver_client.SELLER_TAG_AUTOSTRIP_KEY,
+    }
+)
 
 
 def _sanitize_body(body: Any, _depth: int = 0) -> Any:
@@ -247,6 +263,7 @@ def _category_path_for(category_id: str) -> str:
     """
     try:
         from . import category_meta
+
         return category_meta.category_path(category_id, raise_if_unknown=False)
     except Exception:
         return ""
@@ -278,10 +295,12 @@ def _build_compliance_context(
 
     category_path = _category_path_for(category_id)
     # 카테고리 경로 기반으로 올바른 고시 타입 추론.
-    inferred_type = qa_agents._infer_notice_type({
-        "category_path": category_path,
-        "category_name": category_path,
-    })
+    inferred_type = qa_agents._infer_notice_type(
+        {
+            "category_path": category_path,
+            "category_name": category_path,
+        }
+    )
     effective_notice = dict(notice)
     # naver_client 가 ETC 로 설정했더라도, 카테고리가 더 구체적인 타입을
     # 요구하면 그것으로 보정한다 (ETC 는 catch-all 기본값일 뿐).
@@ -341,24 +360,24 @@ def _run_compliance_gate(
         effective_payload["originProduct"] = op
     context["notice"] = effective_notice
 
-    check_result = qa_agents._compliance_code_check(
-        name, context, api_payload=effective_payload
-    )
+    check_result = qa_agents._compliance_code_check(name, context, api_payload=effective_payload)
 
     fail_violations = []
-    for row in (check_result.get("violations") or []):
+    for row in check_result.get("violations") or []:
         if isinstance(row, dict) and str(row.get("severity") or "").upper() == qa_agents.FAIL:
-            fail_violations.append({
-                "rule": str(row.get("rule") or "컴플라이언스"),
-                "detail": str(row.get("detail") or ""),
-            })
+            fail_violations.append(
+                {
+                    "rule": str(row.get("rule") or "컴플라이언스"),
+                    "detail": str(row.get("detail") or ""),
+                }
+            )
 
     # needs_user: 결정론 위반 중 "고시 필수필드" 위반에서 누락 필드명을 추출해
     # 사용자 입력 요청으로 변환. 작업지시가 요구하는 구조:
     #   {"field": ..., "label": ..., "why": ...}
     needs_user: list[dict[str, str]] = []
     seen_fields: set[str] = set()
-    for row in (check_result.get("violations") or []):
+    for row in check_result.get("violations") or []:
         if not isinstance(row, dict):
             continue
         if str(row.get("rule") or "") != "고시 필수필드":
@@ -374,11 +393,13 @@ def _run_compliance_gate(
                 if field and field not in seen_fields:
                     seen_fields.add(field)
                     label, why = _notice_field_label(field)
-                    needs_user.append({
-                        "field": field,
-                        "label": label,
-                        "why": why,
-                    })
+                    needs_user.append(
+                        {
+                            "field": field,
+                            "label": label,
+                            "why": why,
+                        }
+                    )
 
     pending_reviews: list[str] = []
     # 카피/이미지 QA 는 위임 왕복(T-201c)이 붙기 전까지 항상 미회신이다.
@@ -478,8 +499,10 @@ def check_config() -> dict[str, Any]:
         origin_area_code = notice_defaults.get("origin_area_code")
         origin_content = notice_defaults.get("origin_content")
         origin_set = (
-            bool(origin_area_code) and not _is_placeholder(origin_area_code)
-            and bool(origin_content) and not _is_placeholder(origin_content)
+            bool(origin_area_code)
+            and not _is_placeholder(origin_area_code)
+            and bool(origin_content)
+            and not _is_placeholder(origin_content)
         )
     result["origin_configured"] = origin_set
     if not origin_set:
@@ -497,9 +520,7 @@ def check_config() -> dict[str, Any]:
     as_tel_set = False
     if isinstance(notice_defaults, dict):
         as_tel_value = notice_defaults.get("as_tel")
-        as_tel_set = (
-            bool(as_tel_value) and not _is_placeholder(as_tel_value)
-        )
+        as_tel_set = bool(as_tel_value) and not _is_placeholder(as_tel_value)
     result["as_tel_configured"] = as_tel_set
     if not as_tel_set:
         result["as_tel_hint"] = (
@@ -557,11 +578,10 @@ def upload_images(paths: list[str]) -> dict[str, Any]:
     # mcp_server._MAX_IMAGE_BYTES 를 max_bytes 오버라이드로 넘겨 기존 테스트가
     # monkeypatch 한 상한을 존중한다.
     from . import images as _images_mod  # 방향: mcp_server -> images (허용)
+
     resolved: list[str] = []
     for raw in paths:
-        v = _images_mod.validate_local_image(
-            raw, max_bytes=_MAX_IMAGE_BYTES
-        )
+        v = _images_mod.validate_local_image(raw, max_bytes=_MAX_IMAGE_BYTES)
         if not v["ok"]:
             reason = "; ".join(v["errors"]) if v["errors"] else "검증 실패"
             return {
@@ -661,7 +681,7 @@ def register_product(
     # 호출자에게 truncation 여부를 명시적으로 알리기 위해 여기서도 자르고 플래그 노출.
     original_name = name
     if len(name) > naver_client.MAX_PRODUCT_NAME_LEN:
-        name = name[:naver_client.MAX_PRODUCT_NAME_LEN]
+        name = name[: naver_client.MAX_PRODUCT_NAME_LEN]
     name_truncated = name != original_name
 
     product = {
@@ -809,8 +829,12 @@ def register_product(
     ok = isinstance(status_code, int) and 200 <= status_code < 300
     origin_product_no = None
     if isinstance(body, dict):
-        origin_product_no = body.get("originProductNo") or body.get("originProduct", {}).get("originProductNo")
-    seller_tags_meta = naver_client.seller_tag_autostrip_meta(body) if isinstance(body, dict) else None
+        origin_product_no = body.get("originProductNo") or body.get("originProduct", {}).get(
+            "originProductNo"
+        )
+    seller_tags_meta = (
+        naver_client.seller_tag_autostrip_meta(body) if isinstance(body, dict) else None
+    )
 
     # 에러 응답의 raw 본문은 화이트리스트 키만 남겨 노출 (T-106 Fix 3).
     exposed_raw = _sanitize_body(body) if not ok else body

@@ -20,6 +20,7 @@
 의존 방향: ``qa_agents``, ``category`` (상위) → ``register`` (본 모듈).
 ``common``, ``naver_client``, ``category_meta`` 는 어디서든 import 가능.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -60,6 +61,7 @@ def _reject_url_inputs(d):
 # 빈 문자열/공백 키는 거부 (디렉터리 충돌·무음 덮어쓰기 방지).
 # ---------------------------------------------------------------------------
 
+
 def _sanitize_product_key(key):
     """product_key 를 파일시스템 안전 문자열로 정규화.
 
@@ -85,9 +87,7 @@ def make_product_key(name, price):
     """
     name_str = str(name or "").strip()
     if not name_str:
-        raise ValueError(
-            "product_key 생성에 필요한 상품명이 비어 있습니다 (빈 키 방지)."
-        )
+        raise ValueError("product_key 생성에 필요한 상품명이 비어 있습니다 (빈 키 방지).")
     price_str = str(price if price is not None else "").strip()
     raw = f"{name_str}+{price_str}"
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
@@ -109,9 +109,7 @@ def resolve_product_key(d):
     if price is None and isinstance(d, dict):
         price = d.get("sell_price") or d.get("price")
     if not name:
-        raise ValueError(
-            "product_key 를 생성할 수 없습니다 — 상품명이 비어 있습니다."
-        )
+        raise ValueError("product_key 를 생성할 수 없습니다 — 상품명이 비어 있습니다.")
     return make_product_key(name, price)
 
 
@@ -122,6 +120,7 @@ def resolve_product_key(d):
 # 동일 구조를 유지하되, ``common.PREPARED_PAYLOAD_VERSION`` 을 읽어 버전 스탬프로
 # 쓴다 (common 은 쓰기 범위 밖 — 수정하지 않음).
 # ---------------------------------------------------------------------------
+
 
 def _prepared_dir():
     """prepared payload 저장 디렉터리(``common.PREPARED_DIR``) 반환."""
@@ -142,9 +141,7 @@ def _prepared_item_dir(product_key):
     try:
         item_dir.relative_to(base_resolved)
     except ValueError as exc:
-        raise ValueError(
-            f"product_key 가 prepared 디렉터리를 벗어납니다: {key}"
-        ) from exc
+        raise ValueError(f"product_key 가 prepared 디렉터리를 벗어납니다: {key}") from exc
     return item_dir
 
 
@@ -231,6 +228,7 @@ def _utc_now_iso():
 # 등록 오케스트레이션.
 # ---------------------------------------------------------------------------
 
+
 def _build_product_dict(d, seo_title, category_id):
     """Naver 등록용 상품 dict 구성 (source L12864-L12898, 개정).
 
@@ -307,11 +305,13 @@ def register_prepared_listing(d):
     if not isinstance(images_block, dict):
         images_block = {}
     listing_urls = [
-        str(u).strip() for u in (images_block.get("listing_urls") or [])
+        str(u).strip()
+        for u in (images_block.get("listing_urls") or [])
         if isinstance(u, str) and u.strip()
     ]
     detail_urls = [
-        str(u).strip() for u in (images_block.get("detail_urls") or [])
+        str(u).strip()
+        for u in (images_block.get("detail_urls") or [])
         if isinstance(u, str) and u.strip()
     ]
 
@@ -334,8 +334,7 @@ def register_prepared_listing(d):
     if not detail_html:
         # detail_html 이 없으면 등록 거부(무음 통과 금지).
         raise ValueError(
-            "prepared payload 에 detail_html 이 없습니다. "
-            f"product_key={product_key}"
+            "prepared payload 에 detail_html 이 없습니다. " f"product_key={product_key}"
         )
 
     from . import naver_client as nc
@@ -344,9 +343,7 @@ def register_prepared_listing(d):
     # naver_client.build_payload 는 image_urls(리스팅) 리스트를 받는다.
     # detail_urls 는 현재 naver_client 가 별도 슬롯을 요구하지 않으므로
     # listing_urls 와 합쳐 전달하되 첫 번째가 대표인 순서는 보존한다.
-    all_urls = list(listing_urls) + [
-        u for u in detail_urls if u not in listing_urls
-    ]
+    all_urls = list(listing_urls) + [u for u in detail_urls if u not in listing_urls]
     api_payload = nc.build_payload(product, detail_html, all_urls, status=status)
 
     # 등록 API 호출.
@@ -515,20 +512,18 @@ def _validate_review_submission(d):
         for agent_name in ("image", "copy"):
             row = d.get(agent_name)
             if isinstance(row, dict) or isinstance(row, str):
-                reviews.append({**row} if isinstance(row, dict) else
-                               {"agent": agent_name, "verdict": row})
+                reviews.append(
+                    {**row} if isinstance(row, dict) else {"agent": agent_name, "verdict": row}
+                )
     if not reviews:
         raise ValueError(
-            "검수 제출(reviews)이 비어 있습니다. image/copy agent 의 verdict 를 "
-            "전달해야 합니다."
+            "검수 제출(reviews)이 비어 있습니다. image/copy agent 의 verdict 를 " "전달해야 합니다."
         )
 
     normalized = []
     for row in reviews:
         if not isinstance(row, dict):
-            raise ValueError(
-                f"검수 항목은 dict 여야 합니다: {row!r}"
-            )
+            raise ValueError(f"검수 항목은 dict 여야 합니다: {row!r}")
         agent_name = str(row.get("agent") or "").strip()
         if not agent_name:
             raise ValueError("검수 항목에 agent 이름이 없습니다.")
@@ -551,12 +546,14 @@ def _validate_review_submission(d):
                 f"알 수 없는 verdict: {raw_verdict!r} (agent={agent_name!r}). "
                 "허용값: PASS/WARN/FAIL/PENDING."
             )
-        normalized.append({
-            "agent": agent_name,
-            "verdict": verdict,
-            "violations": list(row.get("violations") or []),
-            "summary": str(row.get("summary") or ""),
-        })
+        normalized.append(
+            {
+                "agent": agent_name,
+                "verdict": verdict,
+                "violations": list(row.get("violations") or []),
+                "summary": str(row.get("summary") or ""),
+            }
+        )
     return product_key, payload, normalized
 
 
@@ -614,10 +611,12 @@ def submit_reviews(product_key, reviews):
                     merged_violations.append(v)
             # 클라이언트 summary 보존(있으면), 서버 summary 도 보존.
             summaries = [
-                s for s in [
+                s
+                for s in [
                     str(server_row.get("summary") or ""),
                     client_row["summary"],
-                ] if s
+                ]
+                if s
             ]
             merged = qa_agents._normalize_agent_result(
                 {
@@ -636,7 +635,7 @@ def submit_reviews(product_key, reviews):
     aggregated = qa_agents.aggregate_qa_results(agent_rows)
     # 서버가 산출한 전체 violations 이 병합 후 누락되지 않도록 다시 합친다.
     preserved_violations = list(server_violations)
-    for v in (aggregated.get("violations") or []):
+    for v in aggregated.get("violations") or []:
         if isinstance(v, dict) and v not in preserved_violations:
             preserved_violations.append(v)
     aggregated["violations"] = preserved_violations
@@ -656,6 +655,7 @@ def submit_reviews(product_key, reviews):
 # 검사 결과를 뒤집는 경로를 원천 차단한다. 디스포지션: **봉인**(shared validation
 # 경로로 위임).
 # ---------------------------------------------------------------------------
+
 
 def inject_prepared_qa(d):
     """외부 검수 결과를 prepared payload 에 반영 (T-201d 봉인판).
@@ -693,6 +693,7 @@ def inject_prepared_qa(d):
 # 상세 시트 병합·밴드 선택, 옵션 이미지 자동 생성, 병렬 실행기, 단계별
 # 타이밍/코스트 로깅, 자동 재렌더 보정.
 # ---------------------------------------------------------------------------
+
 
 def prepare_listing(d, *, attach_fn=None):
     """상품 정보 + 이미지 소스 로 prepared payload 를 만든다 (T-201d).
@@ -753,8 +754,7 @@ def prepare_listing(d, *, attach_fn=None):
     rejected = attach_result.get("rejected") or []
     if rejected:
         details = "; ".join(
-            f"[{r.get('index')}] {r.get('source')}: {r.get('reason')}"
-            for r in rejected[:5]
+            f"[{r.get('index')}] {r.get('source')}: {r.get('reason')}" for r in rejected[:5]
         )
         raise ValueError(
             "prepare_listing: 이미지 검증에서 거부된 항목이 있어 진행하지 않습니다. "
@@ -763,8 +763,7 @@ def prepare_listing(d, *, attach_fn=None):
     listing_urls = list(attach_result.get("urls") or [])
     if not listing_urls:
         raise ValueError(
-            "prepare_listing: 정규화된 이미지 URL 이 0장입니다. "
-            "등록을 거부한다(무음 통과 금지)."
+            "prepare_listing: 정규화된 이미지 URL 이 0장입니다. " "등록을 거부한다(무음 통과 금지)."
         )
     # 상세 이미지 URL 도 같은 소스에서 왔다고 간주(상세 전용 소스는 OUT 범위).
     detail_urls = list(listing_urls)
@@ -781,12 +780,8 @@ def prepare_listing(d, *, attach_fn=None):
         "props": d.get("props") or d.get("attributes") or {},
         "notice": d.get("notice") or {},
     }
-    detail_html = detail_render.render_detail_html(
-        product_for_render, listing_urls, options
-    )
-    scene = detail_render.build_scene(
-        product_for_render, listing_urls, options
-    )
+    detail_html = detail_render.render_detail_html(product_for_render, listing_urls, options)
+    scene = detail_render.build_scene(product_for_render, listing_urls, options)
 
     # --- 3. 카테고리/고시 컨텍스트 구성(최소) ---
     category_id = str(d.get("categoryId") or d.get("category_id") or "").strip()
@@ -823,9 +818,7 @@ def prepare_listing(d, *, attach_fn=None):
         flags=re.DOTALL | re.IGNORECASE,
     )
     copy_code = qa_agents._copy_code_check(name, _copy_check_text)
-    local_copy_verdict = qa_agents._clamp_verdict(
-        copy_code.get("verdict"), default=qa_agents.PASS
-    )
+    local_copy_verdict = qa_agents._clamp_verdict(copy_code.get("verdict"), default=qa_agents.PASS)
     if local_copy_verdict == qa_agents.FAIL:
         copy_result = qa_agents._normalize_agent_result(copy_code, "copy")
     else:
@@ -835,9 +828,7 @@ def prepare_listing(d, *, attach_fn=None):
                 "agent": "copy",
                 "verdict": qa_agents.PENDING,
                 "violations": copy_code.get("violations") or [],
-                "summary": (
-                    f"카피 QA PENDING — LLM 판단 대기(로컬 코드검사={local_copy_verdict})"
-                ),
+                "summary": (f"카피 QA PENDING — LLM 판단 대기(로컬 코드검사={local_copy_verdict})"),
             },
             "copy",
         )
@@ -864,38 +855,42 @@ def prepare_listing(d, *, attach_fn=None):
             ],
             "컴플라이언스 PENDING",
         )
-    qa_result = qa_agents.aggregate_qa_results(
-        [image_result, copy_result, compliance_result]
-    )
+    qa_result = qa_agents.aggregate_qa_results([image_result, copy_result, compliance_result])
 
     # --- 5. needs_llm / needs_user 구성 ---
     needs_llm = []
     needs_user = []
     # 카피 QA 가 PENDING 이면 LLM 위임 필요.
     if qa_agents._clamp_verdict(copy_result.get("verdict")) == qa_agents.PENDING:
-        needs_llm.append({
-            "agent": "copy",
-            "why": "카피 품질 LLM 판단이 필요합니다. submit_reviews 로 회신.",
-            "hint": detail_render.needs_llm_for_copy(product_for_render),
-        })
+        needs_llm.append(
+            {
+                "agent": "copy",
+                "why": "카피 품질 LLM 판단이 필요합니다. submit_reviews 로 회신.",
+                "hint": detail_render.needs_llm_for_copy(product_for_render),
+            }
+        )
     # 이미지 QA 가 PENDING 이면 LLM 또는 육안 확인 필요.
     if qa_agents._clamp_verdict(image_result.get("verdict")) == qa_agents.PENDING:
-        needs_llm.append({
-            "agent": "image",
-            "why": "이미지 적합성 LLM/육안 확인이 필요합니다. submit_reviews 로 회신.",
-        })
+        needs_llm.append(
+            {
+                "agent": "image",
+                "why": "이미지 적합성 LLM/육안 확인이 필요합니다. submit_reviews 로 회신.",
+            }
+        )
     # 고시 필수 필드 누락 등은 사용자 입력 필요(compliance FAIL/WARN 인 경우).
     comp_verdict = qa_agents._clamp_verdict(
         compliance_result.get("verdict"), default=qa_agents.PASS
     )
     if comp_verdict in (qa_agents.WARN, qa_agents.FAIL):
-        for v in (compliance_result.get("violations") or []):
+        for v in compliance_result.get("violations") or []:
             if isinstance(v, dict):
-                needs_user.append({
-                    "field": str(v.get("rule") or "고시"),
-                    "label": str(v.get("rule") or "고시 항목"),
-                    "why": str(v.get("detail") or "사용자 입력이 필요합니다."),
-                })
+                needs_user.append(
+                    {
+                        "field": str(v.get("rule") or "고시"),
+                        "label": str(v.get("rule") or "고시 항목"),
+                        "why": str(v.get("detail") or "사용자 입력이 필요합니다."),
+                    }
+                )
 
     # --- 6. prepared payload 저장 ---
     payload = {

@@ -10,6 +10,7 @@ rules table) has been removed entirely — this product only ingests
 Korean user-supplied text and never collects from an external market.
 Only the Naver SearchAds keyword-volume parsing helpers remain.
 """
+
 from __future__ import annotations
 
 import re
@@ -22,6 +23,7 @@ from .text_props import _strip_banned_claims
 # signature helper is fully ported, the credential reader returns an
 # empty dict when config is missing so callers can degrade gracefully.
 # ---------------------------------------------------------------------------
+
 
 def _searchad_credentials():
     """Read Naver SearchAd credentials from the config (source L649).
@@ -54,15 +56,14 @@ def _searchad_signature(secret_key, timestamp, method, uri):
     import hmac
 
     message = f"{timestamp}.{method}.{uri}".encode()
-    digest = hmac.new(
-        str(secret_key).encode("utf-8"), message, hashlib.sha256
-    ).digest()
+    digest = hmac.new(str(secret_key).encode("utf-8"), message, hashlib.sha256).digest()
     return base64.b64encode(digest).decode("ascii")
 
 
 # ---------------------------------------------------------------------------
 # Keyword parsing helpers (source L627-L718). Pure-Python.
 # ---------------------------------------------------------------------------
+
 
 def _clean_search_keyword(text, *, max_len=40):
     """Normalise free-form text into a search keyword.
@@ -114,10 +115,7 @@ def _parse_keywordstool_response(data):
         if not isinstance(row, dict):
             continue
         rel = _clean_search_keyword(
-            row.get("relKeyword")
-            or row.get("keyword")
-            or row.get("hintKeyword")
-            or ""
+            row.get("relKeyword") or row.get("keyword") or row.get("hintKeyword") or ""
         )
         if not rel:
             continue

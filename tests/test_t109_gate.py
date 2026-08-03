@@ -11,6 +11,7 @@
 
 모든 테스트는 실제 네이버 API 를 호출하지 않는다 — monkeypatch 로 네트워크 차단.
 """
+
 from __future__ import annotations
 
 import json
@@ -52,9 +53,11 @@ def _mock_naver_register_success(*args, **kwargs):
 
 def _mock_naver_register_called_recorder(call_log: list):
     """naver_client.register_product 호출을 기록하는 mock factory."""
+
     def _recorder(*args, **kwargs):
         call_log.append({"args": args, "kwargs": kwargs})
         return (200, {"originProductNo": "test-origin-no-123"})
+
     return _recorder
 
 
@@ -68,13 +71,15 @@ class TestBlockClothingMissingFields:
         """register_product 가 네이버를 호출하지 않고 거부하는가."""
         naver_calls = []
         # COMMERCE_DRY_RUN 이 설정되어 있지 않아야 게이트가 동작한다.
-        with mock.patch.object(naver_client, "_notice_config",
-                               return_value=_NOTICE_CFG_WITH_ORIGIN):
-            with mock.patch.object(naver_client, "_kc_config",
-                                   return_value=({}, "")):
-                with mock.patch.object(naver_client, "register_product",
-                                       side_effect=_mock_naver_register_called_recorder(
-                                           naver_calls)):
+        with mock.patch.object(
+            naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
+        ):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                with mock.patch.object(
+                    naver_client,
+                    "register_product",
+                    side_effect=_mock_naver_register_called_recorder(naver_calls),
+                ):
                     result = mcp_server.register_product(
                         name="테스트니트",
                         price=30000,
@@ -87,18 +92,15 @@ class TestBlockClothingMissingFields:
         assert result["ok"] is False
         assert result.get("blocked_by") == "compliance"
         # 네이버 API 가 호출되지 않아야 한다.
-        assert len(naver_calls) == 0, (
-            f"네트워크 호출이 발생했습니다: {naver_calls}"
-        )
+        assert len(naver_calls) == 0, f"네트워크 호출이 발생했습니다: {naver_calls}"
 
     def test_blocked_response_has_violations(self):
         """거부 응답에 violations 배열이 있는가."""
-        with mock.patch.object(naver_client, "_notice_config",
-                               return_value=_NOTICE_CFG_WITH_ORIGIN):
-            with mock.patch.object(naver_client, "_kc_config",
-                                   return_value=({}, "")):
-                with mock.patch.object(naver_client, "register_product",
-                                       return_value=(200, {})):
+        with mock.patch.object(
+            naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
+        ):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                with mock.patch.object(naver_client, "register_product", return_value=(200, {})):
                     result = mcp_server.register_product(
                         name="테스트니트",
                         price=30000,
@@ -117,12 +119,11 @@ class TestBlockClothingMissingFields:
 
     def test_blocked_response_has_needs_user_with_material_and_size(self):
         """needs_user 에 material 과 size 가 포함되어 있는가."""
-        with mock.patch.object(naver_client, "_notice_config",
-                               return_value=_NOTICE_CFG_WITH_ORIGIN):
-            with mock.patch.object(naver_client, "_kc_config",
-                                   return_value=({}, "")):
-                with mock.patch.object(naver_client, "register_product",
-                                       return_value=(200, {})):
+        with mock.patch.object(
+            naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
+        ):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                with mock.patch.object(naver_client, "register_product", return_value=(200, {})):
                     result = mcp_server.register_product(
                         name="테스트니트",
                         price=30000,
@@ -135,12 +136,8 @@ class TestBlockClothingMissingFields:
         assert isinstance(needs_user, list)
         assert len(needs_user) > 0
         field_names = [n["field"] for n in needs_user]
-        assert "material" in field_names, (
-            f"material 이 needs_user 에 없음: {field_names}"
-        )
-        assert "size" in field_names, (
-            f"size 가 needs_user 에 없음: {field_names}"
-        )
+        assert "material" in field_names, f"material 이 needs_user 에 없음: {field_names}"
+        assert "size" in field_names, f"size 가 needs_user 에 없음: {field_names}"
         # 각 needs_user 항목은 field, label, why 를 가져야 한다.
         for item in needs_user:
             assert "field" in item
@@ -149,12 +146,11 @@ class TestBlockClothingMissingFields:
 
     def test_blocked_response_has_message(self):
         """거부 응답에 사용자가 읽을 수 있는 message 가 있는가."""
-        with mock.patch.object(naver_client, "_notice_config",
-                               return_value=_NOTICE_CFG_WITH_ORIGIN):
-            with mock.patch.object(naver_client, "_kc_config",
-                                   return_value=({}, "")):
-                with mock.patch.object(naver_client, "register_product",
-                                       return_value=(200, {})):
+        with mock.patch.object(
+            naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
+        ):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                with mock.patch.object(naver_client, "register_product", return_value=(200, {})):
                     result = mcp_server.register_product(
                         name="테스트니트",
                         price=30000,
@@ -179,13 +175,15 @@ class TestBlockKcMissing:
     def test_blocks_kc_category_without_kc_info(self):
         """고데기 카테고리(50000151) + KC 정보 없음 → 거부."""
         naver_calls = []
-        with mock.patch.object(naver_client, "_notice_config",
-                               return_value=_NOTICE_CFG_WITH_ORIGIN):
-            with mock.patch.object(naver_client, "_kc_config",
-                                   return_value=({}, "")):
-                with mock.patch.object(naver_client, "register_product",
-                                       side_effect=_mock_naver_register_called_recorder(
-                                           naver_calls)):
+        with mock.patch.object(
+            naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
+        ):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                with mock.patch.object(
+                    naver_client,
+                    "register_product",
+                    side_effect=_mock_naver_register_called_recorder(naver_calls),
+                ):
                     result = mcp_server.register_product(
                         name="테스트고데기",
                         price=50000,
@@ -200,12 +198,11 @@ class TestBlockKcMissing:
 
     def test_kc_violation_in_result(self):
         """거부 응답의 violations 에 KC 관련 위반이 있는가."""
-        with mock.patch.object(naver_client, "_notice_config",
-                               return_value=_NOTICE_CFG_WITH_ORIGIN):
-            with mock.patch.object(naver_client, "_kc_config",
-                                   return_value=({}, "")):
-                with mock.patch.object(naver_client, "register_product",
-                                       return_value=(200, {})):
+        with mock.patch.object(
+            naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
+        ):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                with mock.patch.object(naver_client, "register_product", return_value=(200, {})):
                     result = mcp_server.register_product(
                         name="테스트고데기",
                         price=50000,
@@ -216,12 +213,11 @@ class TestBlockKcMissing:
 
         violations = result.get("violations", [])
         kc_violations = [
-            v for v in violations if "KC" in str(v.get("rule") or "")
-            or "인증" in str(v.get("rule") or "")
+            v
+            for v in violations
+            if "KC" in str(v.get("rule") or "") or "인증" in str(v.get("rule") or "")
         ]
-        assert len(kc_violations) > 0, (
-            f"KC 위반이 없음: {violations}"
-        )
+        assert len(kc_violations) > 0, f"KC 위반이 없음: {violations}"
 
 
 # --------------------------------------------------------------------------- #
@@ -247,22 +243,29 @@ class TestPassClothingComplete:
                 "warrantyPolicy": "구매 후 7일 이내 교환 가능",
             },
         }
-        with mock.patch.object(naver_client, "_notice_config",
-                               return_value=_NOTICE_CFG_WITH_ORIGIN):
-            with mock.patch.object(naver_client, "_kc_config",
-                                   return_value=({}, "")):
+        with mock.patch.object(
+            naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
+        ):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
                 # _compliance_code_check 가 common.cfg().get(
                 # "smartstore_notice_defaults") 를 직접 읽기 때문에,
                 # CI(config.example.json)의 플레이스홀더 원산지와 충돌한다.
                 # _notice_config mock 값과 일치하도록 common.cfg 도 함께 덮어쓴다.
-                with mock.patch.object(common, "cfg", return_value={
-                    "smartstore_notice_defaults": {
-                        "origin_area_code": "04", "origin_content": "중국",
+                with mock.patch.object(
+                    common,
+                    "cfg",
+                    return_value={
+                        "smartstore_notice_defaults": {
+                            "origin_area_code": "04",
+                            "origin_content": "중국",
+                        },
                     },
-                }):
-                    with mock.patch.object(naver_client, "register_product",
-                                           side_effect=_mock_naver_register_called_recorder(
-                                               naver_calls)):
+                ):
+                    with mock.patch.object(
+                        naver_client,
+                        "register_product",
+                        side_effect=_mock_naver_register_called_recorder(naver_calls),
+                    ):
                         result = mcp_server.register_product(
                             name="테스트니트",
                             price=30000,
@@ -274,9 +277,7 @@ class TestPassClothingComplete:
 
         assert result["ok"] is True, f"등록 실패: {result}"
         # 네이버 API 가 실제로 호출되었는지 확인.
-        assert len(naver_calls) == 1, (
-            f"네이버 API 호출 횟수가 예상과 다름: {len(naver_calls)}"
-        )
+        assert len(naver_calls) == 1, f"네이버 API 호출 횟수가 예상과 다름: {len(naver_calls)}"
 
     def test_pass_response_has_pending_reviews(self):
         """통과 응답에 pending_reviews 가 표기되어 있는가."""
@@ -291,21 +292,27 @@ class TestPassClothingComplete:
                 "warrantyPolicy": "구매 후 7일 이내 교환 가능",
             },
         }
-        with mock.patch.object(naver_client, "_notice_config",
-                               return_value=_NOTICE_CFG_WITH_ORIGIN):
-            with mock.patch.object(naver_client, "_kc_config",
-                                   return_value=({}, "")):
+        with mock.patch.object(
+            naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
+        ):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
                 # _compliance_code_check 가 common.cfg().get(
                 # "smartstore_notice_defaults") 를 직접 읽기 때문에,
                 # CI(config.example.json)의 플레이스홀더 원산지와 충돌한다.
                 # _notice_config mock 값과 일치하도록 common.cfg 도 함께 덮어쓴다.
-                with mock.patch.object(common, "cfg", return_value={
-                    "smartstore_notice_defaults": {
-                        "origin_area_code": "04", "origin_content": "중국",
+                with mock.patch.object(
+                    common,
+                    "cfg",
+                    return_value={
+                        "smartstore_notice_defaults": {
+                            "origin_area_code": "04",
+                            "origin_content": "중국",
+                        },
                     },
-                }):
-                    with mock.patch.object(naver_client, "register_product",
-                                           side_effect=_mock_naver_register_success):
+                ):
+                    with mock.patch.object(
+                        naver_client, "register_product", side_effect=_mock_naver_register_success
+                    ):
                         result = mcp_server.register_product(
                             name="테스트니트",
                             price=30000,
@@ -336,12 +343,13 @@ class TestPassClothingComplete:
                 "warrantyPolicy": "구매 후 7일 이내 교환 가능",
             },
         }
-        with mock.patch.object(naver_client, "_notice_config",
-                               return_value=_NOTICE_CFG_WITH_ORIGIN):
-            with mock.patch.object(naver_client, "_kc_config",
-                                   return_value=({}, "")):
-                with mock.patch.object(naver_client, "register_product",
-                                       side_effect=_mock_naver_register_success):
+        with mock.patch.object(
+            naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
+        ):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                with mock.patch.object(
+                    naver_client, "register_product", side_effect=_mock_naver_register_success
+                ):
                     result = mcp_server.register_product(
                         name="테스트니트",
                         price=30000,
@@ -381,21 +389,27 @@ class TestLlmPendingNotBlocked:
                 "warrantyPolicy": "구매 후 7일 이내 교환 가능",
             },
         }
-        with mock.patch.object(naver_client, "_notice_config",
-                               return_value=_NOTICE_CFG_WITH_ORIGIN):
-            with mock.patch.object(naver_client, "_kc_config",
-                                   return_value=({}, "")):
+        with mock.patch.object(
+            naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
+        ):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
                 # _compliance_code_check 가 common.cfg().get(
                 # "smartstore_notice_defaults") 를 직접 읽기 때문에,
                 # CI(config.example.json)의 플레이스홀더 원산지와 충돌한다.
                 # _notice_config mock 값과 일치하도록 common.cfg 도 함께 덮어쓴다.
-                with mock.patch.object(common, "cfg", return_value={
-                    "smartstore_notice_defaults": {
-                        "origin_area_code": "04", "origin_content": "중국",
+                with mock.patch.object(
+                    common,
+                    "cfg",
+                    return_value={
+                        "smartstore_notice_defaults": {
+                            "origin_area_code": "04",
+                            "origin_content": "중국",
+                        },
                     },
-                }):
-                    with mock.patch.object(naver_client, "register_product",
-                                           side_effect=_mock_naver_register_success):
+                ):
+                    with mock.patch.object(
+                        naver_client, "register_product", side_effect=_mock_naver_register_success
+                    ):
                         result = mcp_server.register_product(
                             name="테스트니트",
                             price=30000,
@@ -408,21 +422,20 @@ class TestLlmPendingNotBlocked:
         # LLM 미회신만 있는 경우 차단되지 않는다.
         assert result["ok"] is True
         pending = result.get("pending_reviews", [])
-        assert len(pending) >= 2, (
-            f"pending_reviews 에 copy_qa/image_qa 가 모두 있어야 함: {pending}"
-        )
+        assert (
+            len(pending) >= 2
+        ), f"pending_reviews 에 copy_qa/image_qa 가 모두 있어야 함: {pending}"
 
     def test_blocked_response_has_empty_pending_reviews(self):
         """결정론 FAIL 로 차단된 경우 pending_reviews 가 빈 리스트인가.
 
         차단된 경우 LLM 판단 대기 항목이 무의미하므로 빈 리스트를 반환한다.
         """
-        with mock.patch.object(naver_client, "_notice_config",
-                               return_value=_NOTICE_CFG_WITH_ORIGIN):
-            with mock.patch.object(naver_client, "_kc_config",
-                                   return_value=({}, "")):
-                with mock.patch.object(naver_client, "register_product",
-                                       return_value=(200, {})):
+        with mock.patch.object(
+            naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
+        ):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                with mock.patch.object(naver_client, "register_product", return_value=(200, {})):
                     result = mcp_server.register_product(
                         name="테스트니트",
                         price=30000,
@@ -520,9 +533,7 @@ class TestCheckConfigOrigin:
         result = mcp_server.check_config()
         # 결과 전체를 직렬화해도 원산지 값이 나오면 안 된다.
         serialized = json.dumps(result, ensure_ascii=False)
-        assert secret_origin not in serialized, (
-            "원산지 값이 check_config 응답에 노출됨"
-        )
+        assert secret_origin not in serialized, "원산지 값이 check_config 응답에 노출됨"
 
     def test_origin_configured_false_with_placeholder(self, tmp_path, monkeypatch):
         """원산지가 플레이스홀더면 origin_configured=False."""
@@ -553,19 +564,19 @@ class TestToolRegistrationPreserved:
 
     def test_four_tools_registered(self):
         import asyncio
+
         tools = mcp_server.mcp.list_tools()
         if hasattr(tools, "__await__"):
             try:
                 tools = asyncio.run(tools)
             except RuntimeError:
                 tools = asyncio.get_event_loop().run_until_complete(tools)
-        assert len(tools) == 6, (
-            f"도구가 6개여야 함: {len(tools)}"
-        )
+        assert len(tools) == 6, f"도구가 6개여야 함: {len(tools)}"
 
     def test_tool_names_unchanged(self):
         """6개 도구 이름이 변경되지 않았는가."""
         import asyncio
+
         tools = mcp_server.mcp.list_tools()
         if hasattr(tools, "__await__"):
             try:
@@ -573,21 +584,37 @@ class TestToolRegistrationPreserved:
             except RuntimeError:
                 tools = asyncio.get_event_loop().run_until_complete(tools)
         names = {getattr(t, "name", None) for t in tools}
-        expected = {"check_config", "upload_images", "register_product",
-                    "get_product", "prepare_listing", "submit_reviews"}
+        expected = {
+            "check_config",
+            "upload_images",
+            "register_product",
+            "get_product",
+            "prepare_listing",
+            "submit_reviews",
+        }
         assert names == expected, f"도구 이름 불일치: {names}"
 
     def test_register_product_signature_unchanged(self):
         """register_product 의 파라미터 이름/타입이 유지되는가."""
         import inspect
+
         sig = inspect.signature(mcp_server.register_product)
         param_names = list(sig.parameters.keys())
-        expected = ["name", "price", "image_urls", "category_id",
-                    "detail_html", "options", "tags", "status", "stock",
-                    "delivery_fee", "courier", "notice"]
-        assert param_names == expected, (
-            f"시그니처 변경 감지: {param_names}"
-        )
+        expected = [
+            "name",
+            "price",
+            "image_urls",
+            "category_id",
+            "detail_html",
+            "options",
+            "tags",
+            "status",
+            "stock",
+            "delivery_fee",
+            "courier",
+            "notice",
+        ]
+        assert param_names == expected, f"시그니처 변경 감지: {param_names}"
 
 
 # --------------------------------------------------------------------------- #
@@ -599,17 +626,20 @@ class TestFailClosed:
     def test_compliance_exception_blocks_registration(self):
         """_run_compliance_gate 가 예외를 throw 하면 등록이 차단되는가."""
         naver_calls = []
-        with mock.patch.object(naver_client, "_notice_config",
-                               return_value=_NOTICE_CFG_WITH_ORIGIN):
-            with mock.patch.object(naver_client, "_kc_config",
-                                   return_value=({}, "")):
+        with mock.patch.object(
+            naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
+        ):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
                 with mock.patch.object(
-                    mcp_server, "_run_compliance_gate",
+                    mcp_server,
+                    "_run_compliance_gate",
                     side_effect=RuntimeError("검사 내부 오류"),
                 ):
-                    with mock.patch.object(naver_client, "register_product",
-                                           side_effect=_mock_naver_register_called_recorder(
-                                               naver_calls)):
+                    with mock.patch.object(
+                        naver_client,
+                        "register_product",
+                        side_effect=_mock_naver_register_called_recorder(naver_calls),
+                    ):
                         result = mcp_server.register_product(
                             name="테스트니트",
                             price=30000,

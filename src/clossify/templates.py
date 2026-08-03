@@ -3,6 +3,7 @@
 Ported from sourcing.py (T-201a part 1/2). Depends on :mod:`text_props`
 (for ``DETAIL_RENDER_WIDTH`` and ``_hesc``).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -48,9 +49,7 @@ def _brand_asset_path(key: str) -> str:
     """
     raw = str(_brand_cfg().get(key) or "").strip()
     if not raw:
-        raise ValueError(
-            f"brand.{key} is not configured (T-201a: brand asset path)"
-        )
+        raise ValueError(f"brand.{key} is not configured (T-201a: brand asset path)")
     return raw
 
 
@@ -195,9 +194,7 @@ def BRAND_HEADER_HTML() -> str:
         path = Path(raw)
         if path.is_file():
             return path.read_text(encoding="utf-8")
-    raise ValueError(
-        "brand.header_html is not configured (T-201a: BRAND_HEADER_HTML L3459)"
-    )
+    raise ValueError("brand.header_html is not configured (T-201a: BRAND_HEADER_HTML L3459)")
 
 
 # ---------------------------------------------------------------------------

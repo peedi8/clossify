@@ -5,6 +5,7 @@ T-106 의 3개 핵심 강화(fail-closed stock, build_payload name cut,
 sanitization 강화)에 대한 단위 테스트를 제공한다.
 외부 API 호출, 네트워크, 실제 config 파일 의존성을 최소화하도록 설계되었다.
 """
+
 from __future__ import annotations
 
 import json
@@ -93,8 +94,10 @@ class TestFix5NameTruncation:
         # 읽으면 fail-closed 로 거부된다. 이 테스트의 대상은 상품명 절삭
         # 여부이지 원산지 검사가 아니다.
         _notice = {
-            "origin_area_code": "04", "origin_content": "중국",
-            "as_tel": "070-1234-5678", "manufacturer": "테스트제조사",
+            "origin_area_code": "04",
+            "origin_content": "중국",
+            "as_tel": "070-1234-5678",
+            "manufacturer": "테스트제조사",
         }
         with mock.patch.object(naver_client, "_notice_config", return_value=_notice):
             with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
@@ -111,8 +114,10 @@ class TestFix5NameTruncation:
     def test_short_name_not_truncated(self, monkeypatch):
         monkeypatch.setenv("COMMERCE_DRY_RUN", "1")
         _notice = {
-            "origin_area_code": "04", "origin_content": "중국",
-            "as_tel": "070-1234-5678", "manufacturer": "테스트제조사",
+            "origin_area_code": "04",
+            "origin_content": "중국",
+            "as_tel": "070-1234-5678",
+            "manufacturer": "테스트제조사",
         }
         with mock.patch.object(naver_client, "_notice_config", return_value=_notice):
             with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
@@ -139,18 +144,14 @@ class TestFix6OriginAreaCode:
     def test_valid_code_accepted(self):
         # T-107b: _resolve_origin_area_code 반환형이 문자열로 바뀌었다(코드만 반환).
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
-            code = naver_client._resolve_origin_area_code(
-                {"origin_code": "04"}, {}
-            )
+            code = naver_client._resolve_origin_area_code({"origin_code": "04"}, {})
         assert code == "04"
 
     def test_invalid_code_raises(self):
         # T-107b: 화이트리스트 밖 코드는 "04" 폴백 없이 ValueError(fail-closed).
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
             with pytest.raises(ValueError):
-                naver_client._resolve_origin_area_code(
-                    {"origin_code": "ZZ"}, {}
-                )
+                naver_client._resolve_origin_area_code({"origin_code": "ZZ"}, {})
 
     def test_empty_code_raises(self):
         # T-107b: 빈 코드도 조용한 기본값 없이 ValueError(fail-closed).
@@ -325,8 +326,9 @@ class TestFix7ErrorSanitization:
     def test_get_product_error_sanitized(self, monkeypatch):
         monkeypatch.delenv("CLOSSIFY_CONFIG", raising=False)
         monkeypatch.setattr(
-            naver_client, "get_product",
-            mock.Mock(side_effect=RuntimeError("token=sk-leaked-secret-key12345"))
+            naver_client,
+            "get_product",
+            mock.Mock(side_effect=RuntimeError("token=sk-leaked-secret-key12345")),
         )
         result = mcp_server.get_product("123")
         assert result["ok"] is False
@@ -365,10 +367,13 @@ class TestAcceptanceTools:
         tools = mcp_server.mcp.list_tools()
         # MCPServer.list_tools() 가 코루틴이면 async 로 실행.
         import asyncio
+
         if hasattr(tools, "__await__"):
-            tools = asyncio.get_event_loop().run_until_complete(tools) \
-                if not asyncio.iscoroutinefunction(mcp_server.mcp.list_tools) \
+            tools = (
+                asyncio.get_event_loop().run_until_complete(tools)
+                if not asyncio.iscoroutinefunction(mcp_server.mcp.list_tools)
                 else asyncio.run(mcp_server.mcp.list_tools())
+            )
         # list_tools 의 반환형이 list[MCPTool] 또는 유사 객체.
         # 도구 이름들을 추출.
         names = []

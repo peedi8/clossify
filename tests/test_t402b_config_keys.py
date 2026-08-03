@@ -14,6 +14,7 @@
 
 모든 테스트는 실제 네이버 API 를 호출하지 않는다 — monkeypatch 로 네트워크 차단.
 """
+
 from __future__ import annotations
 
 import json
@@ -54,12 +55,9 @@ class TestCanonicalKeyPresent:
     def test_canonical_as_tel_key_exists(self):
         cfg = _load_example_config()
         notice = cfg.get("smartstore_notice_defaults")
-        assert isinstance(notice, dict), (
-            "smartstore_notice_defaults 섹션이 객체가 아님"
-        )
+        assert isinstance(notice, dict), "smartstore_notice_defaults 섹션이 객체가 아님"
         assert "as_tel" in notice, (
-            "smartstore_notice_defaults.as_tel (정본) 항목이 없음 — "
-            "T-402b 결함 미수리"
+            "smartstore_notice_defaults.as_tel (정본) 항목이 없음 — " "T-402b 결함 미수리"
         )
 
     def test_brand_as_tel_still_present(self):
@@ -67,9 +65,9 @@ class TestCanonicalKeyPresent:
         cfg = _load_example_config()
         brand = cfg.get("brand")
         assert isinstance(brand, dict), "brand 섹션이 객체가 아님"
-        assert "as_tel" in brand, (
-            "brand.as_tel 이 제거됨 — 에이전트 문서 {AS_TEL} 치환용이므로 유지 필요"
-        )
+        assert (
+            "as_tel" in brand
+        ), "brand.as_tel 이 제거됨 — 에이전트 문서 {AS_TEL} 치환용이므로 유지 필요"
 
     def test_canonical_as_tel_has_placeholder(self):
         """정본 as_tel 값은 플레이스홀더여야 한다 (실번호 노출 금지)."""
@@ -77,24 +75,28 @@ class TestCanonicalKeyPresent:
         val = cfg["smartstore_notice_defaults"]["as_tel"]
         assert isinstance(val, str) and val, "as_tel 값이 비문자열/빈 문자열"
         # 실전화번호가 아닌 플레이스홀더여야 한다.
-        assert "REPLACE_WITH_" in val or val.startswith("{"), (
-            f"as_tel 이 플레이스홀더가 아님: {val!r}"
-        )
+        assert "REPLACE_WITH_" in val or val.startswith(
+            "{"
+        ), f"as_tel 이 플레이스홀더가 아님: {val!r}"
 
     def test_as_tel_usage_documented_in_comment(self):
         """두 항목의 용도 차이가 _comment 또는 별도 키로 명시되어 있는가."""
         cfg = _load_example_config()
         notice = cfg["smartstore_notice_defaults"]
         # as_tel_comment 또는 _comment 중 하나는 용도 차이를 설명해야 한다.
-        comment_blob = " ".join(str(v) for v in (
-            notice.get("as_tel_comment"),
-            notice.get("_comment"),
-            cfg.get("brand", {}).get("_comment"),
-        ) if isinstance(v, str))
-        # "정본" 또는 "참조" 키워드가 두 키의 관계를 설명하고 있어야 한다.
-        assert "정본" in comment_blob or "참조" in comment_blob, (
-            "as_tel 두 용도(정본/치환용) 구분 명시가 없음"
+        comment_blob = " ".join(
+            str(v)
+            for v in (
+                notice.get("as_tel_comment"),
+                notice.get("_comment"),
+                cfg.get("brand", {}).get("_comment"),
+            )
+            if isinstance(v, str)
         )
+        # "정본" 또는 "참조" 키워드가 두 키의 관계를 설명하고 있어야 한다.
+        assert (
+            "정본" in comment_blob or "참조" in comment_blob
+        ), "as_tel 두 용도(정본/치환용) 구분 명시가 없음"
 
 
 # --------------------------------------------------------------------------- #
@@ -125,20 +127,16 @@ class TestBuildPayloadCarriesAsTel:
             "categoryId": "50000000",
             "salePrice": 30000,
         }
-        with mock.patch.object(naver_client, "_notice_config",
-                               return_value=notice_section):
-            with mock.patch.object(naver_client, "_kc_config",
-                                   return_value=({}, "")):
+        with mock.patch.object(naver_client, "_notice_config", return_value=notice_section):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
                 payload = naver_client.build_payload(
-                    product, "<html></html>",
+                    product,
+                    "<html></html>",
                     ["http://cdn/x.png"],
                     status="SALE",
                 )
         after_info = (
-            payload
-            .get("originProduct", {})
-            .get("detailAttribute", {})
-            .get("afterServiceInfo", {})
+            payload.get("originProduct", {}).get("detailAttribute", {}).get("afterServiceInfo", {})
         )
         assert after_info.get("afterServiceTelephoneNumber") == "070-0000-0000", (
             f"정본 as_tel 이 payload 에 반영되지 않음: "
@@ -159,26 +157,23 @@ class TestBuildPayloadCarriesAsTel:
             "categoryId": "50000000",
             "salePrice": 30000,
         }
-        with mock.patch.object(naver_client, "_notice_config",
-                               return_value=notice_section):
-            with mock.patch.object(naver_client, "_kc_config",
-                                   return_value=({}, "")):
+        with mock.patch.object(naver_client, "_notice_config", return_value=notice_section):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
                 payload = naver_client.build_payload(
-                    product, "<html></html>",
+                    product,
+                    "<html></html>",
                     ["http://cdn/x.png"],
                     status="SALE",
                 )
         notice = (
-            payload
-            .get("originProduct", {})
+            payload.get("originProduct", {})
             .get("detailAttribute", {})
             .get("productInfoProvidedNotice", {})
         )
         etc = notice.get("etc", {})
         # ETC afterServiceDirector 형식: "{manufacturer} {as_tel}"
         assert "070-0000-0000" in str(etc.get("afterServiceDirector", "")), (
-            f"afterServiceDirector 에 as_tel 이 없음: "
-            f"{etc.get('afterServiceDirector')!r}"
+            f"afterServiceDirector 에 as_tel 이 없음: " f"{etc.get('afterServiceDirector')!r}"
         )
 
 
@@ -204,23 +199,14 @@ class TestCheckConfigReportsAsTel:
             },
         }
         path = _write_config(tmp_path, cfg)
-        with mock.patch.object(naver_client, "config_path",
-                               return_value=str(path)):
+        with mock.patch.object(naver_client, "config_path", return_value=str(path)):
             result = mcp_server.check_config()
-        assert "as_tel_configured" in result, (
-            "check_config 응답에 as_tel_configured 필드가 없음"
-        )
-        assert result["as_tel_configured"] is False, (
-            "as_tel 미설정인데 configured=True 로 보고함"
-        )
-        assert "as_tel_hint" in result, (
-            "as_tel 미설정 안내(as_tel_hint)가 없음"
-        )
+        assert "as_tel_configured" in result, "check_config 응답에 as_tel_configured 필드가 없음"
+        assert result["as_tel_configured"] is False, "as_tel 미설정인데 configured=True 로 보고함"
+        assert "as_tel_hint" in result, "as_tel 미설정 안내(as_tel_hint)가 없음"
         # 값 자체는 응답에 없어야 한다.
         result_json = json.dumps(result, ensure_ascii=False)
-        assert "070-" not in result_json, (
-            "check_config 응답에 전화번호 값이 노출됨"
-        )
+        assert "070-" not in result_json, "check_config 응답에 전화번호 값이 노출됨"
 
     def test_check_config_reports_as_tel_set(self, tmp_path):
         """as_tel 설정 → as_tel_configured=True, 값 미노출."""
@@ -238,16 +224,13 @@ class TestCheckConfigReportsAsTel:
             },
         }
         path = _write_config(tmp_path, cfg)
-        with mock.patch.object(naver_client, "config_path",
-                               return_value=str(path)):
+        with mock.patch.object(naver_client, "config_path", return_value=str(path)):
             result = mcp_server.check_config()
-        assert result.get("as_tel_configured") is True, (
-            "as_tel 설정인데 configured=False 로 보고함"
-        )
+        assert result.get("as_tel_configured") is True, "as_tel 설정인데 configured=False 로 보고함"
         # 값 자체는 응답에 없어야 한다.
-        assert "070-1234-5678" not in json.dumps(result, ensure_ascii=False), (
-            "check_config 응답에 as_tel 실값이 노출됨"
-        )
+        assert "070-1234-5678" not in json.dumps(
+            result, ensure_ascii=False
+        ), "check_config 응답에 as_tel 실값이 노출됨"
 
     def test_check_config_reports_placeholder_as_unset(self, tmp_path):
         """as_tel 이 플레이스홀더(예: REPLACE_WITH_REAL_AS_TEL)면 미설정으로 본다."""
@@ -265,15 +248,14 @@ class TestCheckConfigReportsAsTel:
             },
         }
         path = _write_config(tmp_path, cfg)
-        with mock.patch.object(naver_client, "config_path",
-                               return_value=str(path)):
+        with mock.patch.object(naver_client, "config_path", return_value=str(path)):
             result = mcp_server.check_config()
-        assert result["as_tel_configured"] is False, (
-            "플레이스홀더 as_tel 을 configured=True 로 보고함"
-        )
-        assert "등록을 거부" in result.get("as_tel_hint", ""), (
-            "as_tel_hint 가 등록 거부 안내를 포함하지 않음"
-        )
+        assert (
+            result["as_tel_configured"] is False
+        ), "플레이스홀더 as_tel 을 configured=True 로 보고함"
+        assert "등록을 거부" in result.get(
+            "as_tel_hint", ""
+        ), "as_tel_hint 가 등록 거부 안내를 포함하지 않음"
 
 
 # --------------------------------------------------------------------------- #
@@ -286,14 +268,18 @@ class TestNoNoOp:
         """as_tel 자리가 빈 경우와 채운 경우의 보고가 다르다 (무동작 아님)."""
         base = {
             "naver": {
-                "client_id": "id", "client_secret": "secret",
-                "type": "SELF", "store_url_slug": "slug",
+                "client_id": "id",
+                "client_secret": "secret",
+                "type": "SELF",
+                "store_url_slug": "slug",
             },
             "smartstore_notice_defaults": {
-                "origin_area_code": "01", "origin_content": "한국",
+                "origin_area_code": "01",
+                "origin_content": "한국",
             },
         }
         import copy as _copy
+
         empty_cfg = _copy.deepcopy(base)
         path_empty = _write_config(tmp_path, empty_cfg)
         filled_dir = tmp_path / "filled"
@@ -302,15 +288,13 @@ class TestNoNoOp:
         filled_cfg["smartstore_notice_defaults"]["as_tel"] = "070-0000-0000"
         path_filled = _write_config(filled_dir, filled_cfg)
 
-        with mock.patch.object(naver_client, "config_path",
-                               return_value=str(path_empty)):
+        with mock.patch.object(naver_client, "config_path", return_value=str(path_empty)):
             r_empty = mcp_server.check_config()
-        with mock.patch.object(naver_client, "config_path",
-                               return_value=str(path_filled)):
+        with mock.patch.object(naver_client, "config_path", return_value=str(path_filled)):
             r_filled = mcp_server.check_config()
-        assert r_empty["as_tel_configured"] != r_filled["as_tel_configured"], (
-            "as_tel 점검이 무동작이다 (설정 여부와 무관하게 동일 결과)"
-        )
+        assert (
+            r_empty["as_tel_configured"] != r_filled["as_tel_configured"]
+        ), "as_tel 점검이 무동작이다 (설정 여부와 무관하게 동일 결과)"
 
 
 # --------------------------------------------------------------------------- #
@@ -328,9 +312,9 @@ class TestKeyCrossReference:
         cfg = _load_example_config()
         # 코드가 읽는 자리: naver_client._notice_config() -> smartstore_notice_defaults
         # 그 안에서 _notice_defaults 가 cfg_notice.get("as_tel") 로 읽는다.
-        assert "as_tel" in cfg["smartstore_notice_defaults"], (
-            "코드가 읽는 자리(smartstore_notice_defaults.as_tel)에 예시 항목이 없음"
-        )
+        assert (
+            "as_tel" in cfg["smartstore_notice_defaults"]
+        ), "코드가 읽는 자리(smartstore_notice_defaults.as_tel)에 예시 항목이 없음"
 
     def test_known_out_of_scope_mismatches_reported(self):
         """범위 밖 불일치는 이 테스트에 명시적으로 기록한다 (수정하지 않음).

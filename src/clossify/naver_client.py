@@ -4,6 +4,7 @@
 경로 메모: 본 모듈은 src/clossify/ 에 위치하므로, 프로젝트 루트의
 .local/config.json 을 가리키기 위해 __file__ 기준 상위 2단계를 사용한다.
 """
+
 import base64
 import copy
 import json
@@ -28,10 +29,26 @@ MAX_PRODUCT_NAME_LEN = 50
 # 네이버 커머스 API originAreaInfo.originAreaCode 표준 코드 화이트리스트.
 # T-107: 특정 해외국 코드를 기본값으로 갖지 않는다. 원산지는 판매자가 config에
 # 명시한 값만 허용하며, 화이트리스트 벗어남/누락 시 ValueError 로 등록 거부(fail-closed).
-_VALID_ORIGIN_AREA_CODES = frozenset({
-    "01", "02", "03", "04", "05", "06", "07", "08",
-    "09", "10", "11", "12", "13", "14", "15", "16",
-})
+_VALID_ORIGIN_AREA_CODES = frozenset(
+    {
+        "01",
+        "02",
+        "03",
+        "04",
+        "05",
+        "06",
+        "07",
+        "08",
+        "09",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16",
+    }
+)
 
 
 def resolve_config_path() -> str:
@@ -188,9 +205,7 @@ def _resolve_origin_area_code(p, cfg_notice):
             "config 에 원산지 설정이 필요합니다: smartstore_notice_defaults.origin_area_code"
         )
     if code not in _VALID_ORIGIN_AREA_CODES:
-        raise ValueError(
-            f"원산지 코드가 네이버 커머스 API 화이트리스트에 없습니다: {code!r}"
-        )
+        raise ValueError(f"원산지 코드가 네이버 커머스 API 화이트리스트에 없습니다: {code!r}")
     return code
 
 
@@ -205,14 +220,18 @@ def _notice_defaults(p):
         cfg_notice.get("customerServicePhoneNumber"),
         default="판매자연락처",
     )
-    manufacturer = _first_value(p.get("manufacturer"), default=_seller_manufacturer_default(p, cfg_notice))
+    manufacturer = _first_value(
+        p.get("manufacturer"), default=_seller_manufacturer_default(p, cfg_notice)
+    )
     # T-107: "해외구매대행" 기본값 제거. 수입자는 판매자가 config/입력으로 제공.
     # 값이 없으면 빈 문자열 — originAreaInfo.importer 필드가 비게 되고,
     # 네이버가 요구하면 API 가 에러로 알려준다(우리가 임의 값을 지어내지 않음).
     importer = _first_value(p.get("importer"), cfg_notice.get("importer"), default="")
     # T-107: "중국" (해외 국가명) 기본값 제거 + fail-closed.
     # 원산지 표시 문자열도 코드와 마찬가지로 config 또는 상품 입력에서만 받는다.
-    made_in = _first_value(p.get("made_in"), p.get("origin_content"), cfg_notice.get("origin_content"), default="")
+    made_in = _first_value(
+        p.get("made_in"), p.get("origin_content"), cfg_notice.get("origin_content"), default=""
+    )
     if not made_in:
         raise ValueError(
             "config 에 원산지 설정이 필요합니다: smartstore_notice_defaults.origin_content"
@@ -257,7 +276,12 @@ def _notice_defaults(p):
     )
     return {
         "item_name": product_name[:50],
-        "model_name": _first_value(p.get("modelName"), p.get("model_name"), cfg_notice.get("model_name"), default=_model_name_default(p)),
+        "model_name": _first_value(
+            p.get("modelName"),
+            p.get("model_name"),
+            cfg_notice.get("model_name"),
+            default=_model_name_default(p),
+        ),
         "cert_detail": cert_text,
         "made_in": made_in,
         "manufacturer": manufacturer,
@@ -316,21 +340,15 @@ def _load_notice_type_specs() -> list:
         return _NOTICE_TYPES_CACHE
     path = os.path.join(_PROJECT_ROOT, "data", "notice_types.json")
     if not os.path.exists(path):
-        raise RuntimeError(
-            f"notice_types.json 파일이 없습니다: {path} (fail-closed)."
-        )
+        raise RuntimeError(f"notice_types.json 파일이 없습니다: {path} (fail-closed).")
     try:
         with open(path, encoding="utf-8") as f:
             doc = json.load(f)
     except (OSError, ValueError) as exc:
-        raise RuntimeError(
-            f"notice_types.json 읽기 실패: {path} ({exc})"
-        ) from exc
+        raise RuntimeError(f"notice_types.json 읽기 실패: {path} ({exc})") from exc
     verified = doc.get("verified") if isinstance(doc, dict) else None
     if not isinstance(verified, list) or not verified:
-        raise RuntimeError(
-            f"notice_types.json 구조가 올바르지 않습니다: {path}"
-        )
+        raise RuntimeError(f"notice_types.json 구조가 올바르지 않습니다: {path}")
     _NOTICE_TYPES_CACHE = verified
     _NOTICE_TYPE_INDEX = {
         str(entry.get("type") or "").strip().upper(): entry
@@ -393,23 +411,20 @@ def _resolve_notice_type(p) -> str:
     user_notice = p.get("notice") if isinstance(p, dict) else None
     if isinstance(user_notice, dict):
         explicit = (
-            user_notice.get("productInfoProvidedNoticeType")
-            or user_notice.get("notice_type")
-            or ""
+            user_notice.get("productInfoProvidedNoticeType") or user_notice.get("notice_type") or ""
         )
     if not explicit and isinstance(p, dict):
-        explicit = (
-            p.get("notice_type")
-            or p.get("productInfoProvidedNoticeType")
-            or ""
-        )
+        explicit = p.get("notice_type") or p.get("productInfoProvidedNoticeType") or ""
     notice_type = str(explicit or "").strip().upper()
     if not notice_type:
         # 카테고리 경로 휴리스틱으로 추론 시도 (qa_agents 힌트 재사용).
-        category_text = " ".join(
-            str(p.get(k) or "")
-            for k in ("category_name", "category_path", "categoryPath")
-        ) if isinstance(p, dict) else ""
+        category_text = (
+            " ".join(
+                str(p.get(k) or "") for k in ("category_name", "category_path", "categoryPath")
+            )
+            if isinstance(p, dict)
+            else ""
+        )
         for needle, inferred_type in _CATEGORY_PATH_NOTICE_HINTS:
             if needle in category_text:
                 notice_type = inferred_type
@@ -469,7 +484,9 @@ _CATEGORY_PATH_NOTICE_HINTS = (
 
 def _is_furniture_notice(p):
     """FURNITURE 타입 판정 (기존 동작 보존)."""
-    notice_type = str(p.get("notice_type") or p.get("productInfoProvidedNoticeType") or "").strip().upper()
+    notice_type = (
+        str(p.get("notice_type") or p.get("productInfoProvidedNoticeType") or "").strip().upper()
+    )
     if notice_type == "FURNITURE":
         return True
     user_notice = p.get("notice")
@@ -477,7 +494,9 @@ def _is_furniture_notice(p):
         notice_type = str(user_notice.get("productInfoProvidedNoticeType") or "").strip().upper()
         if notice_type == "FURNITURE":
             return True
-    category_text = " ".join(str(p.get(k) or "") for k in ("category_name", "category_path", "categoryPath"))
+    category_text = " ".join(
+        str(p.get(k) or "") for k in ("category_name", "category_path", "categoryPath")
+    )
     return "가구" in category_text
 
 
@@ -511,12 +530,20 @@ def _base_etc_notice(defaults):
 def _base_furniture_notice(p, defaults):
     """FURNITURE 타입의 기본 본문 (기존 동작 보존)."""
     notice = _base_etc_notice(defaults)
-    notice.update({
-        "material": _first_value(p.get("material"), p.get("fabric"), p.get("소재"), default="상세참조"),
-        "size": _first_value(p.get("size"), p.get("dimensions"), default="상세참조"),
-        "components": _first_value(p.get("components"), p.get("composition"), default="상세참조"),
-        "safetyStandard": _first_value(p.get("safety_standard"), p.get("safetyStandard"), default="해당없음 / 상세참조"),
-    })
+    notice.update(
+        {
+            "material": _first_value(
+                p.get("material"), p.get("fabric"), p.get("소재"), default="상세참조"
+            ),
+            "size": _first_value(p.get("size"), p.get("dimensions"), default="상세참조"),
+            "components": _first_value(
+                p.get("components"), p.get("composition"), default="상세참조"
+            ),
+            "safetyStandard": _first_value(
+                p.get("safety_standard"), p.get("safetyStandard"), default="해당없음 / 상세참조"
+            ),
+        }
+    )
     return notice
 
 
@@ -575,9 +602,7 @@ def _merge_notice(default_notice, user_notice):
     """
     if not isinstance(user_notice, dict):
         return default_notice
-    notice_type = str(
-        default_notice.get("productInfoProvidedNoticeType") or "ETC"
-    ).strip().upper()
+    notice_type = str(default_notice.get("productInfoProvidedNoticeType") or "ETC").strip().upper()
     spec = _notice_type_spec(notice_type)
     node_key = (spec or {}).get("node") or "etc"
     # 기본 본문: default_notice 에서 node_key 본문을 찾고, 없으면 etc/furniture 폴백.
@@ -650,9 +675,17 @@ def get_token():
     cid, csec = c["client_id"], c["client_secret"]
     ts = str(int(time.time() * 1000))
     sign = base64.b64encode(bcrypt.hashpw(f"{cid}_{ts}".encode(), csec.encode())).decode()
-    r = requests.post(BASE + "/external/v1/oauth2/token", timeout=20, data={
-        "client_id": cid, "timestamp": ts, "client_secret_sign": sign,
-        "grant_type": "client_credentials", "type": c.get("type", "SELF")})
+    r = requests.post(
+        BASE + "/external/v1/oauth2/token",
+        timeout=20,
+        data={
+            "client_id": cid,
+            "timestamp": ts,
+            "client_secret_sign": sign,
+            "grant_type": "client_credentials",
+            "type": c.get("type", "SELF"),
+        },
+    )
     r.raise_for_status()
     return r.json()["access_token"]
 
@@ -689,7 +722,12 @@ def upload_images(paths, tk=None):
             fh = open(p, "rb")
             opened_files.append(fh)
             files.append(("imageFiles", (os.path.basename(p), fh, _guess_image_mime(p))))
-        r = requests.post(BASE + "/external/v1/product-images/upload", headers=_h(tk, False), files=files, timeout=120)
+        r = requests.post(
+            BASE + "/external/v1/product-images/upload",
+            headers=_h(tk, False),
+            files=files,
+            timeout=120,
+        )
         r.raise_for_status()
         return [im["url"] for im in r.json().get("images", [])]
     finally:
@@ -707,8 +745,12 @@ def _json_or_text_response(response):
 
 
 def _post_product_payload(payload, tk):
-    r = requests.post(BASE + "/external/v2/products", headers=_h(tk),
-                      data=json.dumps(payload).encode("utf-8"), timeout=60)
+    r = requests.post(
+        BASE + "/external/v2/products",
+        headers=_h(tk),
+        data=json.dumps(payload).encode("utf-8"),
+        timeout=60,
+    )
     return r.status_code, _json_or_text_response(r)
 
 
@@ -743,7 +785,9 @@ def _strip_seller_tags(payload, restricted_terms):
     tags = _seller_tags_list(payload)
     if not tags:
         return []
-    restricted = {_normalize_seller_tag_text(term) for term in restricted_terms if str(term or "").strip()}
+    restricted = {
+        _normalize_seller_tag_text(term) for term in restricted_terms if str(term or "").strip()
+    }
     if not restricted:
         return []
     kept, removed = [], []
@@ -892,7 +936,9 @@ def register_product(payload, tk=None):
         _append_unique(meta["restricted_terms"], prefilter_removed)
 
     if os.environ.get("COMMERCE_DRY_RUN") == "1":
-        payload_path = os.path.join(os.path.dirname(__file__), "..", "..", ".local", "dry_run_payload.json")
+        payload_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", ".local", "dry_run_payload.json"
+        )
         os.makedirs(os.path.dirname(payload_path), exist_ok=True)
         with open(payload_path, "w", encoding="utf-8") as f:
             json.dump(working_payload, f, ensure_ascii=False, indent=2)
@@ -917,13 +963,17 @@ def register_product(payload, tk=None):
         removed = _strip_seller_tags(working_payload, terms)
         _append_unique(meta["restricted_terms"], terms)
         _append_unique(meta["removed"], removed)
-        meta["attempts"].append({
-            "attempt": attempt_no + 1,
-            "http": sc,
-            "terms": terms,
-            "removed": removed,
-            "action": "strip_and_retry" if attempt_no < MAX_RESTRICTED_SELLER_TAG_RETRIES else "clear_all_next",
-        })
+        meta["attempts"].append(
+            {
+                "attempt": attempt_no + 1,
+                "http": sc,
+                "terms": terms,
+                "removed": removed,
+                "action": "strip_and_retry"
+                if attempt_no < MAX_RESTRICTED_SELLER_TAG_RETRIES
+                else "clear_all_next",
+            }
+        )
         if attempt_no >= MAX_RESTRICTED_SELLER_TAG_RETRIES:
             break
         if not terms and not removed:
@@ -933,7 +983,9 @@ def register_product(payload, tk=None):
     if cleared:
         meta["cleared_all"] = True
         _append_unique(meta["removed"], cleared)
-        meta["attempts"].append({"attempt": len(meta["attempts"]) + 1, "removed": cleared, "action": "clear_all"})
+        meta["attempts"].append(
+            {"attempt": len(meta["attempts"]) + 1, "removed": cleared, "action": "clear_all"}
+        )
         sc, body = _post_product_payload(working_payload, tk)
         return sc, _attach_seller_tag_autostrip_meta(body, meta)
     return last_sc, _attach_seller_tag_autostrip_meta(last_body, meta)
@@ -948,14 +1000,22 @@ def seller_tag_autostrip_meta(body):
 def update_product(channel_no, payload, tk=None):
     """PUT /external/v2/products/channel-products/{channelNo}."""
     tk = tk or get_token()
-    r = requests.put(BASE + f"/external/v2/products/channel-products/{channel_no}", headers=_h(tk),
-                     data=json.dumps(payload).encode("utf-8"), timeout=60)
+    r = requests.put(
+        BASE + f"/external/v2/products/channel-products/{channel_no}",
+        headers=_h(tk),
+        data=json.dumps(payload).encode("utf-8"),
+        timeout=60,
+    )
     return r.status_code, _json_or_text_response(r)
 
 
 def get_product(origin_no, tk=None):
     tk = tk or get_token()
-    r = requests.get(BASE + f"/external/v2/products/origin-products/{origin_no}", headers=_h(tk, False), timeout=20)
+    r = requests.get(
+        BASE + f"/external/v2/products/origin-products/{origin_no}",
+        headers=_h(tk, False),
+        timeout=20,
+    )
     return r.status_code, (r.json() if r.status_code == 200 else r.text)
 
 
@@ -972,9 +1032,7 @@ def _option_stock(option):
     """
     raw = option.get("stockQuantity", option.get("stock"))
     if raw is None:
-        raise ValueError(
-            "option 에 stockQuantity 또는 stock 값이 없습니다 (fail-closed)."
-        )
+        raise ValueError("option 에 stockQuantity 또는 stock 값이 없습니다 (fail-closed).")
     return int(raw)
 
 
@@ -986,9 +1044,15 @@ def _option_price(option):
 
 
 def _option_group_list(p):
-    groups = p.get("option_groups") or p.get("optionGroupNames") or p.get("optionCombinationGroupNames")
+    groups = (
+        p.get("option_groups") or p.get("optionGroupNames") or p.get("optionCombinationGroupNames")
+    )
     if isinstance(groups, dict):
-        return [groups.get(f"optionGroupName{i}") for i in range(1, 4) if groups.get(f"optionGroupName{i}")]
+        return [
+            groups.get(f"optionGroupName{i}")
+            for i in range(1, 4)
+            if groups.get(f"optionGroupName{i}")
+        ]
     if isinstance(groups, str):
         return [groups]
     if isinstance(groups, list | tuple):
@@ -1094,10 +1158,13 @@ def build_payload(p, detail_html, images, status="SALE"):
     kc_block, kc_warning = _kc_config()
 
     detail_attribute = {
-        "afterServiceInfo": {"afterServiceTelephoneNumber": defaults["as_tel"],
-                             "afterServiceGuideContent": defaults["as_guide"]},
+        "afterServiceInfo": {
+            "afterServiceTelephoneNumber": defaults["as_tel"],
+            "afterServiceGuideContent": defaults["as_guide"],
+        },
         "originAreaInfo": origin_area_info,
-        "minorPurchasable": True, "taxType": "TAX",
+        "minorPurchasable": True,
+        "taxType": "TAX",
         "seoInfo": {"sellerTags": [{"text": t} for t in p.get("tags", [])]},
         "productInfoProvidedNotice": notice,
         "optionInfo": option_info,
@@ -1105,19 +1172,43 @@ def build_payload(p, detail_html, images, status="SALE"):
     if kc_block:
         detail_attribute["certificationTargetExcludeContent"] = kc_block
 
-    payload = {"originProduct": {
-        "statusType": status, "saleType": "NEW", "leafCategoryId": p["categoryId"],
-        "name": product_name, "detailContent": detail_html,
-        "images": {"representativeImage": {"url": images[0]},
-                   "optionalImages": [{"url": u} for u in images[1:]]},
-        "salePrice": int(p["salePrice"]), "stockQuantity": sum(_option_stock(o) for o in opts) if opts else int(p.get("stock", 1)),
-        "deliveryInfo": {"deliveryType": "DELIVERY", "deliveryAttributeType": "NORMAL",
-            "deliveryCompany": p.get("courier", "CJGLS"), "deliveryBundleGroupUsable": False,
-            "deliveryFee": {"deliveryFeeType": "PAID", "baseFee": int(p.get("delivery_fee", 3000)), "deliveryFeePayType": "PREPAID"},
-            "claimDeliveryInfo": {"returnDeliveryFee": defaults["return_delivery_fee"], "exchangeDeliveryFee": defaults["exchange_delivery_fee"]}},
-        "detailAttribute": detail_attribute,
-        "smartstoreChannelProduct": {"naverShoppingRegistration": True,
-            "channelProductDisplayStatusType": p.get("display", display_default)}}}
+    payload = {
+        "originProduct": {
+            "statusType": status,
+            "saleType": "NEW",
+            "leafCategoryId": p["categoryId"],
+            "name": product_name,
+            "detailContent": detail_html,
+            "images": {
+                "representativeImage": {"url": images[0]},
+                "optionalImages": [{"url": u} for u in images[1:]],
+            },
+            "salePrice": int(p["salePrice"]),
+            "stockQuantity": sum(_option_stock(o) for o in opts)
+            if opts
+            else int(p.get("stock", 1)),
+            "deliveryInfo": {
+                "deliveryType": "DELIVERY",
+                "deliveryAttributeType": "NORMAL",
+                "deliveryCompany": p.get("courier", "CJGLS"),
+                "deliveryBundleGroupUsable": False,
+                "deliveryFee": {
+                    "deliveryFeeType": "PAID",
+                    "baseFee": int(p.get("delivery_fee", 3000)),
+                    "deliveryFeePayType": "PREPAID",
+                },
+                "claimDeliveryInfo": {
+                    "returnDeliveryFee": defaults["return_delivery_fee"],
+                    "exchangeDeliveryFee": defaults["exchange_delivery_fee"],
+                },
+            },
+            "detailAttribute": detail_attribute,
+            "smartstoreChannelProduct": {
+                "naverShoppingRegistration": True,
+                "channelProductDisplayStatusType": p.get("display", display_default),
+            },
+        }
+    }
     # T-107: KC 설정 부재 경고를 페이로드 메타에 포함(조용한 생략 금지).
     if kc_warning:
         payload["_kcWarning"] = kc_warning

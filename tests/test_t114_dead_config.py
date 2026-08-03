@@ -10,6 +10,7 @@
   5. 삭제 후에도 live 접근자(DEFAULT_AS_TEL 등)가 정상 동작한다.
   6. 무동작/identity 금지: 본 테스트는 실제로 단언한다 (무조건 통과 아님).
 """
+
 from __future__ import annotations
 
 import json
@@ -45,7 +46,7 @@ _REMOVED_SYMBOLS = (
 
 # T-114 에서 삭제 대상으로 지정된 설정 키 접두사/이름.
 _DEAD_CONFIG_KEYS = (
-    "base_url",          # upstream.base_url
+    "base_url",  # upstream.base_url
     "vendor_a_cmd",
     "vendor_b_cmd",
     "vendor_b_model",
@@ -65,29 +66,25 @@ class TestRemovedSymbolsGone:
 
     @pytest.mark.parametrize("name", _REMOVED_SYMBOLS)
     def test_symbol_absent(self, name):
-        assert not hasattr(common, name), (
-            f"common.{name} 이 잔존함 — T-114 삭제 대상"
-        )
+        assert not hasattr(common, name), f"common.{name} 이 잔존함 — T-114 삭제 대상"
 
     def test_no_dead_section_reads_in_source(self):
         """common.py 소스에 upstream/llm 섹션 읽기가 남아있지 않다."""
         src = (_SRC / "clossify" / "common.py").read_text(encoding="utf-8")
         # 섹션 이름 자체가 더 이상 등장하지 않아야 한다.
-        assert '_cfg_section("upstream")' not in src, (
-            'common.py 가 _cfg_section("upstream") 을 아직 읽음'
-        )
-        assert '_cfg_section("llm")' not in src, (
-            'common.py 가 _cfg_section("llm") 을 아직 읽음'
-        )
+        assert (
+            '_cfg_section("upstream")' not in src
+        ), 'common.py 가 _cfg_section("upstream") 을 아직 읽음'
+        assert '_cfg_section("llm")' not in src, 'common.py 가 _cfg_section("llm") 을 아직 읽음'
 
     def test_no_vendor_literal_in_source(self):
         """common.py 소스에 vendor_a/vendor_b 설정 키 리터럴이 없다."""
         src = (_SRC / "clossify" / "common.py").read_text(encoding="utf-8")
         for key in _DEAD_CONFIG_KEYS:
             # 설정 키 리터럴(따옴표로 묶인 형태)만 금지.
-            assert f'"{key}"' not in src and f"'{key}'" not in src, (
-                f"common.py 소스에 죽은 설정 키 리터럴이 잔존: {key}"
-            )
+            assert (
+                f'"{key}"' not in src and f"'{key}'" not in src
+            ), f"common.py 소스에 죽은 설정 키 리터럴이 잔존: {key}"
 
 
 # --------------------------------------------------------------------------- #
@@ -105,9 +102,7 @@ class TestNoCallSitesRemain:
                 # common.<sym> 형태의 참조만 금지 (자기 정의 제외).
                 if f"common.{sym}" in text:
                     hits.append(f"{py.name}: common.{sym}")
-        assert not hits, (
-            f"삭제 심볼 참조 잔존: {hits}"
-        )
+        assert not hits, f"삭제 심볼 참조 잔존: {hits}"
 
     def test_no_import_of_removed_symbols(self):
         pkg_dir = _SRC / "clossify"
@@ -117,9 +112,7 @@ class TestNoCallSitesRemain:
             for sym in _REMOVED_SYMBOLS:
                 if f"import {sym}" in text or f", {sym}" in text:
                     hits.append(f"{py.name}: {sym}")
-        assert not hits, (
-            f"삭제 심볼 import 잔존: {hits}"
-        )
+        assert not hits, f"삭제 심볼 import 잔존: {hits}"
 
 
 # --------------------------------------------------------------------------- #
@@ -130,15 +123,11 @@ class TestConfigExampleClean:
 
     def test_no_upstream_section(self):
         cfg = json.loads(_CONFIG_EXAMPLE_PATH.read_text(encoding="utf-8-sig"))
-        assert "upstream" not in cfg, (
-            "config.example.json 에 upstream 섹션이 있음"
-        )
+        assert "upstream" not in cfg, "config.example.json 에 upstream 섹션이 있음"
 
     def test_no_llm_section(self):
         cfg = json.loads(_CONFIG_EXAMPLE_PATH.read_text(encoding="utf-8-sig"))
-        assert "llm" not in cfg, (
-            "config.example.json 에 llm 섹션이 있음"
-        )
+        assert "llm" not in cfg, "config.example.json 에 llm 섹션이 있음"
 
 
 # --------------------------------------------------------------------------- #
@@ -149,16 +138,14 @@ class TestImageProvidersMarkedUnused:
 
     def test_image_providers_present(self):
         cfg = json.loads(_CONFIG_EXAMPLE_PATH.read_text(encoding="utf-8-sig"))
-        assert "image_providers" in cfg, (
-            "image_providers 섹션이 삭제됨 — 로드맵 자리이므로 유지해야 함"
-        )
+        assert (
+            "image_providers" in cfg
+        ), "image_providers 섹션이 삭제됨 — 로드맵 자리이므로 유지해야 함"
 
     def test_image_providers_comment_marks_unused(self):
         cfg = json.loads(_CONFIG_EXAMPLE_PATH.read_text(encoding="utf-8-sig"))
         comment = str(cfg["image_providers"].get("_comment", ""))
-        assert "미사용" in comment, (
-            "image_providers._comment 가 미사용 표시를 포함하지 않음"
-        )
+        assert "미사용" in comment, "image_providers._comment 가 미사용 표시를 포함하지 않음"
 
 
 # --------------------------------------------------------------------------- #
@@ -169,21 +156,19 @@ class TestLiveAccessorsIntact:
 
     def test_default_as_tel_still_callable(self):
         """DEFAULT_AS_TEL 은 존재하며, 미설정 시 ValueError 를 낸다."""
-        assert hasattr(common, "DEFAULT_AS_TEL"), (
-            "DEFAULT_AS_TEL 이 삭제됨 — live 접근자"
-        )
+        assert hasattr(common, "DEFAULT_AS_TEL"), "DEFAULT_AS_TEL 이 삭제됨 — live 접근자"
         # cfg 가 비 구성일 때 fail-closed 동작 확인.
         from unittest import mock
+
         with mock.patch.object(common, "cfg", return_value={}), pytest.raises(ValueError):
             common.DEFAULT_AS_TEL()
 
     def test_cfg_section_still_works(self):
         """_cfg_section 헬퍼는 live 접근자가 쓰므로 유지되어야 한다."""
-        assert hasattr(common, "_cfg_section"), (
-            "_cfg_section 이 삭제됨 — DEFAULT_AS_TEL 이 사용 중"
-        )
+        assert hasattr(common, "_cfg_section"), "_cfg_section 이 삭제됨 — DEFAULT_AS_TEL 이 사용 중"
         # 빈 cfg 에서는 {} 반환.
         from unittest import mock
+
         with mock.patch.object(common, "cfg", return_value={}):
             assert common._cfg_section("brand") == {}
 
@@ -198,9 +183,5 @@ class TestNoNoOp:
         """삭제 대상은 부재, live 대상은 존재 → 검증이 유효하다."""
         removed_present = any(hasattr(common, s) for s in _REMOVED_SYMBOLS)
         live_present = hasattr(common, "DEFAULT_AS_TEL")
-        assert removed_present is False, (
-            "삭제 대상 심볼 중 하나 이상이 잔존 — 검증 실패"
-        )
-        assert live_present is True, (
-            "live 심볼(DEFAULT_AS_TEL)이 부재 — 과삭제"
-        )
+        assert removed_present is False, "삭제 대상 심볼 중 하나 이상이 잔존 — 검증 실패"
+        assert live_present is True, "live 심볼(DEFAULT_AS_TEL)이 부재 — 과삭제"

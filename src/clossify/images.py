@@ -18,6 +18,7 @@
   - 심링크·디렉터리 거부 + 업로드 루트 컨테인먼트.
   - DNS 리바인딩/TOCTOU 방지: 해석한 IP 를 고정해 사용한다(주석 한계 참조).
 """
+
 from __future__ import annotations
 
 import ipaddress
@@ -57,17 +58,15 @@ _WEBP_TRAIL_OFFSET = 8
 _WEBP_TRAIL = b"WEBP"
 
 # 외부 URL 페치 방어 설정.
-_FETCH_CONNECT_TIMEOUT = 5.0   # connect 타임아웃(초)
-_FETCH_READ_TIMEOUT = 15.0     # read 타임아웃(초)
-_FETCH_WALL_BUDGET = 30.0      # 전체 벽시계 예산(초)
-_FETCH_MAX_HOPS = 4            # 리다이렉트 홉 상한
+_FETCH_CONNECT_TIMEOUT = 5.0  # connect 타임아웃(초)
+_FETCH_READ_TIMEOUT = 15.0  # read 타임아웃(초)
+_FETCH_WALL_BUDGET = 30.0  # 전체 벽시계 예산(초)
+_FETCH_MAX_HOPS = 4  # 리다이렉트 홉 상한
 _FETCH_MAX_BYTES = MAX_IMAGE_BYTES  # 외부 이미지 크기 상한은 로컬과 동일
 
 # 네이버 CDN 호스트 접미사 — 이미 업로드된 URL 은 재업로드하지 않고 통과시킨다.
 # 상품 이미지 서버는 shop-phinf.pstatic.net 계열을 사용한다.
-_NAVER_CDN_HOST_SUFFIXES: tuple[str, ...] = (
-    ".pstatic.net",
-)
+_NAVER_CDN_HOST_SUFFIXES: tuple[str, ...] = (".pstatic.net",)
 
 
 # --------------------------------------------------------------------------- #
@@ -102,7 +101,7 @@ def _matches_any_image_magic(head: bytes) -> bool:
     if (
         head.startswith(_MAGIC_BYTES[".webp"])
         and len(head) >= 12
-        and head[_WEBP_TRAIL_OFFSET:_WEBP_TRAIL_OFFSET + 4] == _WEBP_TRAIL
+        and head[_WEBP_TRAIL_OFFSET : _WEBP_TRAIL_OFFSET + 4] == _WEBP_TRAIL
     ):
         return True
     return False
@@ -120,14 +119,12 @@ def _check_magic_bytes(path: str, ext: str) -> str:
     except OSError as exc:
         return f"파일 헤더 읽기 실패: {exc}"
     if not head.startswith(expected):
-        return (
-            f"확장자({ext})와 파일 내용(매직바이트)이 일치하지 않습니다 — 위장 의심"
-        )
+        return f"확장자({ext})와 파일 내용(매직바이트)이 일치하지 않습니다 — 위장 의심"
     # WEBP 는 추가로 8..11 위치에 "WEBP" 가 있어야 한다.
     if ext == ".webp":
         if (
             len(head) < _WEBP_TRAIL_OFFSET + 4
-            or head[_WEBP_TRAIL_OFFSET:_WEBP_TRAIL_OFFSET + 4] != _WEBP_TRAIL
+            or head[_WEBP_TRAIL_OFFSET : _WEBP_TRAIL_OFFSET + 4] != _WEBP_TRAIL
         ):
             return "WEBP 매직바이트(RIFF....WEBP) 불일치 — 위장 의심"
     return ""
@@ -152,14 +149,14 @@ def _check_containment(abs_path: str) -> tuple[bool, str]:
     try:
         resolved.relative_to(root)
     except ValueError:
-        return True, (
-            f"업로드 루트({root}) 밖의 절대경로는 허용되지 않습니다: {resolved}"
-        )
+        return True, (f"업로드 루트({root}) 밖의 절대경로는 허용되지 않습니다: {resolved}")
     return True, ""
 
 
 def validate_local_image(
-    path: str, *, max_bytes: int | None = None,
+    path: str,
+    *,
+    max_bytes: int | None = None,
     require_image_ext: bool = True,
 ) -> dict[str, Any]:
     """로컬 이미지 파일 단일 경로를 정본 검증한다.
@@ -221,9 +218,7 @@ def validate_local_image(
         result["errors"].append(f"stat 실패: {exc}")
         return result
     if not _statmod.S_ISREG(st.st_mode):
-        result["errors"].append(
-            "일반 파일이 아닙니다(디렉터리 또는 특수 파일)."
-        )
+        result["errors"].append("일반 파일이 아닙니다(디렉터리 또는 특수 파일).")
         return result
 
     # 컨테인먼트 검사.
@@ -247,8 +242,7 @@ def validate_local_image(
         size = -1
     if size > cap:
         result["errors"].append(
-            f"파일 크기 초과({size} > {cap}, 최대 "
-            f"{cap // (1024 * 1024)}MB)"
+            f"파일 크기 초과({size} > {cap}, 최대 " f"{cap // (1024 * 1024)}MB)"
         )
 
     # 매직바이트. 확장자가 화이트리스트에 있으면 그 확장자 기준, 아니면
@@ -284,9 +278,7 @@ def _allowed_hosts() -> tuple[tuple[str, ...], bool]:
     raw = os.environ.get("CLOSSIFY_IMAGE_FETCH_ALLOW_HOSTS", "")
     if not raw or not raw.strip():
         return (), False
-    hosts = tuple(
-        h.strip().lower() for h in raw.split(",") if h.strip()
-    )
+    hosts = tuple(h.strip().lower() for h in raw.split(",") if h.strip())
     return hosts, bool(hosts)
 
 
@@ -314,9 +306,7 @@ def _is_private_or_special(ip: ipaddress._BaseAddress) -> str:
     return ""
 
 
-def _resolve_host_ips(
-    host: str, resolver: Any = None
-) -> tuple[list[str], str]:
+def _resolve_host_ips(host: str, resolver: Any = None) -> tuple[list[str], str]:
     """호스트명을 IP 리스트로 해석.
 
     ``resolver`` 는 테스트 주입용 — 기본값은 ``socket.getaddrinfo``.
@@ -386,8 +376,7 @@ def _validate_url_target(
         return [], "URL 호스트가 비어있습니다"
     if host not in allowed_hosts:
         return [], (
-            f"호스트가 허용목록에 없음: {host!r} "
-            f"(허용: {list(allowed_hosts) or '없음'})"
+            f"호스트가 허용목록에 없음: {host!r} " f"(허용: {list(allowed_hosts) or '없음'})"
         )
     ips, dns_err = _resolve_host_ips(host, resolver=resolver)
     if dns_err:
@@ -415,10 +404,16 @@ def _rewrite_url_with_ip(url: str, pinned_ip: str) -> tuple[str, str]:
     netloc = pinned_ip
     if parsed.port:
         netloc = f"{pinned_ip}:{parsed.port}"
-    rewritten = urlunparse((
-        parsed.scheme, netloc, parsed.path or "/", parsed.params,
-        parsed.query, "",
-    ))
+    rewritten = urlunparse(
+        (
+            parsed.scheme,
+            netloc,
+            parsed.path or "/",
+            parsed.params,
+            parsed.query,
+            "",
+        )
+    )
     return rewritten, host
 
 
@@ -489,9 +484,7 @@ def fetch_external_image(
                 return result
             visited.add(current_url)
 
-            ips, target_err = _validate_url_target(
-                current_url, allowed_hosts, resolver=resolver
-            )
+            ips, target_err = _validate_url_target(current_url, allowed_hosts, resolver=resolver)
             if target_err:
                 result["reason"] = f"hop {hop} 검증 실패: {target_err}"
                 return result
@@ -523,10 +516,16 @@ def fetch_external_image(
                     return result
                 if not urlparse(location).scheme:
                     parsed_curr = urlparse(current_url)
-                    location = urlunparse((
-                        parsed_curr.scheme, parsed_curr.netloc, location,
-                        "", "", "",
-                    ))
+                    location = urlunparse(
+                        (
+                            parsed_curr.scheme,
+                            parsed_curr.netloc,
+                            location,
+                            "",
+                            "",
+                            "",
+                        )
+                    )
                 current_url = location
                 continue
 
@@ -558,21 +557,15 @@ def fetch_external_image(
                 except Exception:
                     pass
             if over:
-                result["reason"] = (
-                    f"hop {hop} 수신 크기 초과({total} > {_FETCH_MAX_BYTES})"
-                )
+                result["reason"] = f"hop {hop} 수신 크기 초과({total} > {_FETCH_MAX_BYTES})"
                 return result
             body = b"".join(chunks)
             if not _matches_any_image_magic(body):
-                result["reason"] = (
-                    f"hop {hop} 매직바이트 불일치(이미지가 아님)"
-                )
+                result["reason"] = f"hop {hop} 매직바이트 불일치(이미지가 아님)"
                 return result
 
             # 매직바이트 통과 — 임시 파일로 저장(업로드 루트/cwd 아님).
-            fd, temp_path = tempfile.mkstemp(
-                prefix="clossify_fetch_", suffix=".img"
-            )
+            fd, temp_path = tempfile.mkstemp(prefix="clossify_fetch_", suffix=".img")
             try:
                 with os.fdopen(fd, "wb") as fh:
                     fh.write(body)
@@ -668,11 +661,13 @@ def attach_images(
         "notes": [],
     }
     if not isinstance(sources, list):
-        result["rejected"].append({
-            "index": -1,
-            "source": str(sources),
-            "reason": "sources 는 리스트여야 합니다",
-        })
+        result["rejected"].append(
+            {
+                "index": -1,
+                "source": str(sources),
+                "reason": "sources 는 리스트여야 합니다",
+            }
+        )
         return result
 
     # ``urls`` 는 (원래 인덱스, URL) 튜플로 모았다가 마지막에 정렬+언랩.
@@ -690,30 +685,36 @@ def attach_images(
             if kind == "local":
                 v = validate_local_image(src)
                 if not v["ok"]:
-                    result["rejected"].append({
-                        "index": idx,
-                        "source": src,
-                        "reason": "; ".join(v["errors"]),
-                    })
+                    result["rejected"].append(
+                        {
+                            "index": idx,
+                            "source": src,
+                            "reason": "; ".join(v["errors"]),
+                        }
+                    )
                     continue
                 pending_local.append((idx, v["path"]))
                 continue
             # kind == "url"
             fetch_result = fetch_fn(src, resolver=resolver)
             if not fetch_result["ok"]:
-                result["rejected"].append({
-                    "index": idx,
-                    "source": src,
-                    "reason": str(fetch_result.get("reason") or "fetch 실패"),
-                })
+                result["rejected"].append(
+                    {
+                        "index": idx,
+                        "source": src,
+                        "reason": str(fetch_result.get("reason") or "fetch 실패"),
+                    }
+                )
                 continue
             tmp = fetch_result.get("temp_path")
             if not tmp:
-                result["rejected"].append({
-                    "index": idx,
-                    "source": src,
-                    "reason": "fetch 결과에 임시 경로가 없음",
-                })
+                result["rejected"].append(
+                    {
+                        "index": idx,
+                        "source": src,
+                        "reason": "fetch 결과에 임시 경로가 없음",
+                    }
+                )
                 continue
             fetch_cleanup.append(tmp)
             # 임시 파일을 정본 가드로 재검증(매직바이트·크기 등 동일 기준).
@@ -721,11 +722,13 @@ def attach_images(
             # 매직바이트 기반 검증만 적용한다(이미 fetch 단계에서 magic 검증됨).
             v = validate_local_image(tmp, require_image_ext=False)
             if not v["ok"]:
-                result["rejected"].append({
-                    "index": idx,
-                    "source": src,
-                    "reason": "fetch 임시파일 검증 실패: " + "; ".join(v["errors"]),
-                })
+                result["rejected"].append(
+                    {
+                        "index": idx,
+                        "source": src,
+                        "reason": "fetch 임시파일 검증 실패: " + "; ".join(v["errors"]),
+                    }
+                )
                 continue
             pending_local.append((idx, tmp))
 
@@ -739,11 +742,13 @@ def attach_images(
                 # 업로드 자체가 실패하면 모든 pending_local 항목을 거부.
                 msg = f"upload 실패: {exc}"
                 for idx, p in pending_local:
-                    result["rejected"].append({
-                        "index": idx,
-                        "source": p,
-                        "reason": msg,
-                    })
+                    result["rejected"].append(
+                        {
+                            "index": idx,
+                            "source": p,
+                            "reason": msg,
+                        }
+                    )
                 uploaded_urls = None
             if uploaded_urls is not None:
                 if len(uploaded_urls) != len(pending_local):
@@ -755,11 +760,13 @@ def attach_images(
                     if i < len(uploaded_urls):
                         url_pairs.append((idx, uploaded_urls[i]))
                     else:
-                        result["rejected"].append({
-                            "index": idx,
-                            "source": paths_in_order[i],
-                            "reason": "upload 반환 URL 부재",
-                        })
+                        result["rejected"].append(
+                            {
+                                "index": idx,
+                                "source": paths_in_order[i],
+                                "reason": "upload 반환 URL 부재",
+                            }
+                        )
 
         # 입력 순서로 정렬 후 언랩.
         url_pairs.sort(key=lambda pair: pair[0])

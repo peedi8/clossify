@@ -9,6 +9,7 @@
 외부 API 호출/네트워크/실제 config 파일 의존성 없이 ``_notice_config`` /
 ``_kc_config`` 를 mock 하여 검증한다.
 """
+
 from __future__ import annotations
 
 import json
@@ -65,9 +66,7 @@ class TestOriginFailClosed:
         with mock.patch.object(naver_client, "_notice_config", return_value=cfg):
             with mock.patch.object(naver_client, "_kc_config", return_value=({}, "warn")):
                 with pytest.raises(ValueError, match="origin_area_code"):
-                    naver_client.build_payload(
-                        product, "<html></html>", ["http://x.png"]
-                    )
+                    naver_client.build_payload(product, "<html></html>", ["http://x.png"])
 
     def test_missing_origin_content_raises(self):
         """counterexample: origin_area_code 만 있고 origin_content 없음 → ValueError."""
@@ -115,7 +114,8 @@ class TestKCConfigGated:
     def test_kc_absent_no_kc_fields_in_payload(self):
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
             with mock.patch.object(
-                naver_client, "_kc_config",
+                naver_client,
+                "_kc_config",
                 return_value=({}, "kc_warning_text"),
             ):
                 payload = naver_client.build_payload(
@@ -127,7 +127,8 @@ class TestKCConfigGated:
     def test_kc_absent_warning_in_meta(self):
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
             with mock.patch.object(
-                naver_client, "_kc_config",
+                naver_client,
+                "_kc_config",
                 return_value=({}, "kc_warning_text"),
             ):
                 payload = naver_client.build_payload(
@@ -142,7 +143,8 @@ class TestKCConfigGated:
         }
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
             with mock.patch.object(
-                naver_client, "_kc_config",
+                naver_client,
+                "_kc_config",
                 return_value=(kc_block, ""),
             ):
                 payload = naver_client.build_payload(
@@ -181,9 +183,7 @@ class TestConfigValuesPropagated:
         cfg_notice = {"origin_area_code": "07", "origin_content": "일본"}
         with mock.patch.object(naver_client, "_notice_config", return_value=cfg_notice):
             with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
-                payload = naver_client.build_payload(
-                    product, "<html></html>", ["http://x.png"]
-                )
+                payload = naver_client.build_payload(product, "<html></html>", ["http://x.png"])
         info = payload["originProduct"]["detailAttribute"]["originAreaInfo"]
         assert info["originAreaCode"] == "07"
         assert info["content"] == "일본"
@@ -199,9 +199,7 @@ class TestConfigValuesPropagated:
         cfg_notice = {"origin_area_code": "07", "origin_content": "일본"}
         with mock.patch.object(naver_client, "_notice_config", return_value=cfg_notice):
             with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
-                payload = naver_client.build_payload(
-                    product, "<html></html>", ["http://x.png"]
-                )
+                payload = naver_client.build_payload(product, "<html></html>", ["http://x.png"])
         info = payload["originProduct"]["detailAttribute"]["originAreaInfo"]
         assert info["originAreaCode"] == "03"
         assert info["content"] == "미국"
@@ -219,12 +217,8 @@ class TestConfigValuesPropagated:
             "made_in": "한국",
         }
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
-            with mock.patch.object(
-                naver_client, "_kc_config", return_value=(kc_block, "")
-            ):
-                payload = naver_client.build_payload(
-                    product, "<html></html>", ["http://x.png"]
-                )
+            with mock.patch.object(naver_client, "_kc_config", return_value=(kc_block, "")):
+                payload = naver_client.build_payload(product, "<html></html>", ["http://x.png"])
         detail = payload["originProduct"]["detailAttribute"]
         assert detail["certificationTargetExcludeContent"] == kc_block
 
@@ -236,9 +230,7 @@ class TestModelNameNoExternalPrefix:
     """``num_iid``/``item_id`` 에서 ``TB-`` 접두사를 만들지 않는지."""
 
     def test_model_name_default_returns_empty(self):
-        assert naver_client._model_name_default(
-            {"num_iid": "123", "item_id": "456"}
-        ) == ""
+        assert naver_client._model_name_default({"num_iid": "123", "item_id": "456"}) == ""
 
     def test_no_tb_prefix_in_payload(self):
         product = {
@@ -251,9 +243,7 @@ class TestModelNameNoExternalPrefix:
         }
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
             with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
-                payload = naver_client.build_payload(
-                    product, "<html></html>", ["http://x.png"]
-                )
+                payload = naver_client.build_payload(product, "<html></html>", ["http://x.png"])
         etc = payload["originProduct"]["detailAttribute"]["productInfoProvidedNotice"]["etc"]
         # 모델명이 입력되지 않았으므로 modelName 필드 자체가 없어야 한다.
         assert "modelName" not in etc
@@ -269,9 +259,7 @@ class TestModelNameNoExternalPrefix:
         cfg = {"origin_area_code": "05", "origin_content": "한국", "model_name": "MDL-X1"}
         with mock.patch.object(naver_client, "_notice_config", return_value=cfg):
             with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
-                payload = naver_client.build_payload(
-                    product, "<html></html>", ["http://x.png"]
-                )
+                payload = naver_client.build_payload(product, "<html></html>", ["http://x.png"])
         etc = payload["originProduct"]["detailAttribute"]["productInfoProvidedNotice"]["etc"]
         assert etc["modelName"] == "MDL-X1"
 

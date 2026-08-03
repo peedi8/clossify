@@ -11,6 +11,7 @@
 
 실제 네트워크 호출·DNS 해석은 전부 monkeypatch 한다(해석기·세션 주입).
 """
+
 from __future__ import annotations
 
 import os
@@ -81,7 +82,7 @@ class FakeResponse:
         if not self._body:
             return
         for i in range(0, len(self._body), chunk_size):
-            yield self._body[i:i + chunk_size]
+            yield self._body[i : i + chunk_size]
 
     def close(self):
         self._closed = True
@@ -95,12 +96,25 @@ class FakeSession:
         self._responses = responses
         self.calls = []
 
-    def get(self, url, headers=None, stream=False, timeout=None,
-            allow_redirects=False, verify=True, **kw):
-        self.calls.append({
-            "url": url, "headers": headers, "stream": stream,
-            "timeout": timeout, "allow_redirects": allow_redirects,
-        })
+    def get(
+        self,
+        url,
+        headers=None,
+        stream=False,
+        timeout=None,
+        allow_redirects=False,
+        verify=True,
+        **kw,
+    ):
+        self.calls.append(
+            {
+                "url": url,
+                "headers": headers,
+                "stream": stream,
+                "timeout": timeout,
+                "allow_redirects": allow_redirects,
+            }
+        )
         if isinstance(self._responses, FakeResponse):
             return self._responses
         # URL 패턴 매칭 — IP 치환된 URL 이면 Host 헤더를 기준으로 매칭.
@@ -157,9 +171,7 @@ class TestLocalGuardAcceptance:
         assert v["ok"] is False
         assert any("심볼릭 링크" in e for e in v["errors"])
 
-    def test_path_outside_upload_root_rejected(
-        self, tmp_path, monkeypatch
-    ):
+    def test_path_outside_upload_root_rejected(self, tmp_path, monkeypatch):
         """④ CLOSSIFY_UPLOAD_ROOT 설정 시 루트 밖 절대경로 → 거부."""
         root = tmp_path / "upload_root"
         root.mkdir()
@@ -192,9 +204,7 @@ class TestLocalGuardAcceptance:
         v = images.validate_local_image(str(webp))
         assert v["ok"] is True, v["errors"]
 
-    def test_containment_unset_passes_but_flagged(
-        self, tmp_path, monkeypatch
-    ):
+    def test_containment_unset_passes_but_flagged(self, tmp_path, monkeypatch):
         """루트 미설정이면 컨테인먼트 검사 미적용(통과) + contained=False 표기."""
         monkeypatch.delenv("CLOSSIFY_UPLOAD_ROOT", raising=False)
         png = tmp_path / "ok.png"
@@ -248,9 +258,7 @@ class TestSsrfCounterexamples:
         else:
             os.environ["CLOSSIFY_UPLOAD_ROOT"] = self._orig_root
 
-    def _ssrf_reject(
-        self, url, host_to_ips, allowed_hosts, *, status=200, body=PNG_HEADER
-    ):
+    def _ssrf_reject(self, url, host_to_ips, allowed_hosts, *, status=200, body=PNG_HEADER):
         r = images.fetch_external_image(
             url,
             allowed_hosts=allowed_hosts,
@@ -328,9 +336,7 @@ class TestSsrfCounterexamples:
         r = images.fetch_external_image(
             "http://[::ffff:127.0.0.1]/x.jpg",
             allowed_hosts=("::ffff:127.0.0.1",),
-            resolver=make_resolver(
-                {"::ffff:127.0.0.1": ["::ffff:127.0.0.1"]}
-            ),
+            resolver=make_resolver({"::ffff:127.0.0.1": ["::ffff:127.0.0.1"]}),
             session=FakeSession(FakeResponse()),
         )
         assert r["ok"] is False
@@ -356,17 +362,18 @@ class TestSsrfCounterexamples:
                     "169.254.169.254": ["169.254.169.254"],
                 }
             ),
-            session=FakeSession({
-                # 첫 홉은 302 리다이렉트 — Location 이 메타데이터 엔드포인트.
-                "good.example.com": FakeResponse(
-                    status_code=302, body=b"",
-                    location="http://169.254.169.254/latest/meta-data",
-                ),
-                # 두 번째 홉은 정상 응답이어도 검증 단계에서 거부돼야 함.
-                "169.254.169.254": FakeResponse(
-                    status_code=200, body=PNG_HEADER
-                ),
-            }),
+            session=FakeSession(
+                {
+                    # 첫 홉은 302 리다이렉트 — Location 이 메타데이터 엔드포인트.
+                    "good.example.com": FakeResponse(
+                        status_code=302,
+                        body=b"",
+                        location="http://169.254.169.254/latest/meta-data",
+                    ),
+                    # 두 번째 홉은 정상 응답이어도 검증 단계에서 거부돼야 함.
+                    "169.254.169.254": FakeResponse(status_code=200, body=PNG_HEADER),
+                }
+            ),
         )
         assert r["ok"] is False
         assert "169.254" in r["reason"] or "링크" in r["reason"] or "내부" in r["reason"]
@@ -424,9 +431,7 @@ class TestSsrfCounterexamples:
             "http://good.example.com/x.jpg",
             allowed_hosts=("good.example.com",),
             resolver=make_resolver({"good.example.com": ["93.184.216.34"]}),
-            session=FakeSession(FakeResponse(
-                status_code=200, body=b"<html>not image</html>"
-            )),
+            session=FakeSession(FakeResponse(status_code=200, body=b"<html>not image</html>")),
         )
         assert r["ok"] is False
         assert "매직바이트" in r["reason"]
@@ -451,11 +456,11 @@ class TestSsrfCounterexamples:
             loop_url,
             allowed_hosts=("good.example.com",),
             resolver=make_resolver({"good.example.com": ["93.184.216.34"]}),
-            session=FakeSession({
-                "good.example.com": FakeResponse(
-                    status_code=302, body=b"", location=loop_url
-                ),
-            }),
+            session=FakeSession(
+                {
+                    "good.example.com": FakeResponse(status_code=302, body=b"", location=loop_url),
+                }
+            ),
             max_hops=5,
         )
         assert r["ok"] is False
@@ -615,9 +620,7 @@ class TestMcpUploadUsesGuard:
         """반환 계약 유지: {ok, image_urls, count, error} 키."""
         png = tmp_path / "ok.png"
         png.write_bytes(PNG_HEADER)
-        with mock.patch.object(
-            naver_client, "upload_images", return_value=["https://cdn/x.png"]
-        ):
+        with mock.patch.object(naver_client, "upload_images", return_value=["https://cdn/x.png"]):
             r = mcp_server.upload_images([str(png)])
         assert r["ok"] is True
         assert set(r.keys()) >= {"ok", "image_urls", "count", "error"}
@@ -632,6 +635,7 @@ class TestToolRegistrationPreserved:
 
     def test_tool_count(self):
         import asyncio
+
         tools = mcp_server.mcp.list_tools()
         if hasattr(tools, "__await__"):
             try:
@@ -653,12 +657,21 @@ class TestModuleStructure:
         src = (_SRC / "clossify" / "images.py").read_text(encoding="utf-8")
         # from . import ... 또는 from clossify import ... 형태만 허용.
         import re
+
         matches = re.findall(r"^\s*from\s+\.?\s*import\s+(\w+)", src, re.MULTILINE)
         # common 과 naver_client 만 허용.
         forbidden_modules = {
-            "mcp_server", "qa_agents", "category", "category_meta",
-            "templates", "keyword_volume", "seo", "copywriting",
-            "agent_calls", "text_props", "register",
+            "mcp_server",
+            "qa_agents",
+            "category",
+            "category_meta",
+            "templates",
+            "keyword_volume",
+            "seo",
+            "copywriting",
+            "agent_calls",
+            "text_props",
+            "register",
         }
         for m in matches:
             assert m not in forbidden_modules, f"images -> {m} import 금지"

@@ -91,12 +91,21 @@ cp config.example.json .local/config.json
 > 것. 아래 명령으로 개발 의존성을 설치하면 `pyproject.toml` 의
 > `[project.optional-dependencies] dev` 에 `ruff==0.6.9` 가 고정되어 있다.
 
+### 커밋 전 검증 — `scripts/verify_local.py` 한 번이면 충분
+
+개별 린트/테스트 명령을 따로 돌리지 말고 **이 스크립트 하나**를 돌린다. CI 가
+실행하는 검사(`ruff check`·`ruff format --check`·`pip install -e ".[dev]"`·
+`pytest -q`·`python scripts/scan_repo.py`)를 **같은 순서로 그대로** 실행하므로,
+이 스크립트가 exit 0 이면 CI 도 녹색이다. 하나라도 실패하면 exit 1 이며 어느
+단계에서 깨졌는지 바로 보인다. ruff 버전이 CI 와 다르면 경고를 출력한다.
+
 ```sh
 pip install -e ".[dev]"            # ruff==0.6.9 포함 개발 의존성 설치
-ruff check .                       # 린트 — CI 와 동일 명령/구성
-pytest                             # 기존 테스트
-python scripts/scan_repo.py        # 금칙어·한자·커밋메시지 스캔, 위반 시 exit 1
+python scripts/verify_local.py     # 커밋 전 이것만 돌리면 CI 와 같은 검사를 한다
 ```
+
+> 이 스크립트와 `.github/workflows/ci.yml` 은 한 쌍이다. 워크플로를 바꾸면
+> 스크립트도 함께 바꾼다(스크립트 상단 주석에 같은 안내가 있다).
 
 pre-commit(gitleaks 등) 설정은 저장소 참고. 자세한 설계·모듈 의존·데이터 자산은
 `docs/ARCHITECTURE.md`, 배경 결정은 `docs/adr/` 참고.

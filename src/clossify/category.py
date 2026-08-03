@@ -15,6 +15,7 @@
 의존 방향: ``agent_calls`` (상위) → ``category`` (본 모듈).
 ``common``, ``seo``, ``text_props``, ``category_meta`` 는 어디서든 import 가능.
 """
+
 from __future__ import annotations
 
 import re
@@ -55,11 +56,30 @@ _CATEGORY_CONTEXT_ALIASES = (
     ("북유럽", 8),
 )
 
-_CATEGORY_GENERIC_STOPWORDS = frozenset({
-    "상품", "제품", "옵션", "타입", "종류", "선택", "구성", "세트",
-    "모음", "판매", "대형", "소형", "고급", "인기", "추천", "신상",
-    "1개", "2개", "3개", "4개",
-})
+_CATEGORY_GENERIC_STOPWORDS = frozenset(
+    {
+        "상품",
+        "제품",
+        "옵션",
+        "타입",
+        "종류",
+        "선택",
+        "구성",
+        "세트",
+        "모음",
+        "판매",
+        "대형",
+        "소형",
+        "고급",
+        "인기",
+        "추천",
+        "신상",
+        "1개",
+        "2개",
+        "3개",
+        "4개",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -98,15 +118,17 @@ def _category_rows():
         path = str(cat.get("wholeCategoryName") or "")
         names = [str(cat.get("name") or "")]
         leaf = names[0]
-        rows.append({
-            "id": cid,
-            "path": path,
-            "names": names,
-            "leaf": leaf,
-            "depth": path.count(">") + 1,
-            "search": _normalize_category_match_text(path + " " + " ".join(names)),
-            "leaf_search": _normalize_category_match_text(leaf),
-        })
+        rows.append(
+            {
+                "id": cid,
+                "path": path,
+                "names": names,
+                "leaf": leaf,
+                "depth": path.count(">") + 1,
+                "search": _normalize_category_match_text(path + " " + " ".join(names)),
+                "leaf_search": _normalize_category_match_text(leaf),
+            }
+        )
     _CATEGORY_ROWS_CACHE = rows
     return rows
 
@@ -156,46 +178,54 @@ def _category_token_specs(title_ko, props, desc_text=""):
     Returns:
         ``[{canonical, terms, weight, kind, matched}, ...]``
     """
-    haystack = _category_input_text(
-        title_ko, props, desc_text, include_desc=bool(desc_text)
-    )
+    haystack = _category_input_text(title_ko, props, desc_text, include_desc=bool(desc_text))
     specs: list[dict] = []
 
     # Pass 1: 타입 별칭.
     for canonical, aliases in _CATEGORY_TYPE_ALIASES:
-        matched = [a for a in aliases if _category_input_has_term(haystack, _normalize_category_match_text(a))]
+        matched = [
+            a
+            for a in aliases
+            if _category_input_has_term(haystack, _normalize_category_match_text(a))
+        ]
         if matched:
-            specs.append({
-                "canonical": canonical,
-                "terms": matched,
-                "weight": 260 if len(matched) >= 2 else 180,
-                "kind": "type",
-                "matched": matched,
-            })
+            specs.append(
+                {
+                    "canonical": canonical,
+                    "terms": matched,
+                    "weight": 260 if len(matched) >= 2 else 180,
+                    "kind": "type",
+                    "matched": matched,
+                }
+            )
 
     # Pass 2: 컨텍스트 별칭.
     for token, weight in _CATEGORY_CONTEXT_ALIASES:
         if _category_input_has_term(haystack, _normalize_category_match_text(token)):
-            specs.append({
-                "canonical": token,
-                "terms": [token],
-                "weight": weight,
-                "kind": "context",
-                "matched": [token],
-            })
+            specs.append(
+                {
+                    "canonical": token,
+                    "terms": [token],
+                    "weight": weight,
+                    "kind": "context",
+                    "matched": [token],
+                }
+            )
 
     # Pass 3: 일반 토큰 (2자 이상 영숫자/한글).
     seen = {s["canonical"] for s in specs}
     for token in re.findall(r"[0-9a-z가-힣]{2,}", haystack):
         if token in seen or token in _CATEGORY_GENERIC_STOPWORDS:
             continue
-        specs.append({
-            "canonical": token,
-            "terms": [token],
-            "weight": 18,
-            "kind": "generic",
-            "matched": [token],
-        })
+        specs.append(
+            {
+                "canonical": token,
+                "terms": [token],
+                "weight": 18,
+                "kind": "generic",
+                "matched": [token],
+            }
+        )
         seen.add(token)
         if len(specs) >= 30:  # 최대 스펙 수 제한.
             break
@@ -239,14 +269,16 @@ def _category_candidates_from_tokens(token_specs, *, limit=20):
                     if term not in matched_terms:
                         matched_terms.append(term)
         if score > 0:
-            scored.append({
-                "id": row.get("id"),
-                "path": row.get("path"),
-                "leaf": row.get("leaf"),
-                "score": score,
-                "matched_terms": matched_terms[:8],
-                "exact_leaf": exact_leaf,
-            })
+            scored.append(
+                {
+                    "id": row.get("id"),
+                    "path": row.get("path"),
+                    "leaf": row.get("leaf"),
+                    "score": score,
+                    "matched_terms": matched_terms[:8],
+                    "exact_leaf": exact_leaf,
+                }
+            )
     scored.sort(key=lambda c: (-c["score"], str(c.get("path")), str(c.get("id"))))
     return scored[:limit]
 
@@ -277,6 +309,7 @@ def _strong_category_candidate(candidates):
 # ``common._llm_hint()`` 디스크립터를 반환하여 MCP 호스트가 상위 후보 중 하나를
 # 선택하도록 위임한다.
 # ---------------------------------------------------------------------------
+
 
 def llm_select_category_hint(title_ko, props, desc_text, candidates):
     """카테고리 확정을 위한 ``llm_hint`` 디스크립터 반환.
@@ -329,6 +362,7 @@ def _llm_response_candidate_id(response):
 # ---------------------------------------------------------------------------
 # 공용 진입점 — classify_category (source L6982-L7071).
 # ---------------------------------------------------------------------------
+
 
 def classify_category(title_ko, props, desc_text="", *, fallback=None):
     """카테고리 분류 공용 진입점 (source L6982-L7071, 개정).

@@ -22,6 +22,7 @@ and its helpers) is ported from sourcing.py. Search-volume lookup
 failures in ``_apply_search_seo_to_naming`` are no longer silently
 swallowed.
 """
+
 from __future__ import annotations
 
 import re
@@ -54,13 +55,21 @@ SEO_TITLE_TARGET_MAX_LEN: int = 50
 # Korean literals are required for the dedup logic to function.
 # ---------------------------------------------------------------------------
 
-SEO_SYNONYM_DEDUP_GROUPS = (
-    ("화병", "꽃병", "플라워베이스", "플라워 베이스", "vase", "베이스"),
-)
+SEO_SYNONYM_DEDUP_GROUPS = (("화병", "꽃병", "플라워베이스", "플라워 베이스", "vase", "베이스"),)
 
 SEO_SEMANTIC_DUPLICATE_GROUPS = (
     ("화병", "꽃병", "플라워베이스", "플라워 베이스", "vase", "베이스"),
-    ("인테리어", "거실인테리어", "사무실인테리어", "홈데코", "집꾸미기", "소품샵", "데코", "장식소품", "인테리어소품"),
+    (
+        "인테리어",
+        "거실인테리어",
+        "사무실인테리어",
+        "홈데코",
+        "집꾸미기",
+        "소품샵",
+        "데코",
+        "장식소품",
+        "인테리어소품",
+    ),
     ("도자기", "토기", "세라믹"),
     ("유리", "글라스"),
     ("미니", "작은", "소형"),
@@ -72,6 +81,7 @@ SEO_SEMANTIC_DUPLICATE_GROUPS = (
 # ---------------------------------------------------------------------------
 # List/string normalisation helpers (source L3712-L3744). Pure-Python.
 # ---------------------------------------------------------------------------
+
 
 def _jsonish_loads(value):
     """Best-effort parse a string into a Python object (dict/list/scalar).
@@ -114,12 +124,8 @@ def _normalize_dropped_entries(value, *, limit=20):
     out: list[dict] = []
     for row in rows:
         if isinstance(row, dict):
-            word = _detail_safe_text(
-                row.get("word") or row.get("term") or row.get("keyword")
-            )
-            reason = _detail_safe_text(
-                row.get("reason") or row.get("why")
-            ) or "title-excluded"
+            word = _detail_safe_text(row.get("word") or row.get("term") or row.get("keyword"))
+            reason = _detail_safe_text(row.get("reason") or row.get("why")) or "title-excluded"
         else:
             word = _detail_safe_text(row)
             reason = "title-excluded"
@@ -133,6 +139,7 @@ def _normalize_dropped_entries(value, *, limit=20):
 # ---------------------------------------------------------------------------
 # Agent-rule driven term stripping (source L3747-L3759).
 # ---------------------------------------------------------------------------
+
 
 def _agent_title_exclusion_terms():
     """Return the hard-coded title exclusion term list from agent rules.
@@ -208,6 +215,7 @@ def _valid_seo_title(text):
 # stub only collapsed exact-duplicate whitespace tokens and silently let
 # real synonyms (e.g. 화병/꽃병/플라워베이스) through.
 # ---------------------------------------------------------------------------
+
 
 def _seo_title_units(title):
     """Split a title string into normalised keyword units (source L4870)."""
@@ -332,6 +340,7 @@ def _seo_sanitize_synonym_duplicates(text, *, max_len=SEO_TITLE_TARGET_MAX_LEN):
 # downstream code from silently passing an empty source title.
 # ---------------------------------------------------------------------------
 
+
 def _fallback_naming_agent(source_title, props, category_path):
     """Build a deterministic fallback naming result.
 
@@ -339,25 +348,22 @@ def _fallback_naming_agent(source_title, props, category_path):
     ``title``, ``dropped``, ``kept_keywords``, ``story_terms``.
     """
     if not str(source_title or "").strip():
-        raise ValueError(
-            "source_title must be a non-empty string for naming fallback"
-        )
-    source_text = " ".join([
-        str(source_title or ""),
-        " ".join(_flatten_prop_terms(props, limit=24, clean=False)),
-        str(category_path or ""),
-    ])
+        raise ValueError("source_title must be a non-empty string for naming fallback")
+    source_text = " ".join(
+        [
+            str(source_title or ""),
+            " ".join(_flatten_prop_terms(props, limit=24, clean=False)),
+            str(category_path or ""),
+        ]
+    )
     fallback = _sanitize_seo_title(str(source_title or ""), max_len=100)
     if not _valid_seo_title(fallback):
-        fallback = _fallback_seo_title(
-            _detail_safe_text(source_title), props, category_path
-        )
+        fallback = _fallback_seo_title(_detail_safe_text(source_title), props, category_path)
     title, dropped = _strip_agent_exclusion_terms(fallback, source_text, [])
     title = _seo_sanitize_synonym_duplicates(title, max_len=100)
     if not title:
         title = _sanitize_seo_title(
-            _props_summary(props)
-            or str(category_path or "").split(">")[-1],
+            _props_summary(props) or str(category_path or "").split(">")[-1],
             max_len=100,
         )
     kept = [w for w in title.split() if w][:10]
@@ -381,17 +387,17 @@ def _normalize_naming_result(data, source_title, props, category_path):
         ValueError: if ``source_title`` is falsy (spec requirement).
     """
     if not str(source_title or "").strip():
-        raise ValueError(
-            "source_title must be a non-empty string for naming normalisation"
-        )
+        raise ValueError("source_title must be a non-empty string for naming normalisation")
     fallback = _fallback_naming_agent(source_title, props, category_path)
     if not isinstance(data, dict):
         return fallback
-    source_text = " ".join([
-        str(source_title or ""),
-        " ".join(_flatten_prop_terms(props, limit=24, clean=False)),
-        str(category_path or ""),
-    ])
+    source_text = " ".join(
+        [
+            str(source_title or ""),
+            " ".join(_flatten_prop_terms(props, limit=24, clean=False)),
+            str(category_path or ""),
+        ]
+    )
     title = _sanitize_seo_title(data.get("title"), max_len=100)
     if not _valid_seo_title(title):
         title = fallback["title"]
@@ -418,7 +424,10 @@ def _normalize_naming_result(data, source_title, props, category_path):
 # on the keyword volume client and LLM provider.
 # ---------------------------------------------------------------------------
 
-def _apply_search_seo_to_naming(naming_result, source_title, props, category_path, *, source_context=None):
+
+def _apply_search_seo_to_naming(
+    naming_result, source_title, props, category_path, *, source_context=None
+):
     """Refine a naming result with search-volume-aware SEO adjustments.
 
     Source L5017. Returns an ``llm_hint`` descriptor that bundles the
@@ -500,9 +509,7 @@ def _agent_rules_bundle(agent_filename):
     candidates.append(common.AGENTS_DIR / agent_filename)
     # 2. Wheel-bundled copy: clossify/agents/<filename>
     try:
-        pkg_path = resources.files("clossify").joinpath(
-            "agents", agent_filename
-        )
+        pkg_path = resources.files("clossify").joinpath("agents", agent_filename)
         candidates.append(pkg_path)
     except Exception:
         pass
@@ -519,8 +526,7 @@ def _agent_rules_bundle(agent_filename):
         except Exception:
             continue
     raise FileNotFoundError(
-        f"Agent asset not found: agents/{agent_filename} "
-        "(T-201a: _agent_rules_bundle)"
+        f"Agent asset not found: agents/{agent_filename} " "(T-201a: _agent_rules_bundle)"
     )
 
 
@@ -569,9 +575,7 @@ def naming_agent(source_title, props, category_path):
         ValueError: if ``source_title`` is falsy.
     """
     if not str(source_title or "").strip():
-        raise ValueError(
-            "source_title must be a non-empty string for naming_agent"
-        )
+        raise ValueError("source_title must be a non-empty string for naming_agent")
     from .common import _llm_hint
 
     prop_terms = _flatten_prop_terms(props, limit=24, clean=False)

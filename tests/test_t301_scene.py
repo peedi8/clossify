@@ -7,6 +7,7 @@
   - provenance: 사용자 제공 값의 source.field 가 실제 입력 경로와 일치.
   - missing 표시: 사용자가 소재를 주지 않은 경우 행이 missing: true 로 남음.
 """
+
 from __future__ import annotations
 
 import copy
@@ -87,9 +88,7 @@ class TestDeterminism:
         s2c = copy.deepcopy(s2)
         s1c.pop("generatedAt", None)
         s2c.pop("generatedAt", None)
-        assert s1c == s2c, (
-            "같은 입력으로 두 번 호출했으나 generatedAt 외에 차이가 있음"
-        )
+        assert s1c == s2c, "같은 입력으로 두 번 호출했으나 generatedAt 외에 차이가 있음"
 
     def test_ids_stable(self):
         """모든 id 가 두 호출 간 동일."""
@@ -103,19 +102,18 @@ class TestDeterminism:
             ids = []
             for sec in scene["sections"]:
                 ids.append(sec["id"])
-                for blk in (sec.get("blocks") or []):
+                for blk in sec.get("blocks") or []:
                     ids.append(blk["id"])
-                for row in (sec.get("rows") or []):
+                for row in sec.get("rows") or []:
                     ids.append(row["id"])
             return ids
 
-        assert _all_ids(s1) == _all_ids(s2), (
-            "id 리스트가 두 호출 간 불일치"
-        )
+        assert _all_ids(s1) == _all_ids(s2), "id 리스트가 두 호출 간 불일치"
 
     def test_generated_at_changes(self):
         """generatedAt 은 시각에 따라 달라질 수 있다(결정론 제외 대상)."""
         import time
+
         product = _sample_product()
         s1 = detail_render.build_scene(product, [], [])
         time.sleep(0.01)
@@ -168,16 +166,14 @@ class TestHtmlNoRegression:
         intro = [s for s in scene["sections"] if s["id"] == "intro"][0]
         title_block = [b for b in intro["blocks"] if b["id"] == "intro.title"][0]
         if title_block["text"]:
-            assert title_block["text"] in html, (
-                f"intro.title 텍스트가 HTML 에 없음: {title_block['text']!r}"
-            )
+            assert (
+                title_block["text"] in html
+            ), f"intro.title 텍스트가 HTML 에 없음: {title_block['text']!r}"
         # notice 값이 HTML 에 있어야 함(빈 값/missing 제외).
         notice_sec = [s for s in scene["sections"] if s["id"] == "notice"][0]
         for row in notice_sec["rows"]:
             if row["value"] and not row["source"].get("missing"):
-                assert row["value"] in html, (
-                    f"notice 값이 HTML 에 없음: {row['value']!r}"
-                )
+                assert row["value"] in html, f"notice 값이 HTML 에 없음: {row['value']!r}"
 
     def test_html_image_urls_match_scene(self):
         """scene 의 이미지 URL 이 HTML 에 모두 등장."""
@@ -275,9 +271,9 @@ class TestPrepareListingConsistency:
         notice_sec = [s for s in scene["sections"] if s["id"] == "notice"][0]
         for row in notice_sec["rows"]:
             if row["value"] and not row["source"].get("missing"):
-                assert row["value"] in html, (
-                    f"scene 의 notice 값이 HTML 에 없음(정합 위반): {row['value']!r}"
-                )
+                assert (
+                    row["value"] in html
+                ), f"scene 의 notice 값이 HTML 에 없음(정합 위반): {row['value']!r}"
 
     def test_scene_and_html_from_same_input(self, isolated_prepared_dir):
         """scene 의 이미지 URL 과 HTML 의 이미지 URL 이 일치."""
@@ -326,9 +322,9 @@ class TestProvenance:
         # 현재 구조에서 notice dict 를 평탄화하므로 행 라벨은 중첩 키의 최상단.
         # source.field 는 notice.<key> 형태.
         for row in notice["rows"]:
-            assert row["source"]["field"].startswith("notice."), (
-                f"notice source.field 가 notice. 접두사 아님: {row['source']['field']!r}"
-            )
+            assert row["source"]["field"].startswith(
+                "notice."
+            ), f"notice source.field 가 notice. 접두사 아님: {row['source']['field']!r}"
 
     def test_provenance_block_composed(self):
         scene = detail_render.build_scene({"name": "x"}, [], [])
@@ -365,9 +361,7 @@ class TestMissingMarking:
         # color 는 값이 있으므로 missing 이 아님.
         for row in notice["rows"]:
             if (row["label"] and row["label"].startswith("color")) or "블랙" in str(row["value"]):
-                assert not row["source"].get("missing"), (
-                    f"값이 있는 행이 missing 표시됨: {row}"
-                )
+                assert not row["source"].get("missing"), f"값이 있는 행이 missing 표시됨: {row}"
 
     def test_empty_name_marked_missing(self):
         """상품명을 주지 않으면 intro.title 이 missing: true."""
@@ -392,9 +386,9 @@ class TestMissingMarking:
         notice = [s for s in scene["sections"] if s["id"] == "notice"][0]
         # 빈항목 행이 존재해야 함.
         labels = {r["label"] for r in notice["rows"]}
-        assert any("빈항목" in (l or "") for l in labels), (
-            "빈 값 행이 scene 에서 사라짐(생략 금지 위반)"
-        )
+        assert any(
+            "빈항목" in (l or "") for l in labels
+        ), "빈 값 행이 scene 에서 사라짐(생략 금지 위반)"
         # 해당 행의 value 는 빈 문자열, source.missing 은 true.
         empty_rows = [r for r in notice["rows"] if "빈항목" in (r["label"] or "")]
         assert len(empty_rows) == 1
@@ -449,9 +443,7 @@ class TestSceneStructure:
         """scene 섹션에 HTML 전용 키(html)가 노출되지 않음."""
         scene = detail_render.build_scene({"name": "x"}, ["http://a.png"], [])
         for sec in scene["sections"]:
-            assert "html" not in sec, (
-                f"scene 섹션에 html 키가 노출됨: {sec['id']}"
-            )
+            assert "html" not in sec, f"scene 섹션에 html 키가 노출됨: {sec['id']}"
 
 
 # --------------------------------------------------------------------------- #
@@ -492,9 +484,9 @@ class TestNoticeDecomposition:
         scene = detail_render.build_scene(product, [], [])
         notice = [s for s in scene["sections"] if s["id"] == "notice"][0]
         for row in notice["rows"]:
-            assert not row["value"].startswith("{"), (
-                f"객체 문자열화 발견: {row['label']}={row['value']!r}"
-            )
+            assert not row["value"].startswith(
+                "{"
+            ), f"객체 문자열화 발견: {row['label']}={row['value']!r}"
 
     def test_source_field_includes_full_path(self):
         """분해된 행의 source.field 가 notice.<node>.<field> 형태."""
@@ -508,9 +500,9 @@ class TestNoticeDecomposition:
         scene = detail_render.build_scene(product, [], [])
         notice = [s for s in scene["sections"] if s["id"] == "notice"][0]
         material_row = [r for r in notice["rows"] if r["label"] == "material"][0]
-        assert material_row["source"]["field"] == "notice.wear.material", (
-            f"source.field 불일치: {material_row['source']['field']!r}"
-        )
+        assert (
+            material_row["source"]["field"] == "notice.wear.material"
+        ), f"source.field 불일치: {material_row['source']['field']!r}"
 
     def test_nested_dict_value_not_stringified(self):
         """중첩 dict 값이 문자열화되어 value 에 들어가지 않음."""
@@ -519,9 +511,9 @@ class TestNoticeDecomposition:
         notice = [s for s in scene["sections"] if s["id"] == "notice"][0]
         for row in notice["rows"]:
             # value 가 파이썬 dict 문자열화 결과가 아닌지 확인.
-            assert "material" not in row["value"] or row["label"] == "material", (
-                f"dict 문자열화 의심: {row}"
-            )
+            assert (
+                "material" not in row["value"] or row["label"] == "material"
+            ), f"dict 문자열화 의심: {row}"
 
     def test_flat_korean_keys_unchanged(self):
         """flat 한국어 키 notice 도 여전히 올바르게 동작."""
@@ -552,16 +544,15 @@ class TestMissingRequiredFields:
         material_rows = [r for r in notice["rows"] if r["label"] == "material"]
         assert len(material_rows) >= 1, "material 행이 아예 없음(결함 2)"
         mr = material_rows[0]
-        assert mr["source"].get("missing") is True, (
-            f"material 행이 missing 표시 아님: {mr}"
-        )
-        assert mr["value"] == "", (
-            f"missing material 행의 value 가 빈 문자열이 아님: {mr['value']!r}"
-        )
+        assert mr["source"].get("missing") is True, f"material 행이 missing 표시 아님: {mr}"
+        assert (
+            mr["value"] == ""
+        ), f"missing material 행의 value 가 빈 문자열이 아님: {mr['value']!r}"
 
     def test_missing_fields_match_notice_types_json(self):
         """missing 으로 표시된 필드가 notice_types.json 의 WEAR 필수 필드 중 미제공분과 일치."""
         from clossify import qa_agents
+
         spec = qa_agents._notice_type_spec("WEAR")
         assert spec is not None, "WEAR 타입을 찾을 수 없음"
         required = set(spec.get("fields") or [])
@@ -580,15 +571,11 @@ class TestMissingRequiredFields:
         }
         scene = detail_render.build_scene(product, [], [])
         notice = [s for s in scene["sections"] if s["id"] == "notice"][0]
-        missing_labels = {
-            r["label"] for r in notice["rows"]
-            if r["source"].get("missing")
-        }
+        missing_labels = {r["label"] for r in notice["rows"] if r["source"].get("missing")}
         # expected_missing 중 scene 에 missing 행으로 있는지 확인.
         for field in expected_missing:
             assert field in missing_labels, (
-                f"필수 필드 {field} 가 missing 행에 없음. "
-                f"missing 행들: {missing_labels}"
+                f"필수 필드 {field} 가 missing 행에 없음. " f"missing 행들: {missing_labels}"
             )
 
     def test_no_invented_fields_outside_required(self):
@@ -597,13 +584,12 @@ class TestMissingRequiredFields:
         scene = detail_render.build_scene(product, [], [])
         notice = [s for s in scene["sections"] if s["id"] == "notice"][0]
         from clossify import qa_agents
+
         spec = qa_agents._notice_type_spec("WEAR")
         required = set(spec.get("fields") or [])
         # 모든 행의 라벨이 필수 필드에 포함되어야 함(임의 필드 없음).
         for row in notice["rows"]:
-            assert row["label"] in required, (
-                f"필수 목록 밖의 임의 필드 발견: {row['label']!r}"
-            )
+            assert row["label"] in required, f"필수 목록 밖의 임의 필드 발견: {row['label']!r}"
 
     def test_missing_row_value_empty_string(self):
         """missing 행의 value 는 빈 문자열이어야 함."""
@@ -612,9 +598,9 @@ class TestMissingRequiredFields:
         notice = [s for s in scene["sections"] if s["id"] == "notice"][0]
         for row in notice["rows"]:
             if row["source"].get("missing"):
-                assert row["value"] == "", (
-                    f"missing 행의 value 가 빈 문자열이 아님: {row['value']!r}"
-                )
+                assert (
+                    row["value"] == ""
+                ), f"missing 행의 value 가 빈 문자열이 아님: {row['value']!r}"
 
     def test_non_notice_type_node_no_missing_rows(self):
         """고시 타입 node 가 아닌 키(예: flat 한국어)는 missing 행을 추가하지 않음."""

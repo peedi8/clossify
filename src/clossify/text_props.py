@@ -16,6 +16,7 @@ imports any other ``clossify`` submodule — the previous lazy import of
 gone. The translation / external-market prop helpers have been removed
 (this product only ingests Korean user-supplied text).
 """
+
 from __future__ import annotations
 
 import html
@@ -69,8 +70,7 @@ OPTION_LABEL_TEXT_RE = re.compile(
 )
 
 SELLER_SIZE_TEXT_RE = re.compile(
-    r"(?:\d+(?:\.\d+)?\s*(?:cm|mm|m|in|inch)"
-    r"\s*(?:[*xX\u00d7]\s*)?){2,3}",
+    r"(?:\d+(?:\.\d+)?\s*(?:cm|mm|m|in|inch)" r"\s*(?:[*xX\u00d7]\s*)?){2,3}",
     re.IGNORECASE,
 )
 
@@ -147,14 +147,32 @@ SEO_TITLE_BANNED_RE = re.compile(
 )
 
 SEO_STOPWORDS = {
-    "은", "는", "이", "가", "을", "를", "의", "와", "과", "도", "로", "으로",
-    "에", "에서", "및", "또는", "그리고", "상품", "제품",
+    "은",
+    "는",
+    "이",
+    "가",
+    "을",
+    "를",
+    "의",
+    "와",
+    "과",
+    "도",
+    "로",
+    "으로",
+    "에",
+    "에서",
+    "및",
+    "또는",
+    "그리고",
+    "상품",
+    "제품",
 }
 
 
 # ---------------------------------------------------------------------------
 # Description HTML -> text helpers (source L3258-L3370).
 # ---------------------------------------------------------------------------
+
 
 class _DescTextExtractor(HTMLParser):
     """Extract visible text from upstream description HTML.
@@ -163,11 +181,35 @@ class _DescTextExtractor(HTMLParser):
     newline at each block-level boundary so callers can re-flow lines.
     """
 
-    BLOCK_TAGS = frozenset({
-        "p", "div", "br", "li", "tr", "td", "th", "section", "article",
-        "header", "footer", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol",
-        "table", "tbody", "thead", "figcaption", "figure", "blockquote",
-    })
+    BLOCK_TAGS = frozenset(
+        {
+            "p",
+            "div",
+            "br",
+            "li",
+            "tr",
+            "td",
+            "th",
+            "section",
+            "article",
+            "header",
+            "footer",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "ul",
+            "ol",
+            "table",
+            "tbody",
+            "thead",
+            "figcaption",
+            "figure",
+            "blockquote",
+        }
+    )
     SKIP_TAGS = frozenset({"script", "style", "noscript", "svg", "template"})
 
     def __init__(self):
@@ -239,6 +281,7 @@ def _hesc(value, default=""):
 # ---------------------------------------------------------------------------
 # Property flatten / summarise (source L7074-L7172).
 # ---------------------------------------------------------------------------
+
 
 def _first_text(*values, default=""):
     """Return the first non-empty stringified value, else ``default``."""
@@ -336,12 +379,22 @@ def _flatten_prop_terms(value, *, limit=30, clean=True):
             return
         if isinstance(v, dict):
             label = _first_text(
-                v.get("name"), v.get("label"), v.get("key"), v.get("title"),
-                v.get("prop_name"), v.get("attr_name"), default=""
+                v.get("name"),
+                v.get("label"),
+                v.get("key"),
+                v.get("title"),
+                v.get("prop_name"),
+                v.get("attr_name"),
+                default="",
             )
             val = _first_text(
-                v.get("value"), v.get("values"), v.get("text"), v.get("desc"),
-                v.get("prop_value"), v.get("attr_value"), default=""
+                v.get("value"),
+                v.get("values"),
+                v.get("text"),
+                v.get("desc"),
+                v.get("prop_value"),
+                v.get("attr_value"),
+                default="",
             )
             if label and val:
                 add(f"{label} {val}")

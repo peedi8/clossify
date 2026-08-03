@@ -12,6 +12,7 @@
 
 모든 테스트는 실제 네이버 API 를 호출하지 않는다 — monkeypatch 로 네트워크 차단.
 """
+
 from __future__ import annotations
 
 import sys
@@ -49,8 +50,7 @@ _NOTICE_CFG_WITH_ORIGIN = {
 _CLOTHING_CATEGORY = "50021299"
 
 
-def _make_product(notice_type=None, node_key=None, body=None,
-                  extra_product=None):
+def _make_product(notice_type=None, node_key=None, body=None, extra_product=None):
     """테스트용 상품 dict 를 만든다."""
     p = {
         "name": "테스트상품",
@@ -71,10 +71,8 @@ def _make_product(notice_type=None, node_key=None, body=None,
 
 def _build_notice(p):
     """naver_client._notice_defaults + _product_info_notice 를 호출."""
-    with mock.patch.object(naver_client, "_notice_config",
-                           return_value=_NOTICE_CFG_WITH_ORIGIN):
-        with mock.patch.object(naver_client, "_kc_config",
-                               return_value=({}, "")):
+    with mock.patch.object(naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN):
+        with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
             defaults = naver_client._notice_defaults(p)
             return naver_client._product_info_notice(p, defaults)
 
@@ -124,40 +122,43 @@ class TestWearNode:
 class TestOtherTypeNodes:
     """FOOD/COSMETIC/KIDS 가 각각 자기 노드명으로 실리는가."""
 
-    @pytest.mark.parametrize("notice_type,expected_node", [
-        ("FOOD", "food"),
-        ("COSMETIC", "cosmetic"),
-        ("KIDS", "kids"),
-        ("SHOES", "shoes"),
-        ("BAG", "bag"),
-        ("BOOKS", "books"),
-        ("FASHION_ITEMS", "fashionItems"),
-        ("HOME_APPLIANCES", "homeAppliances"),
-        ("BIOCHEMISTRY", "biochemistry"),
-        ("BIOCIDAL", "biocidal"),
-        ("SPORTS_EQUIPMENT", "sportsEquipment"),
-        ("MUSICAL_INSTRUMENT", "musicalInstrument"),
-        ("SLEEPING_GEAR", "sleepingGear"),
-        ("JEWELLERY", "jewellery"),
-        ("GENERAL_FOOD", "generalFood"),
-        ("DIET_FOOD", "dietFood"),
-        ("DIGITAL_CONTENTS", "digitalContents"),
-        ("GIFT_CARD", "giftCard"),
-        ("MOBILE_COUPON", "mobileCoupon"),
-        ("RENTAL_ETC", "rentalEtc"),
-        ("ETC_SERVICE", "etcService"),
-        ("IMAGE_APPLIANCES", "imageAppliances"),
-        ("SEASON_APPLIANCES", "seasonAppliances"),
-        ("OFFICE_APPLIANCES", "officeAppliances"),
-        ("CELLPHONE", "cellPhone"),
-        ("OPTICS_APPLIANCES", "opticsAppliances"),
-        ("MICROELECTRONICS", "microElectronics"),
-        ("NAVIGATION", "navigation"),
-        ("CAR_ARTICLES", "carArticles"),
-        ("MEDICAL_APPLIANCES", "medicalAppliances"),
-        ("KITCHEN_UTENSILS", "kitchenUtensils"),
-        ("MOVIE_SHOW", "movieShow"),
-    ])
+    @pytest.mark.parametrize(
+        "notice_type,expected_node",
+        [
+            ("FOOD", "food"),
+            ("COSMETIC", "cosmetic"),
+            ("KIDS", "kids"),
+            ("SHOES", "shoes"),
+            ("BAG", "bag"),
+            ("BOOKS", "books"),
+            ("FASHION_ITEMS", "fashionItems"),
+            ("HOME_APPLIANCES", "homeAppliances"),
+            ("BIOCHEMISTRY", "biochemistry"),
+            ("BIOCIDAL", "biocidal"),
+            ("SPORTS_EQUIPMENT", "sportsEquipment"),
+            ("MUSICAL_INSTRUMENT", "musicalInstrument"),
+            ("SLEEPING_GEAR", "sleepingGear"),
+            ("JEWELLERY", "jewellery"),
+            ("GENERAL_FOOD", "generalFood"),
+            ("DIET_FOOD", "dietFood"),
+            ("DIGITAL_CONTENTS", "digitalContents"),
+            ("GIFT_CARD", "giftCard"),
+            ("MOBILE_COUPON", "mobileCoupon"),
+            ("RENTAL_ETC", "rentalEtc"),
+            ("ETC_SERVICE", "etcService"),
+            ("IMAGE_APPLIANCES", "imageAppliances"),
+            ("SEASON_APPLIANCES", "seasonAppliances"),
+            ("OFFICE_APPLIANCES", "officeAppliances"),
+            ("CELLPHONE", "cellPhone"),
+            ("OPTICS_APPLIANCES", "opticsAppliances"),
+            ("MICROELECTRONICS", "microElectronics"),
+            ("NAVIGATION", "navigation"),
+            ("CAR_ARTICLES", "carArticles"),
+            ("MEDICAL_APPLIANCES", "medicalAppliances"),
+            ("KITCHEN_UTENSILS", "kitchenUtensils"),
+            ("MOVIE_SHOW", "movieShow"),
+        ],
+    )
     def test_node_name_matches_data_spec(self, notice_type, expected_node):
         """타입별 node 이름이 data/notice_types.json 스펙과 일치하는가."""
         p = _make_product(
@@ -167,12 +168,12 @@ class TestOtherTypeNodes:
         )
         notice = _build_notice(p)
         assert notice["productInfoProvidedNoticeType"] == notice_type
-        assert expected_node in notice, (
-            f"{notice_type} → {expected_node} 노드가 없음. keys={list(notice.keys())}"
-        )
-        assert "etc" not in notice or notice_type == "ETC", (
-            f"{notice_type} 인데 etc 노드가 존재함 (노드 불일치)"
-        )
+        assert (
+            expected_node in notice
+        ), f"{notice_type} → {expected_node} 노드가 없음. keys={list(notice.keys())}"
+        assert (
+            "etc" not in notice or notice_type == "ETC"
+        ), f"{notice_type} 인데 etc 노드가 존재함 (노드 불일치)"
 
 
 # --------------------------------------------------------------------------- #
@@ -210,9 +211,7 @@ class TestEtcFurnitureRegression:
 
     def test_furniture_category_inference(self):
         """카테고리 경로에 '가구' 가 있으면 FURNITURE 로 추론."""
-        p = _make_product(
-            extra_product={"category_path": "가구>의자>사무용의자"}
-        )
+        p = _make_product(extra_product={"category_path": "가구>의자>사무용의자"})
         notice = _build_notice(p)
         assert notice["productInfoProvidedNoticeType"] == "FURNITURE"
         assert "furniture" in notice
@@ -280,32 +279,45 @@ class TestCommonFields:
 
     def test_common_fields_filled_from_config(self):
         """공통 5필드가 config 기본값으로 채워지는가."""
-        p = _make_product(notice_type="WEAR", node_key="wear", body={
-            "material": "면", "color": "블랙", "size": "FREE",
-        })
+        p = _make_product(
+            notice_type="WEAR",
+            node_key="wear",
+            body={
+                "material": "면",
+                "color": "블랙",
+                "size": "FREE",
+            },
+        )
         notice = _build_notice(p)
         wear = notice["wear"]
         for field in self._COMMON_5:
             assert field in wear, f"{field} 가 없음"
-            assert wear[field] == _NOTICE_CFG_WITH_ORIGIN[
-                {
-                    "returnCostReason": "return_cost_reason",
-                    "noRefundReason": "no_refund_reason",
-                    "qualityAssuranceStandard": "quality_assurance_standard",
-                    "compensationProcedure": "compensation_procedure",
-                    "troubleShootingContents": "trouble_shooting_contents",
-                }[field]
-            ]
+            assert (
+                wear[field]
+                == _NOTICE_CFG_WITH_ORIGIN[
+                    {
+                        "returnCostReason": "return_cost_reason",
+                        "noRefundReason": "no_refund_reason",
+                        "qualityAssuranceStandard": "quality_assurance_standard",
+                        "compensationProcedure": "compensation_procedure",
+                        "troubleShootingContents": "trouble_shooting_contents",
+                    }[field]
+                ]
+            )
 
     def test_user_value_overrides_config_default(self):
         """사용자 입력값이 config 기본값보다 우선하는가."""
         user_return_cost = "사용자정의반품비용"
-        p = _make_product(notice_type="WEAR", node_key="wear", body={
-            "material": "면",
-            "color": "블랙",
-            "size": "FREE",
-            "returnCostReason": user_return_cost,
-        })
+        p = _make_product(
+            notice_type="WEAR",
+            node_key="wear",
+            body={
+                "material": "면",
+                "color": "블랙",
+                "size": "FREE",
+                "returnCostReason": user_return_cost,
+            },
+        )
         notice = _build_notice(p)
         assert notice["wear"]["returnCostReason"] == user_return_cost
 
@@ -326,9 +338,7 @@ class TestCommonFields:
             notice = _build_notice(p)
             body = notice[node]
             for field in self._COMMON_5:
-                assert field in body, (
-                    f"{notice_type}/{node} 에 {field} 없음"
-                )
+                assert field in body, f"{notice_type}/{node} 에 {field} 없음"
 
 
 # --------------------------------------------------------------------------- #
@@ -351,25 +361,32 @@ class TestMcpIntegration:
                 "warrantyPolicy": "구매 후 7일 교환 가능",
             },
         }
-        with mock.patch.object(naver_client, "_notice_config",
-                               return_value=_NOTICE_CFG_WITH_ORIGIN):
-            with mock.patch.object(naver_client, "_kc_config",
-                                   return_value=({}, "")):
+        with mock.patch.object(
+            naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
+        ):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
                 # _compliance_code_check 가 common.cfg().get(
                 # "smartstore_notice_defaults") 를 직접 읽기 때문에,
                 # CI(config.example.json)의 플레이스홀더 원산지와 충돌한다.
                 # _notice_config mock 값과 일치하도록 common.cfg 도 함께 덮어쓴다.
-                with mock.patch.object(common, "cfg", return_value={
-                    "smartstore_notice_defaults": {
-                        "origin_area_code": "04", "origin_content": "중국",
+                with mock.patch.object(
+                    common,
+                    "cfg",
+                    return_value={
+                        "smartstore_notice_defaults": {
+                            "origin_area_code": "04",
+                            "origin_content": "중국",
+                        },
                     },
-                }):
+                ):
                     with mock.patch.object(
-                        naver_client, "register_product",
+                        naver_client,
+                        "register_product",
                         side_effect=lambda *a, **k: (
                             naver_calls.append({"args": a, "kwargs": k})
                             or (200, {"originProductNo": "test-123"})
-                        )):
+                        ),
+                    ):
                         result = mcp_server.register_product(
                             name="테스트니트",
                             price=30000,
@@ -379,9 +396,7 @@ class TestMcpIntegration:
                             notice=notice_override,
                         )
         assert result["ok"] is True, f"등록 실패: {result}"
-        assert len(naver_calls) == 1, (
-            f"네이버 API 호출 횟수가 예상과 다름: {len(naver_calls)}"
-        )
+        assert len(naver_calls) == 1, f"네이버 API 호출 횟수가 예상과 다름: {len(naver_calls)}"
 
     def test_wear_uses_wear_node_in_payload(self):
         """register_product 호출 시 payload 에 wear 노드로 실리는가."""
@@ -402,22 +417,25 @@ class TestMcpIntegration:
                 "warrantyPolicy": "구매 후 7일 교환 가능",
             },
         }
-        with mock.patch.object(naver_client, "_notice_config",
-                               return_value=_NOTICE_CFG_WITH_ORIGIN):
-            with mock.patch.object(naver_client, "_kc_config",
-                                   return_value=({}, "")):
+        with mock.patch.object(
+            naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
+        ):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
                 # _compliance_code_check 가 common.cfg().get(
                 # "smartstore_notice_defaults") 를 직접 읽기 때문에,
                 # CI(config.example.json)의 플레이스홀더 원산지와 충돌한다.
                 # _notice_config mock 값과 일치하도록 common.cfg 도 함께 덮어쓴다.
-                with mock.patch.object(common, "cfg", return_value={
-                    "smartstore_notice_defaults": {
-                        "origin_area_code": "04", "origin_content": "중국",
+                with mock.patch.object(
+                    common,
+                    "cfg",
+                    return_value={
+                        "smartstore_notice_defaults": {
+                            "origin_area_code": "04",
+                            "origin_content": "중국",
+                        },
                     },
-                }):
-                    with mock.patch.object(
-                        naver_client, "register_product",
-                        side_effect=capture):
+                ):
+                    with mock.patch.object(naver_client, "register_product", side_effect=capture):
                         result = mcp_server.register_product(
                             name="테스트니트",
                             price=30000,
@@ -428,8 +446,7 @@ class TestMcpIntegration:
                         )
         assert result["ok"] is True
         notice = (
-            captured_payload
-            .get("originProduct", {})
+            captured_payload.get("originProduct", {})
             .get("detailAttribute", {})
             .get("productInfoProvidedNotice", {})
         )
@@ -443,10 +460,10 @@ class TestMcpIntegration:
             "productInfoProvidedNoticeType": "__NOPE__",
             "__NOPE__": {},
         }
-        with mock.patch.object(naver_client, "_notice_config",
-                               return_value=_NOTICE_CFG_WITH_ORIGIN):
-            with mock.patch.object(naver_client, "_kc_config",
-                                   return_value=({}, "")):
+        with mock.patch.object(
+            naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
+        ):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
                 with mock.patch.object(naver_client, "register_product"):
                     result = mcp_server.register_product(
                         name="테스트",
@@ -483,9 +500,7 @@ class TestThirtyFiveTypesSupport:
             )
             notice = _build_notice(p)
             assert notice["productInfoProvidedNoticeType"] == notice_type
-            assert node in notice, (
-                f"{notice_type} → {node} 노드 없음: keys={list(notice.keys())}"
-            )
+            assert node in notice, f"{notice_type} → {node} 노드 없음: keys={list(notice.keys())}"
 
     def test_type_count_is_35(self):
         """data/notice_types.json 의 verified 타입 수가 35인가."""
@@ -506,9 +521,7 @@ class TestThirtyFiveTypesSupport:
             )
             notice = _build_notice(p)
             keys = set(notice.keys()) - {"productInfoProvidedNoticeType"}
-            assert keys <= valid_nodes, (
-                f"{spec['type']}: 데이터 외 노드 {keys - valid_nodes}"
-            )
+            assert keys <= valid_nodes, f"{spec['type']}: 데이터 외 노드 {keys - valid_nodes}"
 
 
 # --------------------------------------------------------------------------- #
@@ -522,15 +535,17 @@ class TestNoNoOp:
         p = _make_product(notice_type="WEAR", node_key="wear", body={})
         notice = _build_notice(p)
         wear = notice["wear"]
-        assert len(wear) >= 5, (
-            f"wear 본문이 너무 작음 (공통필드 누락?): {wear}"
-        )
+        assert len(wear) >= 5, f"wear 본문이 너무 작음 (공통필드 누락?): {wear}"
 
     def test_user_fields_not_fabricated(self):
         """사용자가 주지 않은 타입별 필드를 지어내지 않는가."""
-        p = _make_product(notice_type="WEAR", node_key="wear", body={
-            "material": "면",
-        })
+        p = _make_product(
+            notice_type="WEAR",
+            node_key="wear",
+            body={
+                "material": "면",
+            },
+        )
         notice = _build_notice(p)
         wear = notice["wear"]
         # material 은 사용자가 줌.
@@ -538,12 +553,11 @@ class TestNoNoOp:
         # color, size 등은 사용자가 주지 않았으므로 채워지지 않아야 함
         # (공통 5필드 + afterServiceDirector + manufacturer 제외).
         _autofilled = set(naver_client._NOTICE_COMMON_FIELDS) | {
-            "afterServiceDirector", "manufacturer",
+            "afterServiceDirector",
+            "manufacturer",
         }
         for field in ("color", "size", "caution", "packDateText"):
-            assert field not in wear, (
-                f"사용자가 주지 않은 {field} 를 지어냄: {wear.get(field)}"
-            )
+            assert field not in wear, f"사용자가 주지 않은 {field} 를 지어냄: {wear.get(field)}"
 
 
 # --------------------------------------------------------------------------- #
@@ -554,6 +568,7 @@ class TestToolRegistrationPreserved:
 
     def test_tool_count_registered(self):
         import asyncio
+
         tools = mcp_server.mcp.list_tools()
         if hasattr(tools, "__await__"):
             try:
@@ -565,11 +580,21 @@ class TestToolRegistrationPreserved:
     def test_register_product_signature_unchanged(self):
         """register_product 파라미터가 유지되는가."""
         import inspect
+
         sig = inspect.signature(mcp_server.register_product)
         param_names = list(sig.parameters.keys())
-        expected = ["name", "price", "image_urls", "category_id",
-                    "detail_html", "options", "tags", "status", "stock",
-                    "delivery_fee", "courier", "notice"]
-        assert param_names == expected, (
-            f"시그니처 변경 감지: {param_names}"
-        )
+        expected = [
+            "name",
+            "price",
+            "image_urls",
+            "category_id",
+            "detail_html",
+            "options",
+            "tags",
+            "status",
+            "stock",
+            "delivery_fee",
+            "courier",
+            "notice",
+        ]
+        assert param_names == expected, f"시그니처 변경 감지: {param_names}"

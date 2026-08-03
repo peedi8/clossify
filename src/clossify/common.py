@@ -6,6 +6,7 @@ literal) are resolved at runtime from config and raise ``ValueError``
 when the config key is absent (fail-closed). No ``NotImplementedError``
 stubs live in this module.
 """
+
 from __future__ import annotations
 
 import json
@@ -57,6 +58,7 @@ def cfg():
 # product (text inference is owned by the MCP client).
 # ---------------------------------------------------------------------------
 
+
 def _cfg_section(name: str) -> dict:
     """Return ``cfg()[name]`` if it is a dict, else ``{}``."""
     try:
@@ -74,15 +76,14 @@ def DEFAULT_AS_TEL() -> str:
     """
     tel = str(_cfg_section("brand").get("as_tel") or "").strip()
     if not tel:
-        raise ValueError(
-            "brand.as_tel is not configured (T-201a: DEFAULT_AS_TEL source L43)"
-        )
+        raise ValueError("brand.as_tel is not configured (T-201a: DEFAULT_AS_TEL source L43)")
     return tel
 
 
 # ---------------------------------------------------------------------------
 # JSON IO helpers (source L612-L624). Pure stdlib, no forbidden content.
 # ---------------------------------------------------------------------------
+
 
 def _read_json_file(path, default):
     """Read JSON from ``path``; return ``default`` on any failure."""
@@ -104,6 +105,7 @@ def _write_json_file(path, data):
 # ---------------------------------------------------------------------------
 # Config coercion helpers (source L8484-L8502, L9270-L9274).
 # ---------------------------------------------------------------------------
+
 
 def _bool_config(value, default=False):
     """Coerce ``value`` to bool using the sourcing.py truthy/falsy tables."""
@@ -150,6 +152,7 @@ def _safe_float(value, default=0.0):
 #      "input": {...},             # structured arguments for the host LLM
 #      "instruction": "<prompt>"}  # prompt body (from packaged agents/*.md)
 # ---------------------------------------------------------------------------
+
 
 class LLMGenerateError(RuntimeError):
     """Raised when an llm_hint descriptor cannot be constructed.

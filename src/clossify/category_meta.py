@@ -13,6 +13,7 @@
 데이터 파일 위치는 환경변수 ``CLOSSIFY_DATA_DIR`` 로 재정의 가능하며,
 기본값은 저장소 루트의 ``data/`` 디렉터리다.
 """
+
 from __future__ import annotations
 
 import json
@@ -134,9 +135,7 @@ def load_certification_types(force: bool = False) -> list:
                 f"인증 타입 파일을 읽을 수 없습니다: {path} ({exc})"
             ) from exc
         if not isinstance(doc, list):
-            raise CategoryMetaUnavailableError(
-                f"인증 타입 파일 구조가 올바르지 않습니다: {path}"
-            )
+            raise CategoryMetaUnavailableError(f"인증 타입 파일 구조가 올바르지 않습니다: {path}")
         _cache["cert"] = doc
         return doc
 

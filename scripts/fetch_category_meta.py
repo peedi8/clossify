@@ -24,6 +24,7 @@
 환경변수:
     CLOSSIFY_CONFIG  — 설정 파일 경로 (기본: .local/config.json)
 """
+
 from __future__ import annotations
 
 import json
@@ -76,9 +77,7 @@ def _fetch_all_categories(tk: str) -> list[dict]:
     r.raise_for_status()
     data = r.json()
     if not isinstance(data, list):
-        raise RuntimeError(
-            f"categories list expected JSON array, got {type(data).__name__}"
-        )
+        raise RuntimeError(f"categories list expected JSON array, got {type(data).__name__}")
     return data
 
 
@@ -96,7 +95,7 @@ def _fetch_detail(cid: str, tk: str) -> dict:
         except requests.RequestException as exc:
             last_exc = exc
             if attempt < MAX_RETRIES:
-                time.sleep(2 ** attempt)
+                time.sleep(2**attempt)
                 continue
             raise
         if r.status_code in RETRY_STATUS and attempt < MAX_RETRIES:
@@ -104,7 +103,7 @@ def _fetch_detail(cid: str, tk: str) -> dict:
             retry_after = r.headers.get("Retry-After")
             wait = _retry_after_seconds(retry_after)
             if wait is None:
-                wait = float(2 ** attempt)
+                wait = float(2**attempt)
             time.sleep(wait)
             continue
         r.raise_for_status()
@@ -207,10 +206,12 @@ def collect() -> dict:
         for fut in as_completed(futures):
             cid, detail, exc = fut.result()
             if exc is not None or detail is None:
-                failed.append({
-                    "id": cid,
-                    "error": _redact_error(exc),
-                })
+                failed.append(
+                    {
+                        "id": cid,
+                        "error": _redact_error(exc),
+                    }
+                )
                 continue
             # certificationInfos 최초 1회만 캡처 (모든 카테고리 동일).
             if certification_master is None:
@@ -242,13 +243,15 @@ def collect() -> dict:
             exc_cats = []
         if "KC_CERTIFICATION" in exc_cats:
             kc_required_count += 1
-        categories_out.append({
-            "id": cid,
-            "name": c.get("name"),
-            "wholeCategoryName": c.get("wholeCategoryName"),
-            "last": bool(c.get("last")),
-            "exceptionalCategories": list(exc_cats),
-        })
+        categories_out.append(
+            {
+                "id": cid,
+                "name": c.get("name"),
+                "wholeCategoryName": c.get("wholeCategoryName"),
+                "last": bool(c.get("last")),
+                "exceptionalCategories": list(exc_cats),
+            }
+        )
 
     meta_doc = {
         "generated_at": _utc_now_iso(),
@@ -306,6 +309,7 @@ def _redact_error(exc: Exception | None) -> str:
     msg = str(exc)
     # Bearer 토큰 패턴이 들어있으면 마스킹.
     import re
+
     msg = re.sub(r"(Bearer\s+)[A-Za-z0-9._\-]+", r"\1<redacted>", msg)
     return msg[:200]
 

@@ -20,6 +20,7 @@
 의존 방향: ``agent_calls``, ``category`` (상위) → ``qa_agents`` (본 모듈).
 ``common``, ``text_props``, ``copywriting``, ``category_meta`` 는 어디서든 import 가능.
 """
+
 from __future__ import annotations
 
 from . import common
@@ -78,8 +79,8 @@ def _clamp_verdict(value, default=WARN):
 def _verdict_from_violations(violations, default=PASS):
     """위반 목록에서 최악 verdict 산출 (source L5451-L5457 보존).
 
-   FAIL-severity 위반이 하나라도 있으면 → FAIL; 아니면 WARN → WARN; 아니면 default.
-    PENDING 은 위반 목록이 아닌 별도 경로(위임 미회신)에서만 부여된다.
+    FAIL-severity 위반이 하나라도 있으면 → FAIL; 아니면 WARN → WARN; 아니면 default.
+     PENDING 은 위반 목록이 아닌 별도 경로(위임 미회신)에서만 부여된다.
     """
     severities = {
         str(row.get("severity") or "").strip().upper()
@@ -128,10 +129,7 @@ def _normalize_qa_result(data):
             "summary": "QA JSON 파싱 실패",
         }
     raw_verdict = data.get("verdict")
-    verdict_present = (
-        raw_verdict is not None
-        and str(raw_verdict).strip() != ""
-    )
+    verdict_present = raw_verdict is not None and str(raw_verdict).strip() != ""
     # --- 위임 미회신 판정 (T-201b-r2 fail-open 차단) ---
     # 판단이 실제로 이뤄졌다는 증거가 없으면 PENDING.
     if not verdict_present:
@@ -175,11 +173,13 @@ def _normalize_qa_result(data):
     for row in raw_violations:
         if isinstance(row, dict):
             severity = _clamp_verdict(row.get("severity"), default=verdict)
-            violations.append({
-                "rule": str(row.get("rule") or "QA")[:40],
-                "severity": severity,
-                "detail": str(row.get("detail") or "")[:240],
-            })
+            violations.append(
+                {
+                    "rule": str(row.get("rule") or "QA")[:40],
+                    "severity": severity,
+                    "detail": str(row.get("detail") or "")[:240],
+                }
+            )
     summary = str(data.get("summary") or "").strip()
     if not summary:
         summary = f"{verdict} — 위반 {len(violations)}건"
@@ -268,26 +268,18 @@ def _load_notice_types():
     import json
     import os
 
-    repo_root = os.path.normpath(
-        os.path.join(os.path.dirname(__file__), "..", "..")
-    )
+    repo_root = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
     path = os.path.join(repo_root, "data", "notice_types.json")
     if not os.path.exists(path):
-        raise RuntimeError(
-            f"notice_types.json 파일이 없습니다: {path} (fail-closed)."
-        )
+        raise RuntimeError(f"notice_types.json 파일이 없습니다: {path} (fail-closed).")
     try:
         with open(path, encoding="utf-8") as f:
             doc = json.load(f)
     except (OSError, ValueError) as exc:
-        raise RuntimeError(
-            f"notice_types.json 읽기 실패: {path} ({exc})"
-        ) from exc
+        raise RuntimeError(f"notice_types.json 읽기 실패: {path} ({exc})") from exc
     verified = doc.get("verified") if isinstance(doc, dict) else None
     if not isinstance(verified, list):
-        raise RuntimeError(
-            f"notice_types.json 구조가 올바르지 않습니다: {path}"
-        )
+        raise RuntimeError(f"notice_types.json 구조가 올바르지 않습니다: {path}")
     _NOTICE_TYPES_CACHE = verified
     return verified
 
@@ -356,21 +348,14 @@ def _infer_notice_type(context):
     if isinstance(context, dict):
         notice = context.get("notice")
         if isinstance(notice, dict):
-            explicit = (
-                notice.get("productInfoProvidedNoticeType")
-                or notice.get("notice_type")
-            )
+            explicit = notice.get("productInfoProvidedNoticeType") or notice.get("notice_type")
             if explicit:
                 return str(explicit).strip().upper()
-        explicit = (
-            context.get("notice_type")
-            or context.get("productInfoProvidedNoticeType")
-        )
+        explicit = context.get("notice_type") or context.get("productInfoProvidedNoticeType")
         if explicit:
             return str(explicit).strip().upper()
         cat_text = " ".join(
-            str(context.get(k) or "")
-            for k in ("category_name", "category_path", "categoryPath")
+            str(context.get(k) or "") for k in ("category_name", "category_path", "categoryPath")
         )
     else:
         cat_text = ""
@@ -389,6 +374,7 @@ def _infer_notice_type(context):
 #   - 고시 필드: data/notice_types.json 기반으로 타입별 필수 필드 누락 지적
 #   - fail-closed: 예외 삼켜 PASS 금지
 # ---------------------------------------------------------------------------
+
 
 def _notice_field_missing(notice_body, fields):
     """``notice_body`` 에서 누락된 필수 필드 이름 리스트 반환.
@@ -444,7 +430,13 @@ def _compliance_code_check(name, context, api_payload=None):
         if isinstance(detail_attr.get("productInfoProvidedNotice"), dict)
         else ctx.get("notice")
     )
-    notice_type = _infer_notice_type({"notice": notice} if isinstance(notice, dict) else ctx, ) if not isinstance(notice, dict) else _infer_notice_type({"notice": notice})
+    notice_type = (
+        _infer_notice_type(
+            {"notice": notice} if isinstance(notice, dict) else ctx,
+        )
+        if not isinstance(notice, dict)
+        else _infer_notice_type({"notice": notice})
+    )
     spec = _notice_type_spec(notice_type)
     notice_body = {}
     if isinstance(notice, dict):
@@ -463,18 +455,25 @@ def _compliance_code_check(name, context, api_payload=None):
     if required_fields:
         missing = _notice_field_missing(notice_body, required_fields)
         if missing:
-            violations.append({
-                "rule": "고시 필수필드",
-                "severity": FAIL,
-                "detail": (
-                    f"고시 타입 {notice_type} 필수 필드 누락: "
-                    + ", ".join(missing[:10])
-                ),
-            })
+            violations.append(
+                {
+                    "rule": "고시 필수필드",
+                    "severity": FAIL,
+                    "detail": (
+                        f"고시 타입 {notice_type} 필수 필드 누락: " + ", ".join(missing[:10])
+                    ),
+                }
+            )
 
     # --- 원산지 검사: config 값과 payload 값의 일치 (값 판정 X) ---
-    origin_info = detail_attr.get("originAreaInfo") if isinstance(detail_attr.get("originAreaInfo"), dict) else {}
-    payload_origin_content = str(origin_info.get("content") or ctx.get("origin_content") or "").strip()
+    origin_info = (
+        detail_attr.get("originAreaInfo")
+        if isinstance(detail_attr.get("originAreaInfo"), dict)
+        else {}
+    )
+    payload_origin_content = str(
+        origin_info.get("content") or ctx.get("origin_content") or ""
+    ).strip()
     config_origin_content = ""
     try:
         notice_defaults = common.cfg().get("smartstore_notice_defaults") or {}
@@ -485,54 +484,69 @@ def _compliance_code_check(name, context, api_payload=None):
     if config_origin_content and payload_origin_content:
         # 둘 다 있으면 일치해야 함 (값 자체는 판정하지 않음).
         if config_origin_content != payload_origin_content:
-            violations.append({
-                "rule": "원산지 불일치",
-                "severity": FAIL,
-                "detail": (
-                    f"config 원산지({config_origin_content!r})와 payload 원산지"
-                    f"({payload_origin_content!r})가 일치하지 않습니다."
-                ),
-            })
+            violations.append(
+                {
+                    "rule": "원산지 불일치",
+                    "severity": FAIL,
+                    "detail": (
+                        f"config 원산지({config_origin_content!r})와 payload 원산지"
+                        f"({payload_origin_content!r})가 일치하지 않습니다."
+                    ),
+                }
+            )
     elif not payload_origin_content:
         # payload 원산지 누락 — fail-closed.
-        violations.append({
-            "rule": "원산지 누락",
-            "severity": FAIL,
-            "detail": "원산지(originAreaInfo.content)가 비어 있습니다.",
-        })
+        violations.append(
+            {
+                "rule": "원산지 누락",
+                "severity": FAIL,
+                "detail": "원산지(originAreaInfo.content)가 비어 있습니다.",
+            }
+        )
 
     # --- KC 검사: category_meta.requires_kc() 기반 ---
     category_id = ctx.get("category_id") or ctx.get("categoryId") or ctx.get("leaf_category_id")
     if category_id is not None:
         try:
             from . import category_meta
+
             requires_kc = category_meta.requires_kc(category_id, raise_if_unknown=False)
         except Exception as exc:
             # fail-closed: category_meta 조회 실패 시 KC 검사를 건너뛰지 않고 예외 전파.
-            raise RuntimeError(
-                f"category_meta.requires_kc 조회 실패 (fail-closed): {exc}"
-            ) from exc
+            raise RuntimeError(f"category_meta.requires_kc 조회 실패 (fail-closed): {exc}") from exc
         if requires_kc:
-            kc_block = detail_attr.get("certificationTargetExcludeContent") if isinstance(detail_attr.get("certificationTargetExcludeContent"), dict) else {}
+            kc_block = (
+                detail_attr.get("certificationTargetExcludeContent")
+                if isinstance(detail_attr.get("certificationTargetExcludeContent"), dict)
+                else {}
+            )
             if not kc_block:
-                violations.append({
-                    "rule": "KC 인증 누락",
-                    "severity": FAIL,
-                    "detail": (
-                        f"카테고리 {category_id} 는 KC 인증이 필요하지만 "
-                        "certificationTargetExcludeContent 정보가 없습니다."
-                    ),
-                })
+                violations.append(
+                    {
+                        "rule": "KC 인증 누락",
+                        "severity": FAIL,
+                        "detail": (
+                            f"카테고리 {category_id} 는 KC 인증이 필요하지만 "
+                            "certificationTargetExcludeContent 정보가 없습니다."
+                        ),
+                    }
+                )
         # requires_kc == False 면 KC 검사하지 않음 (작업지시).
 
     # --- A/S 정보 검사 ---
-    as_info = detail_attr.get("afterServiceInfo") if isinstance(detail_attr.get("afterServiceInfo"), dict) else {}
+    as_info = (
+        detail_attr.get("afterServiceInfo")
+        if isinstance(detail_attr.get("afterServiceInfo"), dict)
+        else {}
+    )
     if not as_info.get("afterServiceTelephoneNumber") and not ctx.get("as_tel"):
-        violations.append({
-            "rule": "A/S 연락처 누락",
-            "severity": WARN,
-            "detail": "afterServiceTelephoneNumber 이 비어 있습니다.",
-        })
+        violations.append(
+            {
+                "rule": "A/S 연락처 누락",
+                "severity": WARN,
+                "detail": "afterServiceTelephoneNumber 이 비어 있습니다.",
+            }
+        )
 
     verdict = _verdict_from_violations(violations)
     return {
@@ -549,6 +563,7 @@ def _compliance_code_check(name, context, api_payload=None):
 # 금지 표현 정규식은 text_props.BANNED_CLAIM_RE 를 재사용한다 (중복 정의 금지).
 # ---------------------------------------------------------------------------
 
+
 def _copy_code_check(name, detail_text, option_texts=None):
     """카피/텍스트 결정론적 코드검사 (source L6082-L6128 보존).
 
@@ -563,30 +578,38 @@ def _copy_code_check(name, detail_text, option_texts=None):
     detail_text = str(detail_text or "")
 
     if not name.strip():
-        violations.append({
-            "rule": "빈 제목",
-            "severity": WARN,
-            "detail": "SEO 상품명이 비어 있습니다.",
-        })
+        violations.append(
+            {
+                "rule": "빈 제목",
+                "severity": WARN,
+                "detail": "SEO 상품명이 비어 있습니다.",
+            }
+        )
     elif len(name) > 100:
-        violations.append({
-            "rule": "제목 길이 초과",
-            "severity": WARN,
-            "detail": f"SEO 상품명이 100자를 초과합니다 ({len(name)}자).",
-        })
+        violations.append(
+            {
+                "rule": "제목 길이 초과",
+                "severity": WARN,
+                "detail": f"SEO 상품명이 100자를 초과합니다 ({len(name)}자).",
+            }
+        )
 
     if BANNED_CLAIM_RE.search(name):
-        violations.append({
-            "rule": "금지 표현",
-            "severity": FAIL,
-            "detail": "SEO 상품명에 금지 표현(정품/진품/100%/최고급 등)이 포함되어 있습니다.",
-        })
+        violations.append(
+            {
+                "rule": "금지 표현",
+                "severity": FAIL,
+                "detail": "SEO 상품명에 금지 표현(정품/진품/100%/최고급 등)이 포함되어 있습니다.",
+            }
+        )
     if BANNED_CLAIM_RE.search(detail_text):
-        violations.append({
-            "rule": "금지 표현",
-            "severity": FAIL,
-            "detail": "상세 본문에 금지 표현이 포함되어 있습니다.",
-        })
+        violations.append(
+            {
+                "rule": "금지 표현",
+                "severity": FAIL,
+                "detail": "상세 본문에 금지 표현이 포함되어 있습니다.",
+            }
+        )
 
     verdict = _verdict_from_violations(violations)
     return {
@@ -601,6 +624,7 @@ def _copy_code_check(name, detail_text, option_texts=None):
 # 3분할 QA 에이전트.
 # ---------------------------------------------------------------------------
 
+
 def qa_image(detail_jpeg_path, name, context=None):
     """이미지 QA (source L6351).
 
@@ -613,14 +637,14 @@ def qa_image(detail_jpeg_path, name, context=None):
 
     violations = []
     if not detail_jpeg_path or not os.path.exists(str(detail_jpeg_path)):
-        violations.append({
-            "rule": "상세 이미지 부재",
-            "severity": FAIL,
-            "detail": f"상세 JPEG 경로가 없거나 파일이 존재하지 않습니다: {detail_jpeg_path}",
-        })
-        return _qa_agent_result(
-            "image", FAIL, violations, "상세 이미지 없음 — 이미지 QA 불가"
+        violations.append(
+            {
+                "rule": "상세 이미지 부재",
+                "severity": FAIL,
+                "detail": f"상세 JPEG 경로가 없거나 파일이 존재하지 않습니다: {detail_jpeg_path}",
+            }
         )
+        return _qa_agent_result("image", FAIL, violations, "상세 이미지 없음 — 이미지 QA 불가")
     # 실제 픽셀 검사는 T-201c 의 렌더 파이프라인이 완성된 후 연결된다.
     # 현재는 파일 존재만 확인하고 PASS 로 둔다 — 단 예외 삼킴 없이.
     return _qa_agent_result(
@@ -667,8 +691,7 @@ def qa_copy(detail_jpeg_path, name, context=None):
         if local_verdict != FAIL:
             result["verdict"] = PENDING
             result["summary"] = (
-                "카피 QA LLM 판단 대기 중(PENDING) — 로컬 코드검사는 "
-                f"{local_verdict}."
+                "카피 QA LLM 판단 대기 중(PENDING) — 로컬 코드검사는 " f"{local_verdict}."
             )
     return result
 
@@ -702,7 +725,7 @@ def aggregate_qa_results(agent_results):
         호출자가 PENDING 을 명시한 경우 보존).
     """
     agents = []
-    for row in (agent_results or []):
+    for row in agent_results or []:
         if isinstance(row, dict):
             agents.append(_normalize_agent_result(row, row.get("agent", "unknown")))
     if not agents:
@@ -718,14 +741,13 @@ def aggregate_qa_results(agent_results):
         v = _clamp_verdict(row.get("verdict"))
         if _VERDICT_RANK.get(v, 1) > _VERDICT_RANK.get(worst, 1):
             worst = v
-        for violation in (row.get("violations") or []):
+        for violation in row.get("violations") or []:
             if isinstance(violation, dict):
                 tagged = dict(violation)
                 tagged.setdefault("agent", row.get("agent"))
                 all_violations.append(tagged)
     summary_parts = [
-        f"{row.get('agent', '?')}={_clamp_verdict(row.get('verdict'))}"
-        for row in agents
+        f"{row.get('agent', '?')}={_clamp_verdict(row.get('verdict'))}" for row in agents
     ]
     return {
         "agent": "aggregate",
@@ -764,10 +786,7 @@ def replace_qa_agent_result(qa, replacement):
     """
     if not isinstance(qa, dict):
         return aggregate_qa_results([replacement])
-    agents = [
-        row for row in (qa.get("agents") or [])
-        if isinstance(row, dict)
-    ]
+    agents = [row for row in (qa.get("agents") or []) if isinstance(row, dict)]
     agent_name = str((replacement or {}).get("agent") or "")
     found = False
     for idx, row in enumerate(agents):
@@ -817,9 +836,7 @@ def qa_gate(payload):
                 ]
                 details.append(f"{row.get('agent')}: {bits[:3] or row_v}")
         if verdict == PENDING:
-            return False, (
-                "QA PENDING(위임 미회신)로 등록 차단: " + " | ".join(details)
-            )
+            return False, ("QA PENDING(위임 미회신)로 등록 차단: " + " | ".join(details))
         return False, "3분할 QA FAIL로 등록 차단: " + " | ".join(details)
     if verdict == WARN:
         # WARN 은 통과 (원본 동작 보존 — 단 PENDING 이 섞이면 위에서 차단됨).

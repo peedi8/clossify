@@ -30,6 +30,7 @@
 사용법:
     python scripts/scan_repo.py
 """
+
 from __future__ import annotations
 
 import os
@@ -115,9 +116,9 @@ ALLOWED_MASKING_PAIRS: list[tuple[str, str]] = [
 
 # CJK 통합한자 코드포인트 범위 — 한글은 제외.
 CJK_RANGES = [
-    (0x4E00, 0x9FFF),    # CJK Unified Ideographs
-    (0x3400, 0x4DBF),    # CJK Unified Ideographs Extension A
-    (0xF900, 0xFAFF),    # CJK Compatibility Ideographs
+    (0x4E00, 0x9FFF),  # CJK Unified Ideographs
+    (0x3400, 0x4DBF),  # CJK Unified Ideographs Extension A
+    (0xF900, 0xFAFF),  # CJK Compatibility Ideographs
 ]
 
 # 커밋 메시지 형식 검사 — 특정 도구명이 아닌 **형태**로 검사.
@@ -129,11 +130,39 @@ COMMIT_TRAILER_PATTERNS: list[re.Pattern[str]] = [
 ]
 
 # .git/ 등 무시할 디렉터리/확장자.
-SKIP_DIRS = {".git", ".venv", "__pycache__", ".pytest_cache", ".ruff_cache",
-             "node_modules", ".local", ".secrets", "artifacts", "runs",
-             "reports", "logs", "preview", "cases", ".mypy_cache"}
-SKIP_EXTS = {".pyc", ".pyo", ".png", ".jpg", ".jpeg", ".gif", ".ico",
-             ".woff", ".woff2", ".zip", ".gz", ".tar", ".7z", ".pdf"}
+SKIP_DIRS = {
+    ".git",
+    ".venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    "node_modules",
+    ".local",
+    ".secrets",
+    "artifacts",
+    "runs",
+    "reports",
+    "logs",
+    "preview",
+    "cases",
+    ".mypy_cache",
+}
+SKIP_EXTS = {
+    ".pyc",
+    ".pyo",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".ico",
+    ".woff",
+    ".woff2",
+    ".zip",
+    ".gz",
+    ".tar",
+    ".7z",
+    ".pdf",
+}
 
 # ──────────────────────────────────────────────────────────────────────
 # 유틸
@@ -180,6 +209,7 @@ def _decode_escapes(text: str) -> str:
 
     인코딩 우회(escape-obfuscation) 차단이 목적.
     """
+
     def _hex_repl(m: re.Match) -> str:
         try:
             return bytes([int(m.group(1), 16)]).decode("utf-8", "replace")
@@ -270,7 +300,9 @@ def scan_patterns(local_rx: re.Pattern[str] | None) -> list[str]:
         위반 메시지 리스트 (``파일:라인: pattern=...``).
     """
     violations: list[str] = []
-    layers: list[tuple[str, list[tuple[str, re.Pattern[str]]] | tuple[str, re.Pattern[str]] | None]] = [
+    layers: list[
+        tuple[str, list[tuple[str, re.Pattern[str]]] | tuple[str, re.Pattern[str]] | None]
+    ] = [
         ("generic", GENERIC_PATTERNS),
     ]
     if local_rx is not None:
@@ -294,8 +326,7 @@ def scan_patterns(local_rx: re.Pattern[str] | None) -> list[str]:
                     # 패턴/트레일러 형태를 정의·문서화해야 하므로 자기
                     # 자신을 검사하면 정의부가 위반으로 잡힌다. 이것은
                     # 스캐너의 본질적 속성이지 우회가 아니다.
-                    if self_skip and (pname == "windows_abs_path"
-                                      or layer_name == "local"):
+                    if self_skip and (pname == "windows_abs_path" or layer_name == "local"):
                         continue
                     if _is_allowed(path, pname):
                         continue
@@ -310,8 +341,7 @@ def scan_patterns(local_rx: re.Pattern[str] | None) -> list[str]:
                 continue
             for lineno, line in enumerate(decoded.splitlines(), start=1):
                 for pname, rx in compiled:
-                    if self_skip and (pname == "windows_abs_path"
-                                      or layer_name == "local"):
+                    if self_skip and (pname == "windows_abs_path" or layer_name == "local"):
                         continue
                     if _is_allowed(path, pname):
                         continue
@@ -333,12 +363,7 @@ def scan_patterns(local_rx: re.Pattern[str] | None) -> list[str]:
 _RE_CHARCLASS_RANGE = re.compile(
     r"\[[^\[\]\n]*\]",
 )
-_RE_RANGE_INSIDE_CLASS = re.compile(
-    r"(?<!\\)"
-    r"(\S)"
-    r"\s*-\s*"
-    r"(\S)"
-)
+_RE_RANGE_INSIDE_CLASS = re.compile(r"(?<!\\)" r"(\S)" r"\s*-\s*" r"(\S)")
 
 
 def _is_in_charclass_range(line: str, pos: int) -> bool:
@@ -372,8 +397,7 @@ def scan_cjk() -> list[str]:
                 for lo, hi in CJK_RANGES:
                     if lo <= cp <= hi:
                         violations.append(
-                            f"{rel}:{lineno}:{col}: cjk_ideograph "
-                            f"U+{cp:04X} ({ch!r})"
+                            f"{rel}:{lineno}:{col}: cjk_ideograph " f"U+{cp:04X} ({ch!r})"
                         )
                         break
 
@@ -394,8 +418,7 @@ def scan_cjk() -> list[str]:
                 if _is_in_charclass_range(line, col - 1):
                     continue
                 violations.append(
-                    f"{rel}:{lineno}:{col}: cjk_ideograph "
-                    f"U+{cp:04X} ({ch!r}) [decoded]"
+                    f"{rel}:{lineno}:{col}: cjk_ideograph " f"U+{cp:04X} ({ch!r}) [decoded]"
                 )
     return violations
 
@@ -410,11 +433,13 @@ def _commit_range() -> list[str]:
 
     origin/main 이 없거나 git 명령 실패 시 최근 20커밋으로 폴백.
     """
+
     def _run(args: list[str]) -> bytes | None:
         try:
             r = subprocess.run(
                 ["git", *args],
-                cwd=_REPO_ROOT, capture_output=True,
+                cwd=_REPO_ROOT,
+                capture_output=True,
             )
         except (OSError, subprocess.SubprocessError):
             return None
@@ -457,8 +482,7 @@ def scan_commit_messages() -> list[str]:
             m = rx.search(body)
             if m:
                 violations.append(
-                    f"commit {sha[:10]}: banned_form="
-                    f"{m.group(0).strip()!r} in commit message"
+                    f"commit {sha[:10]}: banned_form=" f"{m.group(0).strip()!r} in commit message"
                 )
     return violations
 
@@ -475,8 +499,7 @@ def main() -> int:
     local_words, local_rx = load_local_words()
     if local_rx is None:
         print(
-            "[scan_repo] 로컬 고유명사 목록이 없습니다 — "
-            "층 1 범용 패턴만으로 검사합니다.",
+            "[scan_repo] 로컬 고유명사 목록이 없습니다 — " "층 1 범용 패턴만으로 검사합니다.",
             flush=True,
         )
 

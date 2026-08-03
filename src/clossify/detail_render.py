@@ -26,6 +26,7 @@ scene 는 **하나의 조립 결과를 공유**한다 — 두 개의 진실이 �
 호출자가 다시 합성하도록 구조화한다. T-301 추가 출력: scene dict
 (``build_scene``) — 같은 조립 결과의 구조적 직렬화.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -147,9 +148,9 @@ def _build_hero_section(urls):
         parts.append(
             f'<div class="photo-block {cls}">'
             f'<img src="{_hesc(url)}" alt="detail-image-{idx + 1}" />'
-            f'</div>'
+            f"</div>"
         )
-    parts.append('</section>')
+    parts.append("</section>")
     return {
         "id": "hero",
         "kind": "images",
@@ -168,17 +169,21 @@ def _build_intro_section(product):
     blocks = []
     # name 의 source field — name 우선, title_ko 차선.
     name_field = "name" if (product.get("name")) else "title_ko"
-    blocks.append({
-        "id": "intro.title",
-        "text": name,
-        "source": _source(name_field, missing=not bool(name)),
-    })
+    blocks.append(
+        {
+            "id": "intro.title",
+            "text": name,
+            "source": _source(name_field, missing=not bool(name)),
+        }
+    )
     summary_field = "summary" if product.get("summary") else "desc"
-    blocks.append({
-        "id": "intro.summary",
-        "text": summary,
-        "source": _source(summary_field, missing=not bool(summary)),
-    })
+    blocks.append(
+        {
+            "id": "intro.summary",
+            "text": summary,
+            "source": _source(summary_field, missing=not bool(summary)),
+        }
+    )
     html = ""
     if name or summary:
         parts = ['<section class="detail-intro">']
@@ -186,7 +191,7 @@ def _build_intro_section(product):
             parts.append(f'<h2 class="detail-title">{_hesc(name)}</h2>')
         if summary:
             parts.append(f'<p class="detail-summary">{_hesc(summary)}</p>')
-        parts.append('</section>')
+        parts.append("</section>")
         html = "\n".join(parts)
     return {
         "id": "intro",
@@ -214,7 +219,7 @@ def _build_specs_section(product):
             if isinstance(item, dict):
                 k = _detail_safe_text(item.get("name") or item.get("label") or "")
                 v = _detail_safe_text(item.get("value") or item.get("text") or "")
-                field_key = (item.get("name") or item.get("label") or key_or_index(item, props))
+                field_key = item.get("name") or item.get("label") or key_or_index(item, props)
                 rows.append((k, v, f"props.{field_key}"))
     visible = [(k, v) for k, v, _ in rows if k and v]
     html = ""
@@ -234,12 +239,14 @@ def _build_specs_section(product):
     scene_rows = []
     for k, v, field in rows:
         missing = not bool(v)
-        scene_rows.append({
-            "id": _stable_id("specs", k),
-            "label": k,
-            "value": v if v else "",
-            "source": _source(field, missing=missing),
-        })
+        scene_rows.append(
+            {
+                "id": _stable_id("specs", k),
+                "label": k,
+                "value": v if v else "",
+                "source": _source(field, missing=missing),
+            }
+        )
     return {
         "id": "specs",
         "kind": "table",
@@ -398,6 +405,7 @@ def _notice_type_for_node(node_key):
         return None
     try:
         from . import qa_agents
+
         for entry in qa_agents._load_notice_types():
             entry_node = str(entry.get("node") or "").strip().lower()
             if entry_node == node_lower:
@@ -451,18 +459,17 @@ def _build_notice_section(product):
                 if req_field in provided_fields:
                     continue
                 # 이 필드가 이미 rows 에 있는지 확인(중복 방지).
-                already = any(
-                    fp.split(".")[-1] == req_field
-                    for _l, _v, fp in rows
-                )
+                already = any(fp.split(".")[-1] == req_field for _l, _v, fp in rows)
                 if already:
                     continue
                 node_key = spec.get("node") or top_key
-                rows.append((
-                    str(req_field),
-                    "",
-                    f"notice.{node_key}.{req_field}",
-                ))
+                rows.append(
+                    (
+                        str(req_field),
+                        "",
+                        f"notice.{node_key}.{req_field}",
+                    )
+                )
 
     # HTML 은 값이 있는 행만 표시한다(기존 동작 보존).
     # 분해된 leaf 값(material=면 100% 등)이 가시 행으로 표시되지만,
@@ -476,20 +483,20 @@ def _build_notice_section(product):
             "<tbody>",
         ]
         for k, v in visible:
-            parts.append(
-                f'<tr><th>{_hesc(k)}</th><td>{_hesc(v)}</td></tr>'
-            )
+            parts.append(f"<tr><th>{_hesc(k)}</th><td>{_hesc(v)}</td></tr>")
         parts.append("</tbody></table></section>")
         html = "\n".join(parts)
     scene_rows = []
     for k, v, field in rows:
         missing = not bool(v)
-        scene_rows.append({
-            "id": _stable_id("notice", k),
-            "label": k,
-            "value": v if v else "",
-            "source": _source(field, missing=missing, verified=not missing),
-        })
+        scene_rows.append(
+            {
+                "id": _stable_id("notice", k),
+                "label": k,
+                "value": v if v else "",
+                "source": _source(field, missing=missing, verified=not missing),
+            }
+        )
     return {
         "id": "notice",
         "kind": "table",
@@ -615,23 +622,29 @@ def build_scene(product, image_urls, options=None):
         sid = sec["id"]
         kind = sec["kind"]
         if kind == "images":
-            scene_sections.append({
-                "id": sid,
-                "kind": "images",
-                "images": list(sec.get("images") or []),
-            })
+            scene_sections.append(
+                {
+                    "id": sid,
+                    "kind": "images",
+                    "images": list(sec.get("images") or []),
+                }
+            )
         elif kind == "text":
-            scene_sections.append({
-                "id": sid,
-                "kind": "text",
-                "blocks": [dict(b) for b in (sec.get("blocks") or [])],
-            })
+            scene_sections.append(
+                {
+                    "id": sid,
+                    "kind": "text",
+                    "blocks": [dict(b) for b in (sec.get("blocks") or [])],
+                }
+            )
         elif kind == "table":
-            scene_sections.append({
-                "id": sid,
-                "kind": "table",
-                "rows": [dict(r) for r in (sec.get("rows") or [])],
-            })
+            scene_sections.append(
+                {
+                    "id": sid,
+                    "kind": "table",
+                    "rows": [dict(r) for r in (sec.get("rows") or [])],
+                }
+            )
 
     return {
         "version": SCENE_FORMAT_VERSION,

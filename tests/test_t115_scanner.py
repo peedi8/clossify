@@ -16,6 +16,7 @@
 
 고유명사 0건 대조(acceptance)는 오케스트레이터가 별도 목록으로 수행한다.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -218,9 +219,7 @@ class TestLayer2LocalList:
 
     def test_local_list_absent_returns_empty(self, scanner, tmp_path, monkeypatch):
         """로컬 목록 파일 부재 → ([], None) (실패 아님)."""
-        monkeypatch.setattr(
-            scanner, "_LOCAL_LIST_PATH", str(tmp_path / "does_not_exist.txt")
-        )
+        monkeypatch.setattr(scanner, "_LOCAL_LIST_PATH", str(tmp_path / "does_not_exist.txt"))
         words, rx = scanner.load_local_words()
         assert words == []
         assert rx is None
@@ -340,9 +339,7 @@ class TestScannerStructure:
 
     def test_scanner_docstring_mentions_local_path(self):
         """docstring 이 로컬 목록 경로를 안내하고 있는가."""
-        scanner_src = (_PROJECT_ROOT / "scripts" / "scan_repo.py").read_text(
-            encoding="utf-8"
-        )
+        scanner_src = (_PROJECT_ROOT / "scripts" / "scan_repo.py").read_text(encoding="utf-8")
         assert ".secrets/banned_words.local.txt" in scanner_src
 
     def test_no_example_local_list_tracked(self):

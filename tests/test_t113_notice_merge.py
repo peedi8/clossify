@@ -12,6 +12,7 @@
 
 모든 테스트는 실제 네이버 API 를 호출하지 않는다 — monkeypatch 로 네트워크 차단.
 """
+
 from __future__ import annotations
 
 import sys
@@ -47,8 +48,7 @@ _NOTICE_CFG_WITH_ORIGIN = {
 _CLOTHING_CATEGORY = "50021299"
 
 
-def _make_product(notice_type=None, node_key=None, body=None,
-                  extra_product=None):
+def _make_product(notice_type=None, node_key=None, body=None, extra_product=None):
     """테스트용 상품 dict 를 만든다."""
     p = {
         "name": "테스트상품",
@@ -69,10 +69,8 @@ def _make_product(notice_type=None, node_key=None, body=None,
 
 def _build_notice(p):
     """naver_client._notice_defaults + _product_info_notice 를 호출."""
-    with mock.patch.object(naver_client, "_notice_config",
-                           return_value=_NOTICE_CFG_WITH_ORIGIN):
-        with mock.patch.object(naver_client, "_kc_config",
-                               return_value=({}, "")):
+    with mock.patch.object(naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN):
+        with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
             defaults = naver_client._notice_defaults(p)
             return naver_client._product_info_notice(p, defaults)
 
@@ -99,9 +97,9 @@ class TestSilentDiscardRemoved:
         )
         notice = _build_notice(p)
         wear = notice["wear"]
-        assert wear.get("packDateText") == "상세페이지 참조", (
-            f"packDateText 가 무음 폐기됨: {wear.get('packDateText')!r}"
-        )
+        assert (
+            wear.get("packDateText") == "상세페이지 참조"
+        ), f"packDateText 가 무음 폐기됨: {wear.get('packDateText')!r}"
 
     def test_detail_reference_no_space_variant_kept(self):
         """공백 없는 변형 ``상세페이지참조`` 도 그대로 실리는가."""
@@ -119,9 +117,9 @@ class TestSilentDiscardRemoved:
         )
         notice = _build_notice(p)
         wear = notice["wear"]
-        assert wear.get("packDateText") == "상세페이지참조", (
-            f"packDateText(공백없음) 가 무음 폐기됨: {wear.get('packDateText')!r}"
-        )
+        assert (
+            wear.get("packDateText") == "상세페이지참조"
+        ), f"packDateText(공백없음) 가 무음 폐기됨: {wear.get('packDateText')!r}"
 
     def test_arbitrary_string_is_kept(self):
         """다른 임의 문자열(``"2026-01"``)도 그대로 존재하는가."""
@@ -157,11 +155,10 @@ class TestSilentDiscardRemoved:
         )
         notice = _build_notice(p)
         wear = notice["wear"]
-        for field in ("material", "color", "size", "caution",
-                      "packDateText", "warrantyPolicy"):
-            assert wear.get(field) == "상세페이지 참조", (
-                f"{field} 가 무음 폐기됨: {wear.get(field)!r}"
-            )
+        for field in ("material", "color", "size", "caution", "packDateText", "warrantyPolicy"):
+            assert (
+                wear.get(field) == "상세페이지 참조"
+            ), f"{field} 가 무음 폐기됨: {wear.get(field)!r}"
 
 
 # --------------------------------------------------------------------------- #
@@ -183,9 +180,7 @@ class TestEmptyValuesStillOmitted:
         )
         notice = _build_notice(p)
         wear = notice["wear"]
-        assert "color" not in wear, (
-            f"빈 문자열 color 가 실림: {wear.get('color')!r}"
-        )
+        assert "color" not in wear, f"빈 문자열 color 가 실림: {wear.get('color')!r}"
         assert wear.get("material") == "면"
 
     def test_whitespace_only_not_loaded(self):
@@ -201,9 +196,7 @@ class TestEmptyValuesStillOmitted:
         )
         notice = _build_notice(p)
         wear = notice["wear"]
-        assert "color" not in wear, (
-            f"공백만 있는 color 가 실림: {wear.get('color')!r}"
-        )
+        assert "color" not in wear, f"공백만 있는 color 가 실림: {wear.get('color')!r}"
 
     def test_none_not_loaded(self):
         """None 은 싣지 않음."""
@@ -218,25 +211,33 @@ class TestEmptyValuesStillOmitted:
         )
         notice = _build_notice(p)
         wear = notice["wear"]
-        assert "color" not in wear, (
-            f"None color 가 실림: {wear.get('color')!r}"
-        )
+        assert "color" not in wear, f"None color 가 실림: {wear.get('color')!r}"
 
     def test_value_present_vs_absent_distinction(self):
         """값이 있는 것과 없는 것을 구분하는가 (임의 문자열 vs 빈 문자열)."""
         p_present = _make_product(
             notice_type="WEAR",
             node_key="wear",
-            body={"material": "면", "color": "블랙", "size": "FREE",
-                  "caution": "물 세탁", "packDateText": "상세페이지 참조",
-                  "warrantyPolicy": "보증"},
+            body={
+                "material": "면",
+                "color": "블랙",
+                "size": "FREE",
+                "caution": "물 세탁",
+                "packDateText": "상세페이지 참조",
+                "warrantyPolicy": "보증",
+            },
         )
         p_absent = _make_product(
             notice_type="WEAR",
             node_key="wear",
-            body={"material": "면", "color": "블랙", "size": "FREE",
-                  "caution": "물 세탁", "packDateText": "",
-                  "warrantyPolicy": "보증"},
+            body={
+                "material": "면",
+                "color": "블랙",
+                "size": "FREE",
+                "caution": "물 세탁",
+                "packDateText": "",
+                "warrantyPolicy": "보증",
+            },
         )
         n_present = _build_notice(p_present)
         n_absent = _build_notice(p_absent)
@@ -293,9 +294,9 @@ class TestNoOtherSilentDrops:
             )
             notice = _build_notice(p)
             wear = notice["wear"]
-            assert wear.get("packDateText") == token, (
-                f"토큰 {token!r} 이 _merge_notice 에서 무음 폐기됨"
-            )
+            assert (
+                wear.get("packDateText") == token
+            ), f"토큰 {token!r} 이 _merge_notice 에서 무음 폐기됨"
 
 
 # --------------------------------------------------------------------------- #
@@ -327,25 +328,32 @@ class TestRegisterProductE2E:
                 # 공통 5필드는 config 기본값으로 채워짐.
             },
         }
-        with mock.patch.object(naver_client, "_notice_config",
-                               return_value=_NOTICE_CFG_WITH_ORIGIN):
-            with mock.patch.object(naver_client, "_kc_config",
-                                   return_value=({}, "")):
+        with mock.patch.object(
+            naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
+        ):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
                 # _compliance_code_check 가 common.cfg().get(
                 # "smartstore_notice_defaults") 를 직접 읽기 때문에,
                 # CI(config.example.json)의 플레이스홀더 원산지와 충돌한다.
                 # _notice_config mock 값과 일치하도록 common.cfg 도 함께 덮어쓴다.
-                with mock.patch.object(common, "cfg", return_value={
-                    "smartstore_notice_defaults": {
-                        "origin_area_code": "04", "origin_content": "중국",
+                with mock.patch.object(
+                    common,
+                    "cfg",
+                    return_value={
+                        "smartstore_notice_defaults": {
+                            "origin_area_code": "04",
+                            "origin_content": "중국",
+                        },
                     },
-                }):
+                ):
                     with mock.patch.object(
-                        naver_client, "register_product",
+                        naver_client,
+                        "register_product",
                         side_effect=lambda *a, **k: (
                             naver_calls.append({"args": a, "kwargs": k})
                             or (200, {"originProductNo": "test-t113-1"})
-                        )):
+                        ),
+                    ):
                         result = mcp_server.register_product(
                             name="테스트니트",
                             price=30000,
@@ -354,15 +362,11 @@ class TestRegisterProductE2E:
                             detail_html="<html><body>상세</body></html>",
                             notice=notice_override,
                         )
-        assert result["ok"] is True, (
-            f"등록 실패(컴플라이언스 차단?): {result}"
-        )
-        assert result.get("blocked_by") is None, (
-            f"컴플라이언스 게이트가 차단함: {result.get('violations')}"
-        )
-        assert len(naver_calls) == 1, (
-            f"네이버 API 호출 횟수가 예상과 다름: {len(naver_calls)}"
-        )
+        assert result["ok"] is True, f"등록 실패(컴플라이언스 차단?): {result}"
+        assert (
+            result.get("blocked_by") is None
+        ), f"컴플라이언스 게이트가 차단함: {result.get('violations')}"
+        assert len(naver_calls) == 1, f"네이버 API 호출 횟수가 예상과 다름: {len(naver_calls)}"
 
     def test_payload_carries_detail_reference_to_naver(self):
         """최종 payload 의 wear 노드에 "상세페이지 참조" 가 그대로 실리는가."""
@@ -383,22 +387,25 @@ class TestRegisterProductE2E:
                 "warrantyPolicy": "구매 후 7일 교환 가능",
             },
         }
-        with mock.patch.object(naver_client, "_notice_config",
-                               return_value=_NOTICE_CFG_WITH_ORIGIN):
-            with mock.patch.object(naver_client, "_kc_config",
-                                   return_value=({}, "")):
+        with mock.patch.object(
+            naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
+        ):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
                 # _compliance_code_check 가 common.cfg().get(
                 # "smartstore_notice_defaults") 를 직접 읽기 때문에,
                 # CI(config.example.json)의 플레이스홀더 원산지와 충돌한다.
                 # _notice_config mock 값과 일치하도록 common.cfg 도 함께 덮어쓴다.
-                with mock.patch.object(common, "cfg", return_value={
-                    "smartstore_notice_defaults": {
-                        "origin_area_code": "04", "origin_content": "중국",
+                with mock.patch.object(
+                    common,
+                    "cfg",
+                    return_value={
+                        "smartstore_notice_defaults": {
+                            "origin_area_code": "04",
+                            "origin_content": "중국",
+                        },
                     },
-                }):
-                    with mock.patch.object(
-                        naver_client, "register_product",
-                        side_effect=capture):
+                ):
+                    with mock.patch.object(naver_client, "register_product", side_effect=capture):
                         result = mcp_server.register_product(
                             name="테스트니트",
                             price=30000,
@@ -409,16 +416,14 @@ class TestRegisterProductE2E:
                         )
         assert result["ok"] is True
         notice = (
-            captured_payload
-            .get("originProduct", {})
+            captured_payload.get("originProduct", {})
             .get("detailAttribute", {})
             .get("productInfoProvidedNotice", {})
         )
         assert notice.get("productInfoProvidedNoticeType") == "WEAR"
         wear = notice.get("wear", {})
         assert wear.get("packDateText") == "상세페이지 참조", (
-            f"최종 payload 의 wear.packDateText 가 누락/변경됨: "
-            f"{wear.get('packDateText')!r}"
+            f"최종 payload 의 wear.packDateText 가 누락/변경됨: " f"{wear.get('packDateText')!r}"
         )
 
     def test_blocked_when_required_field_truly_missing(self):
@@ -439,10 +444,10 @@ class TestRegisterProductE2E:
                 "warrantyPolicy": "구매 후 7일 교환 가능",
             },
         }
-        with mock.patch.object(naver_client, "_notice_config",
-                               return_value=_NOTICE_CFG_WITH_ORIGIN):
-            with mock.patch.object(naver_client, "_kc_config",
-                                   return_value=({}, "")):
+        with mock.patch.object(
+            naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
+        ):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
                 with mock.patch.object(naver_client, "register_product"):
                     result = mcp_server.register_product(
                         name="테스트니트",
@@ -454,9 +459,9 @@ class TestRegisterProductE2E:
                     )
         # 빈 문자열은 누락 → 컴플라이언스 차단.
         assert result["ok"] is False
-        assert result.get("blocked_by") == "compliance", (
-            f"빈 packDateText 가 컴플라이언스에 걸리지 않음: {result}"
-        )
+        assert (
+            result.get("blocked_by") == "compliance"
+        ), f"빈 packDateText 가 컴플라이언스에 걸리지 않음: {result}"
 
 
 # --------------------------------------------------------------------------- #
