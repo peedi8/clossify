@@ -143,3 +143,6 @@
    payload의 하위 노드 키(예: `wear`)가 일치해야 한다. `_build_compliance_context`가
    카테고리 경로에서 타입을 추론해 보정하되, 호출자가 틀린 노드명을 주면 검사가
    빈 필드로 판정될 수 있다.
+5. **데이터·규칙은 스냅샷** — `data/` 카테고리/고시 메타와 `agents/COMPLIANCE_RULES.md`
+   규칙은 특정 시점 기준이며 플랫폼 정책 변경 시 갱신 대상이다. 기준일은
+   `data/README.md` 와 각 데이터 파일의 `generated_at` 을 본다.
