@@ -408,11 +408,14 @@ def check_config() -> dict[str, Any]:
 
     Returns:
         ``{"ok": bool, "config_path": str, "present": {...}, "missing": [...],
-        "placeholders": [...], "error": str | None}``
+        "placeholders": [...], "origin_configured": bool, "origin_hint": str,
+        "as_tel_configured": bool, "as_tel_hint": str, "error": str | None}``
         - ``ok``: 모든 필수 키가 존재하고 플레이스홀더가 아님.
         - ``present``: 필수 키별 현재 값의 *존재 여부* (값 자체는 노출 안 함).
         - ``missing``: 누락된 필수 키 이름 목록.
         - ``placeholders``: 플레이스홀더로 남아있는 필수 키 이름 목록.
+        - ``origin_configured``: 원산지 정본 설정 여부(값 미노출).
+        - ``as_tel_configured``: AS 전화번호 정본 설정 여부(값 미노출).
         - ``error``: 파일이 없거나 JSON 파싱에 실패한 경우의 메시지.
 
     안내: 실제 값은 반환하지 않는다. 이 도구는 가시성이 아니라 게이트(gate)다.
@@ -483,6 +486,25 @@ def check_config() -> dict[str, Any]:
             "원산지(smartstore_notice_defaults.origin_area_code 및 origin_content)가 "
             "설정되지 않았습니다. register_product 가 컴플라이언스 검사에서 "
             "등록을 거부합니다."
+        )
+
+    # T-402b — AS 전화번호 정본 위치 점검 항목 추가.
+    # 정본은 smartstore_notice_defaults.as_tel 이다 (naver_client._notice_defaults 가
+    # cfg_notice.get("as_tel") 로 읽는 자리). 값 자체는 반환하지 않고
+    # 채워짐/비어있음만 보고한다 (작업지시 요구사항 3). 미설정 시 등록이 거부된다는
+    # 안내를 포함한다.
+    as_tel_set = False
+    if isinstance(notice_defaults, dict):
+        as_tel_value = notice_defaults.get("as_tel")
+        as_tel_set = (
+            bool(as_tel_value) and not _is_placeholder(as_tel_value)
+        )
+    result["as_tel_configured"] = as_tel_set
+    if not as_tel_set:
+        result["as_tel_hint"] = (
+            "AS 전화번호(smartstore_notice_defaults.as_tel)가 설정되지 않았습니다. "
+            "register_product 가 컴플라이언스 검사에서 등록을 거부합니다. "
+            "안내문구/플레이스홀더를 넣으면 거부됩니다 (fail-closed)."
         )
 
     result["ok"] = not missing and not placeholders

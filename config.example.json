@@ -25,7 +25,7 @@
     }
   },
   "brand": {
-    "_comment": "Placeholders resolved into agent documents and rendered detail pages.",
+    "_comment": "Placeholders resolved into agent documents and rendered detail pages. brand.as_tel 은 에이전트 문서의 {AS_TEL} 치환용이며 비어있으면 smartstore_notice_defaults.as_tel(정본)을 참조합니다. 중복 입력 방지 목적.",
     "store_name": "{STORE_NAME}",
     "store_slug": "{STORE_SLUG}",
     "as_tel": "{AS_TEL}",
@@ -37,7 +37,9 @@
     "origin_content": "REPLACE_WITH_ORIGIN_CONTENT",
     "importer": "REPLACE_WITH_IMPORTER_OR_EMPTY",
     "manufacturer": "REPLACE_WITH_MANUFACTURER_OR_EMPTY",
-    "model_name": "REPLACE_WITH_MODEL_NAME_OR_EMPTY"
+    "model_name": "REPLACE_WITH_MODEL_NAME_OR_EMPTY",
+    "as_tel": "REPLACE_WITH_REAL_AS_TEL",
+    "as_tel_comment": "AS 전화번호 정본(canonical). 판매자가 실제 신고하는 전화번호 필수. 안내문구/플레이스홀더를 넣으면 등록이 거부됩니다. brand.as_tel 은 에이전트 문서 치환용 별도 용도이며 비어있으면 이 값을 참조합니다."
   },
   "kc_declaration": {
     "_comment": "KC 인증 신고값. 판매자가 실제 신고하는 값을 입력. 미입력 시 등록이 거부됩니다 (fail-closed, 조용한 기본값 금지).kcCertifiedProductExclusionYn / kcExemptionType 두 값 중 하나라도 비어있으면 KC 필드 전체가 payload에서 생략되며, 네이버 커머스 API가 요구하면 에러로 알려줍니다.",
