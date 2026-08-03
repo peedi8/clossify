@@ -356,7 +356,7 @@ class TestRegisterProductE2E:
                         "register_product",
                         side_effect=lambda *a, **k: (
                             naver_calls.append({"args": a, "kwargs": k})
-                            or (200, {"originProductNo": "test-t113-1"})
+                            or (200, {"originProductNo": "test-notice-keep-1"})
                         ),
                     ):
                         result = mcp_server.register_product(
@@ -384,7 +384,7 @@ class TestRegisterProductE2E:
 
         def capture(payload, tk=None):
             captured_payload.update(payload)
-            return (200, {"originProductNo": "test-t113-2"})
+            return (200, {"originProductNo": "test-notice-keep-2"})
 
         notice_override = {
             "productInfoProvidedNoticeType": "WEAR",

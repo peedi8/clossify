@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# T-206 — GitHub 저장소 보호 설정 스크립트.
+# GitHub 저장소 보호 설정 스크립트.
 #
 # 사용법:
 #     bash scripts/setup-github.sh <owner>/<repo> [--solo]
@@ -15,7 +15,7 @@
 #
 # ⚠️ 이 스크립트는 실행하지 말 것 — 작성만 수행.
 #    원격 설정 변경은 오케스트레이터·사용자 소관.
-#    (본 티켓 Hard Constraints 에 명시됨)
+#    (원래 요구사항의 Hard Constraints 에 명시됨)
 #
 # 설계:
 #   - 보호 적용 실패해도 나머지(머지 전략, 라벨)는 계속 적용한다.

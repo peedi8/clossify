@@ -1,4 +1,4 @@
-# T-206 — 공개 레포 보안 방어선 (pre-commit 게이트)
+# 공개 레포 보안 방어선 (pre-commit 게이트)
 #
 # 이 파일은 로컬 커밋 직전 staged 변경사항만 검사한다.
 # CI(.github/workflows/ci.yml)의 gitleaks detect 는 전체 트리를 스캔하며,

@@ -389,7 +389,7 @@ class TestToolRegistration:
 # ============================================================================ #
 # Fail-closed option stock (Counterexample 1)
 # ============================================================================ #
-class TestT106OptionStockFailClosed:
+class TestOptionStockFailClosed:
     """_option_stock 이 누락/불가 stock 에 대해 ValueError 를 발생시키는가.
 
     이전 버전은 stock 이 없거나 파싱 불가능할 때 가짜 기본값 99 를
@@ -463,7 +463,7 @@ class TestT106OptionStockFailClosed:
 # ============================================================================ #
 # build_payload name 50-char enforcement (Counterexample 2)
 # ============================================================================ #
-class TestT106BuildPayloadNameCut:
+class TestBuildPayloadNameCut:
     """build_payload 가 50자 초과 상품명을 자르는가.
 
     mcp_server.register_product 에서는 이미 자르고 있었지만,
@@ -529,7 +529,7 @@ class TestT106BuildPayloadNameCut:
 # ============================================================================ #
 # Sanitization strengthening (Counterexample 3)
 # ============================================================================ #
-class TestT106SanitizationStrengthened:
+class TestSanitizationStrengthened:
     """_sanitize_text 가 POSIX 경로, key=value 시크릿, traceback 을 마스킹하는가.
 
     이전 버전은 Windows C:\\Users\\.. 경로와 /home/user/ 경로만 매칭했고,

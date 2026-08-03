@@ -1,4 +1,4 @@
-# T-206 — gitleaks 커스텀 룰셋
+# gitleaks 커스텀 룰셋
 #
 # 기본 룰셋(useDefault = true) 위에 네이버 커머스/검색광고 전용 패턴을 추가한다.
 # GitHub 기본 secret scanning 은 제휴 발급사(Google/AWS/GitHub...) 위주라

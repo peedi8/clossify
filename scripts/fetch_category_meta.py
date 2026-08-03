@@ -1,11 +1,11 @@
-"""카테고리 메타데이터 수집 스크립트 (T-110).
+"""카테고리 메타데이터 수집 스크립트.
 
 네이버 커머스 API 에서 전체 카테고리 목록을 조회한 뒤, 리프(``last=true``)
 카테고리 전체에 대해 상세 조회하여 ``exceptionalCategories`` 를 모은다.
 결과를 ``data/category_meta.json`` 과 ``data/certification_types.json`` 으로
 떨군다.
 
-설계 요점 (티켓 요구사항):
+설계 요점 (요구사항):
   - 인증은 ``clossify.naver_client`` 의 ``get_token``/``_h`` 를 재사용.
     자체 인증 구현 금지.
   - 읽기 전용(GET) 호출만 사용. 상품 등록/수정/삭제 등 쓰기 호출 금지.

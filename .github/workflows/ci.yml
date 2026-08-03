@@ -1,4 +1,4 @@
-# T-206 — CI 보안·품질 게이트
+# CI 보안·품질 게이트
 #
 # ⚠️ 잡 이름(name:)은 브랜치 보호의 required status check 이름과 문자열 계약이다.
 # GitHub 는 status check 이름을 job 의 display name 으로 매칭하므로,

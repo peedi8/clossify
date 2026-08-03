@@ -29,7 +29,7 @@ Thumbs.db
 .DS_Store
 nul
 
-# T-206 — 보안 스캔 도구 산출물 (gitleaks 임시 리포트 등)
+# 보안 스캔 도구 산출물 (gitleaks 임시 리포트 등)
 gitleaks-report.json
 gitleaks-report.*
 .scan-*

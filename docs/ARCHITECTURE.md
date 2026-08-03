@@ -5,24 +5,47 @@
 
 ## 1. 모듈 의존 방향
 
-의존은 아래 방향으로만 흐른다(상위 → 하위). 역방향 import 금지.
+의존은 아래 방향으로 흐른다(상위 → 하위). 화살표는 실제 import 문을 기준으로 한다.
+지연 import(함수 본체 내 `from . import ...`)는 괄호로 표시했다.
 
 ```text
-                         mcp_server  (MCP 도구, 최상위 어댑터)
-                              |
-        +----------+----------+----------+----------+
-        |          |          |          |          |
-    register   qa_agents   images    agent_calls  seo
-        |          |          |
-   qa_agents   category_meta  naver_client
-        |          |
-   naver_client  common
-   category_meta
-   common
-        |
-   common   text_props   copywriting   templates   keyword_volume
-   (어디서든 import 가능한 최하위 유틸/데이터 조회)
+                          mcp_server  (MCP 도구, 최상위 어댑터)
+                               |
+       +-----------+-----------+-----------+
+       |           |           |           |
+   register    qa_agents   naver_client   (지연: category_meta, images)
+       |           |
+       |        common ──(지연)──> naver_client.load_config
+       |        text_props
+       |        (지연: category_meta, agent_calls)
+       |
+   common ──(지연)──> naver_client.load_config
+   qa_agents
+   (지연: naver_client, detail_render, images)
+
+naver_client        외부 API 클라이언트. common 을 import 하지 않고
+                    자체 load_config/resolve_config_path 를 보유한다.
+images             → naver_client
+agent_calls        → common, copywriting
+copywriting        → common, keyword_volume, seo, text_props
+detail_render      → common, templates, text_props (지연: qa_agents)
+templates          → common, text_props
+keyword_volume     → common, text_props
+seo                → keyword_volume, text_props (지연: common)
+category           → common, text_props (지연: category_meta)  ← 독립 leaf
+category_meta      → common
+common             → (지연) naver_client  ← cfg() 가 load_config 위임
+text_props         순수 리터럴/정규식 (의존 없음)
 ```
+
+> **실제 import 기반 정정(중요)**:
+> - `common` 은 "어디서든 import 가능한 최하위" 가 아니다. `common.cfg()` 가
+>   config 조회를 `naver_client.load_config` 로 위임하기 위해 `naver_client` 를
+>   **지연 import** 한다(`src/clossify/common.py:49`). `naver_client` 는
+>   `common` 을 import 하지 않으므로 순환은 아니다.
+> - `category` 는 `qa_agents`/`register` 에 의존하지 않는다. 실제 import 는
+>   `common`, `text_props` (모듈 로드 시) 와 `category_meta` (지연) 뿐이다.
+>   저장소 내에서 `category` 를 import 하는 모듈도 없다(독립 leaf).
 
 ### 모듈 한 줄 역할
 
@@ -35,8 +58,8 @@
 | `register` | prepared payload 저장/로드, 등록 오케스트레이션. `prepare_listing`이 `detail_render.render_detail_html` 로 상세 HTML 을 조립한다. 이미지 입력은 `images.attach_images` 로 외부 URL fetch( SSRF 가드 적용) 와 로컬 파일 업로드를 수행한다 |
 | `agent_calls` | 클라이언트 LLM 위임 디스크립터(llm_hint) 생성(naming, qa_copy) |
 | `category_meta` | `data/category_meta.json` 로더. KC 필요 여부·예외 플래그·경로 조회 |
-| `category` | 카테고리 상위 모듈(qa_agents/register 의존) |
-| `common` | config 로더, 경로 상수, JSON 입출력 유틸. 최하위 |
+| `category` | 카테고리 분류 보조. `common`/`text_props`(모듈 로드)·`category_meta`(지연) 에만 의존하는 독립 leaf |
+| `common` | config 로더(`cfg()` 가 `naver_client.load_config` 로 위임), 경로 상수, JSON 입출력 유틸 |
 | `text_props` | 금지 표현 정규식(`BANNED_CLAIM_RE`) 등 텍스트 속성 |
 | `copywriting` | 카피 생성 보조 |
 | `templates` | 상세페이지 HTML 템플릿 빌더(`build_korean_detail_html`) |
