@@ -23,6 +23,8 @@
 
 from __future__ import annotations
 
+import re
+
 from . import common
 from .text_props import BANNED_CLAIM_RE
 
@@ -379,10 +381,37 @@ def _infer_notice_type(context):
 def _notice_field_missing(notice_body, fields):
     """``notice_body`` 에서 누락된 필수 필드 이름 리스트 반환.
 
-    ``"-"``, ``"N/A"``, ``"null"``, ``"None"``, 빈 문자열을 누락으로 간주한다
-    (원본 ``_text_filled`` 로직 보존).
+    T-117: 안내 문구성 값(예: ``상세참조``, ``상세페이지 참조``, ``해당없음``,
+    ``-``, 공백류)은 **미제공으로 취급**한다. 핵심 정책:
+
+      - **전송은 하되 "필수 항목이 채워졌다"고 판정하지는 않는다** — 두 가지를
+        구분한다. ``_merge_notice`` (naver_client) 가 사용자가 명시적으로 준
+        placeholder 값을 그대로 payload 에 싣는 것은 T-113 결정을 유지하되,
+        컴플라이언스 판정은 그 값을 "유효 제공" 으로 인정하지 않는다.
+      - 사용자가 placeholder 없이 실질 정보를 주어야만 "채워짐" 이다.
     """
-    EMPTY_TOKENS = {"", "-", "n/a", "null", "none", "해당없음없음"}
+    # T-117: 안내 문구/placeholder 토큰. 이 값들은 "미제공" 으로 간주한다.
+    # (원본 EMPTY_TOKENS 의 빈값 토큰에 placeholder 안내문구를 추가.)
+    EMPTY_TOKENS = {
+        "",
+        "-",
+        "n/a",
+        "null",
+        "none",
+        "해당없음",
+        "해당없음없음",
+        "상세참조",
+        "상세 참조",
+        "상세페이지참조",
+        "상세페이지 참조",
+        "상세 페이지 참조",
+        "상세페이지 확인",
+        "상세 페이지 확인",
+        "본품참조",
+        "본품 참조",
+        "별도표시",
+        "별도 표시",
+    }
     missing = []
     if not isinstance(notice_body, dict):
         return list(fields)
@@ -390,6 +419,11 @@ def _notice_field_missing(notice_body, fields):
         raw = notice_body.get(field)
         text = str(raw or "").strip().lower()
         if text in EMPTY_TOKENS:
+            missing.append(field)
+            continue
+        # 추가: 괄호/구두점만 있는 값(예: ".", "()", "-") 도 미제공으로 간주.
+        stripped = re.sub(r"[\s\-\.\,\(\)\[\]\{\}\/]", "", text)
+        if not stripped:
             missing.append(field)
     return missing
 
@@ -534,17 +568,25 @@ def _compliance_code_check(name, context, api_payload=None):
         # requires_kc == False 면 KC 검사하지 않음 (작업지시).
 
     # --- A/S 정보 검사 ---
+    # T-117: AS 연락처 미설정 시 기본 문자열 생성이 제거되었으므로, 컴플라이언스는
+    # 미설정을 FAIL 로 차단한다 (문서 서술과 일치). WARN 에 그치는 것은 fail-open.
     as_info = (
         detail_attr.get("afterServiceInfo")
         if isinstance(detail_attr.get("afterServiceInfo"), dict)
         else {}
     )
-    if not as_info.get("afterServiceTelephoneNumber") and not ctx.get("as_tel"):
+    as_tel_value = str(
+        as_info.get("afterServiceTelephoneNumber") or ctx.get("as_tel") or ""
+    ).strip()
+    if not as_tel_value:
         violations.append(
             {
                 "rule": "A/S 연락처 누락",
-                "severity": WARN,
-                "detail": "afterServiceTelephoneNumber 이 비어 있습니다.",
+                "severity": FAIL,
+                "detail": (
+                    "afterServiceTelephoneNumber 이 비어 있습니다. AS 연락처는 판매자가 "
+                    "실제 신고하는 필수 규제값이며 코드가 임의값을 만들어 넣지 않습니다."
+                ),
             }
         )
 

@@ -38,11 +38,19 @@ _CLOTHING_CATEGORY = "50021299"
 _KC_CATEGORY = "50000151"
 
 # notice_config mock: origin 이 설정된 정상 config.
+# T-117: 5개 공통 고시 필드(returnCostReason 등)도 config 에서 제공하는 것이
+# 정상 판매자 설정이다. 코드가 임의 문구를 만들어 채우지 않으므로 테스트
+# 픽스처에서 명시적으로 제공한다.
 _NOTICE_CFG_WITH_ORIGIN = {
     "origin_area_code": "04",
     "origin_content": "중국",
     "as_tel": "070-1234-5678",
     "manufacturer": "테스트제조사",
+    "return_cost_reason": "단순변심 반품비용 구매자부담",
+    "no_refund_reason": "주문제작 청약철회 제한",
+    "quality_assurance_standard": "관련법에 따름",
+    "compensation_procedure": "소비자분쟁해결기준",
+    "trouble_shooting_contents": "고객센터 문의",
 }
 
 

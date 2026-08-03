@@ -43,6 +43,14 @@ _NOTICE_CFG_WITH_ORIGIN = {
     "trouble_shooting_contents": "고객센터 문의",
     "importer": "테스트수입사",
 }
+# T-117: common.cfg() mock 용 — origin 만 포함한 최소 config (컴플라이언스
+# 원산지 일치 검사에서 읽는 값). _notice_config 와 값이 일치해야 한다.
+_COMMON_CFG_ORIGIN_ONLY = {
+    "smartstore_notice_defaults": {
+        "origin_area_code": "04",
+        "origin_content": "중국",
+    },
+}
 
 # 의류 카테고리 (E2E 반례용).
 _CLOTHING_CATEGORY = "50021299"
@@ -307,14 +315,16 @@ class TestRegisterProductE2E:
     컴플라이언스 게이트를 통과하고 네이버 API 를 호출하는가."""
 
     def test_wear_with_detail_reference_passes_gate_and_calls_naver(self):
-        """WEAR 필수 필드 전부 제공(일부 "상세페이지 참조") → 등록 경로 진입.
+        """WEAR 필수 필드 전부 실질값 제공 → 등록 경로 진입.
 
-        작업지시 반례: 이전에는 ``packDateText="상세페이지 참조"`` 가
-        _merge_notice 에서 버려져 컴플라이언스 검사가 "필수 필드 누락:
-        packDateText" 로 등록을 차단했다. 본 테스트는 그 회귀가 없는지 확인.
+        T-117 개정: ``packDateText="상세페이지 참조"`` 는 더 이상 "채워짐" 으로
+        인정되지 않는다(컴플라이언스 판정은 미제공으로 간주, 게이트 차단).
+        따라서 게이트 통과 반례는 실질값(``2026-01``)을 주어야 한다. placeholder
+        값이 payload 에 그대로 실리는 것은 별도 테스트(test_placeholder_*) 와
+        단위 테스트(TestSilentDiscardRemoved) 가 검증한다.
         """
         naver_calls = []
-        # WEAR 필수 필드 13종 전부 제공. 일부는 "상세페이지 참조".
+        # WEAR 필수 필드 13종 전부 실질값 제공.
         notice_override = {
             "productInfoProvidedNoticeType": "WEAR",
             "wear": {
@@ -322,7 +332,7 @@ class TestRegisterProductE2E:
                 "color": "블랙",
                 "size": "FREE",
                 "caution": "물 세탁 가능",
-                "packDateText": "상세페이지 참조",  # ← 결함의 직접 반례
+                "packDateText": "2026-01",
                 "warrantyPolicy": "구매 후 7일 교환 가능",
                 "manufacturer": "테스트제조사",
                 # 공통 5필드는 config 기본값으로 채워짐.
@@ -339,12 +349,7 @@ class TestRegisterProductE2E:
                 with mock.patch.object(
                     common,
                     "cfg",
-                    return_value={
-                        "smartstore_notice_defaults": {
-                            "origin_area_code": "04",
-                            "origin_content": "중국",
-                        },
-                    },
+                    return_value=_COMMON_CFG_ORIGIN_ONLY,
                 ):
                     with mock.patch.object(
                         naver_client,
@@ -369,7 +374,12 @@ class TestRegisterProductE2E:
         assert len(naver_calls) == 1, f"네이버 API 호출 횟수가 예상과 다름: {len(naver_calls)}"
 
     def test_payload_carries_detail_reference_to_naver(self):
-        """최종 payload 의 wear 노드에 "상세페이지 참조" 가 그대로 실리는가."""
+        """최종 payload 의 wear 노드에 "상세페이지 참조" 가 그대로 실리는가.
+
+        T-117: placeholder 값은 컴플라이언스 판정에서 "미제공" 이지만, 전송은
+        그대로 된다. 본 테스트는 전송 계약(T-113 본래 목적)을 검증한다.
+        DRY_RUN 경로로 게이트를 건너뛰고 payload 만 캡처해 전송 여부를 본다.
+        """
         captured_payload = {}
 
         def capture(payload, tk=None):
@@ -385,36 +395,38 @@ class TestRegisterProductE2E:
                 "caution": "물 세탁 가능",
                 "packDateText": "상세페이지 참조",
                 "warrantyPolicy": "구매 후 7일 교환 가능",
+                "manufacturer": "테스트제조사",
             },
         }
         with mock.patch.object(
             naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
         ):
             with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
-                # _compliance_code_check 가 common.cfg().get(
-                # "smartstore_notice_defaults") 를 직접 읽기 때문에,
-                # CI(config.example.json)의 플레이스홀더 원산지와 충돌한다.
-                # _notice_config mock 값과 일치하도록 common.cfg 도 함께 덮어쓴다.
                 with mock.patch.object(
                     common,
                     "cfg",
-                    return_value={
-                        "smartstore_notice_defaults": {
-                            "origin_area_code": "04",
-                            "origin_content": "중국",
-                        },
-                    },
+                    return_value=_COMMON_CFG_ORIGIN_ONLY,
                 ):
-                    with mock.patch.object(naver_client, "register_product", side_effect=capture):
-                        result = mcp_server.register_product(
-                            name="테스트니트",
-                            price=30000,
-                            image_urls=["http://cdn/x.png"],
-                            category_id=_CLOTHING_CATEGORY,
-                            detail_html="<html><body>상세</body></html>",
-                            notice=notice_override,
-                        )
-        assert result["ok"] is True
+                    # T-117: placeholder 값은 게이트를 통과하지 못하므로,
+                    # 전송 검증은 COMMERCE_DRY_RUN 경로(게이트 우회)를 사용한다.
+                    # 이것이 게이트 우회가 아닌 것은 — DRY_RUN 은 실제 네이버
+                    # 호출이 일어나지 않는 공식 개발/테스트 모드다.
+                    with mock.patch.dict("os.environ", {"COMMERCE_DRY_RUN": "1"}):
+                        # DRY_RUN 경로는 register_product 내부에서 payload 를
+                        # 직접 덤프하지만, 여기서는 naver_client.register_product
+                        # 를 캡처로 대체해 payload 만 가져온다.
+                        with mock.patch.object(
+                            naver_client, "register_product", side_effect=capture
+                        ):
+                            result = mcp_server.register_product(
+                                name="테스트니트",
+                                price=30000,
+                                image_urls=["http://cdn/x.png"],
+                                category_id=_CLOTHING_CATEGORY,
+                                detail_html="<html><body>상세</body></html>",
+                                notice=notice_override,
+                            )
+        assert result["ok"] is True, f"DRY_RUN 등록 실패: {result}"
         notice = (
             captured_payload.get("originProduct", {})
             .get("detailAttribute", {})
@@ -425,6 +437,72 @@ class TestRegisterProductE2E:
         assert wear.get("packDateText") == "상세페이지 참조", (
             f"최종 payload 의 wear.packDateText 가 누락/변경됨: " f"{wear.get('packDateText')!r}"
         )
+
+    def test_placeholder_value_blocks_gate_but_is_transmitted(self):
+        """T-117 핵심 반례: placeholder 값 → payload 전송 O, 컴플라이언스 FAIL.
+
+        사용자가 ``상세페이지 참조`` 를 입력하면:
+          1. payload 의 wear 노드에 그대로 실린다 (전송 O).
+          2. 컴플라이언스 판정은 미제공으로 간주해 FAIL 차단한다 (판정 X).
+
+        두 가지를 구분하는 것이 T-117 의 핵심 정책이다.
+        """
+        notice_override = {
+            "productInfoProvidedNoticeType": "WEAR",
+            "wear": {
+                "material": "면 100%",
+                "color": "블랙",
+                "size": "FREE",
+                "caution": "물 세탁 가능",
+                "packDateText": "상세페이지 참조",  # ← placeholder
+                "warrantyPolicy": "구매 후 7일 교환 가능",
+                "manufacturer": "테스트제조사",
+            },
+        }
+        with mock.patch.object(
+            naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
+        ):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                with mock.patch.object(common, "cfg", return_value=_COMMON_CFG_ORIGIN_ONLY):
+                    with mock.patch.object(naver_client, "register_product") as naver_mock:
+                        result = mcp_server.register_product(
+                            name="테스트니트",
+                            price=30000,
+                            image_urls=["http://cdn/x.png"],
+                            category_id=_CLOTHING_CATEGORY,
+                            detail_html="<html><body>상세</body></html>",
+                            notice=notice_override,
+                        )
+        # (2) 컴플라이언스 FAIL 차단.
+        assert result["ok"] is False, "placeholder 값이 게이트를 통과해선 안 됨"
+        assert result.get("blocked_by") == "compliance"
+        # 네이버 API 호출 0회.
+        assert naver_mock.call_count == 0
+        # 위반 항목에 packDateText 누락이 포함되어야 한다.
+        needs_fields = [n.get("field") for n in (result.get("needs_user") or [])]
+        assert "packDateText" in needs_fields, f"packDateText 누락 지적 없음: {needs_fields}"
+
+        # (1) 전송 검증: build_payload 를 직접 호출해 payload 에 값이 실리는지 확인.
+        product = {
+            "name": "테스트니트",
+            "categoryId": _CLOTHING_CATEGORY,
+            "salePrice": 30000,
+            "notice": notice_override,
+        }
+        with mock.patch.object(
+            naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
+        ):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                payload = naver_client.build_payload(product, "<html></html>", ["http://x.png"])
+        wear = (
+            payload.get("originProduct", {})
+            .get("detailAttribute", {})
+            .get("productInfoProvidedNotice", {})
+            .get("wear", {})
+        )
+        assert (
+            wear.get("packDateText") == "상세페이지 참조"
+        ), "placeholder 값이 payload 에 그대로 실려야 함(전송 O)"
 
     def test_blocked_when_required_field_truly_missing(self):
         """필수 필드가 진짜로 누락된 경우(빈 문자열)에는 여전히 차단하는가.

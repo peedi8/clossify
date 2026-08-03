@@ -32,7 +32,7 @@
     "vision_model": "{VISION_MODEL}"
   },
   "smartstore_notice_defaults": {
-    "_comment": "상품정보제공고시 자동완성 기본값. 판매자가 실제 신고하는 값을 입력. 미입력 시 등록이 거부됩니다 (fail-closed, 조용한 기본값 금지).",
+    "_comment": "상품정보제공고시 자동완성 기본값. 판매자가 실제 신고하는 값을 입력. 미입력 시 등록이 거부됩니다 (fail-closed, 조용한 기본값 금지). 이 섹션에 넣은 값은 35종 고시의 공통 5필드(returnCostReason/noRefundReason/qualityAssuranceStandard/compensationProcedure/troubleShootingContents) 및 제조자/AS연락처/수입자 등의 기본값으로 사용됩니다. 코드가 임의 문구를 지어내지 않습니다 — 값이 없으면 해당 고시 필드가 비고 컴플라이언스 검사에서 FAIL 차단됩니다.",
     "origin_area_code": "REPLACE_WITH_ORIGIN_AREA_CODE",
     "origin_content": "REPLACE_WITH_ORIGIN_CONTENT",
     "importer": "REPLACE_WITH_IMPORTER_OR_EMPTY",

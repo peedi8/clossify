@@ -132,10 +132,15 @@ def _kc_config():
         block["kcCertifiedProductExclusionYn"] = exclusion
     if exemption:
         block["kcExemptionType"] = exemption
-    if not block:
+    # T-117: KC 부분 블록 금지. config.example.json 의 설명("둘 중 하나가 비면
+    # 전체 생략")과 실동작을 일치시킨다. 두 필수 키가 모두 갖춰졌을 때만 블록을
+    # 싣고, 하나라도 없으면 블록 전체를 생략하며 경고 메타를 남긴다.
+    if not (exclusion and exemption):
         return {}, (
-            "config 의 kc_declaration 블록이 비어 있습니다 — payload 에 KC 필드를 "
-            "포함하지 않습니다."
+            "config 의 kc_declaration 이 완전하지 않습니다 — "
+            "kcCertifiedProductExclusionYn 와 kcExemptionType 값이 모두 필요합니다. "
+            "어느 하나라도 비면 KC 블록 전체를 payload 에서 생략합니다 "
+            "(부분 블록 생성 금지). 네이버 커머스 API 가 요구하면 에러로 알려줍니다."
         )
     return block, ""
 
@@ -168,6 +173,13 @@ def _model_name_default(p):
 
 
 def _seller_manufacturer_default(p, cfg_notice):
+    """제조자 기본값 후보 (T-117).
+
+    판매자가 실제 신고하는 규제값이므로 코드가 임의 문구를 지어내지 않는다.
+    config/상품 입력 어디에도 값이 없으면 빈 문자열을 반환한다. 호출자는
+    빈 문자열을 "누락" 으로 다루고, 컴플라이언스 검사가 해당 필드를
+    필수 항목 누락으로 FAIL 지적한다 (사용자에게 요구하는 것이 정답).
+    """
     return _first_value(
         p.get("seller_name_ko"),
         p.get("sellerNameKo"),
@@ -180,7 +192,7 @@ def _seller_manufacturer_default(p, cfg_notice):
         p.get("nick"),
         p.get("nickName"),
         cfg_notice.get("manufacturer"),
-        default="상세페이지 참조",
+        default="",
     )
 
 
@@ -212,13 +224,15 @@ def _resolve_origin_area_code(p, cfg_notice):
 def _notice_defaults(p):
     cfg_notice = _notice_config()
     product_name = _first_value(p.get("name"), p.get("title_ko"), default="상품명")
+    # T-117: AS 연락처는 규제 신고값. config/상품 입력에 없으면 빈 문자열.
+    # 컴플라이언스 검사가 afterServiceTelephoneNumber 누락을 FAIL 로 차단한다.
     as_tel = _first_value(
         p.get("as_tel"),
         p.get("seller_tel"),
         cfg_notice.get("as_tel"),
         cfg_notice.get("seller_tel"),
         cfg_notice.get("customerServicePhoneNumber"),
-        default="판매자연락처",
+        default="",
     )
     manufacturer = _first_value(
         p.get("manufacturer"), default=_seller_manufacturer_default(p, cfg_notice)
@@ -239,40 +253,43 @@ def _notice_defaults(p):
     # T-107: "해당없음 / KC면제" 기본값 제거 — KC 면제 여부는 규제 신고이므로
     # 임의값을 지어내면 안 됨. 값이 없으면 빈 문자열.
     cert_text = _first_value(p.get("cert_detail"), cfg_notice.get("cert_detail"), default="")
+    # T-117: 품질보증기준/반품비/환불불가/보상절차/고장대처 는 소비자 고시값.
+    # 코드가 만든 기본 문구를 넣지 않는다. 값이 없으면 빈 문자열이며
+    # 컴플라이언스 검사가 필수 항목 누락을 지적한다.
     quality = _first_value(
         p.get("quality_assurance_standard"),
         p.get("qualityAssuranceStandard"),
         cfg_notice.get("quality_assurance_standard"),
         cfg_notice.get("qualityAssuranceStandard"),
-        default="관련 법 및 소비자분쟁해결기준에 따름",
+        default="",
     )
     return_cost_reason = _first_value(
         p.get("return_cost_reason"),
         p.get("returnCostReason"),
         cfg_notice.get("return_cost_reason"),
         cfg_notice.get("returnCostReason"),
-        default="단순 변심에 의한 반품/교환 시 왕복 배송비는 구매자 부담, 상품 하자 시 판매자 부담",
+        default="",
     )
     no_refund_reason = _first_value(
         p.get("no_refund_reason"),
         p.get("noRefundReason"),
         cfg_notice.get("no_refund_reason"),
         cfg_notice.get("noRefundReason"),
-        default="주문제작 등 전자상거래법 제17조 청약철회 제한 사유에 해당하는 경우 청약철회가 제한될 수 있습니다",
+        default="",
     )
     compensation_procedure = _first_value(
         p.get("compensation_procedure"),
         p.get("compensationProcedure"),
         cfg_notice.get("compensation_procedure"),
         cfg_notice.get("compensationProcedure"),
-        default="소비자분쟁해결기준 및 관계 법령에 따라 보상",
+        default="",
     )
     trouble_shooting_contents = _first_value(
         p.get("trouble_shooting_contents"),
         p.get("troubleShootingContents"),
         cfg_notice.get("trouble_shooting_contents"),
         cfg_notice.get("troubleShootingContents"),
-        default="소비자 상담은 고객센터 전화로 문의, 소비자분쟁해결기준에 따라 처리",
+        default="",
     )
     return {
         "item_name": product_name[:50],
@@ -286,16 +303,17 @@ def _notice_defaults(p):
         "made_in": made_in,
         "manufacturer": manufacturer,
         "importer": importer,
-        "manufacturer_importer": _first_value(
-            p.get("manufacturer_importer"),
-            cfg_notice.get("manufacturer_importer"),
-            default=f"{manufacturer} / {importer}",
+        # T-117: manufacturer_importer 는 manufacturer/importer 둘 다 있을 때만
+        # 합성한다. 어느 한쪽이라도 없으면 빈 문자열(임의 합성 금지).
+        "manufacturer_importer": (
+            f"{manufacturer} / {importer}" if (manufacturer and importer) else ""
         ),
+        # T-117: 제조일자 기본문구("상세페이지 참조") 자동 삽입 제거.
         "manufacture_date": _first_value(
             p.get("manufacture_date"),
             p.get("manufacturedDate"),
             cfg_notice.get("manufacture_date"),
-            default="상세페이지 참조",
+            default="",
         ),
         "quality_assurance_standard": quality,
         "return_cost_reason": return_cost_reason,
@@ -501,24 +519,39 @@ def _is_furniture_notice(p):
 
 
 def _base_etc_notice(defaults):
-    """ETC 타입의 기본 본문 (기존 동작 보존)."""
+    """ETC 타입의 기본 본문 (T-117: 값이 있는 필드만 싣는다).
+
+    코드가 만든 기본 문구를 넣지 않는다. config/입력 어디에서도 값이 주어지지
+    않은 필드는 payload 에서 생략하고, 컴플라이언스 검사가 해당 필드를 필수
+    항목 누락으로 FAIL 지적한다. 조용한 채움 금지.
+    """
     cert = defaults["cert_detail"]
-    notice = {
-        "itemName": defaults["item_name"],
-        "certDetail": cert,
-        "certificationDetails": cert,
-        "madeIn": defaults["made_in"],
-        "countryOfOrigin": defaults["made_in"],
-        "manufacturer": defaults["manufacturer"],
-        "manufacturerImporter": defaults["manufacturer_importer"],
-        "manufactureDate": defaults["manufacture_date"],
-        "qualityAssuranceStandard": defaults["quality_assurance_standard"],
-        "returnCostReason": defaults["return_cost_reason"],
-        "noRefundReason": defaults["no_refund_reason"],
-        "compensationProcedure": defaults["compensation_procedure"],
-        "troubleShootingContents": defaults["trouble_shooting_contents"],
-        "afterServiceDirector": f"{defaults['manufacturer']} {defaults['as_tel']}",
-    }
+    notice: dict = {"itemName": defaults["item_name"]}
+    if cert:
+        notice["certDetail"] = cert
+        notice["certificationDetails"] = cert
+    notice["madeIn"] = defaults["made_in"]
+    notice["countryOfOrigin"] = defaults["made_in"]
+    if defaults.get("manufacturer"):
+        notice["manufacturer"] = defaults["manufacturer"]
+    if defaults.get("manufacturer_importer"):
+        notice["manufacturerImporter"] = defaults["manufacturer_importer"]
+    if defaults.get("manufacture_date"):
+        notice["manufactureDate"] = defaults["manufacture_date"]
+    if defaults.get("quality_assurance_standard"):
+        notice["qualityAssuranceStandard"] = defaults["quality_assurance_standard"]
+    if defaults.get("return_cost_reason"):
+        notice["returnCostReason"] = defaults["return_cost_reason"]
+    if defaults.get("no_refund_reason"):
+        notice["noRefundReason"] = defaults["no_refund_reason"]
+    if defaults.get("compensation_procedure"):
+        notice["compensationProcedure"] = defaults["compensation_procedure"]
+    if defaults.get("trouble_shooting_contents"):
+        notice["troubleShootingContents"] = defaults["trouble_shooting_contents"]
+    # T-117: afterServiceDirector 는 manufacturer 와 as_tel 이 모두 있을 때만
+    # 합성한다. 어느 한쪽이라도 비면 임의 문자열을 만들어 넣지 않는다.
+    if defaults.get("manufacturer") and defaults.get("as_tel"):
+        notice["afterServiceDirector"] = f"{defaults['manufacturer']} {defaults['as_tel']}"
     # T-107: modelName 은 config/입력에 있을 때만. importer 도 값이 있을 때만.
     if defaults.get("model_name"):
         notice["modelName"] = defaults["model_name"]
@@ -528,22 +561,26 @@ def _base_etc_notice(defaults):
 
 
 def _base_furniture_notice(p, defaults):
-    """FURNITURE 타입의 기본 본문 (기존 동작 보존)."""
+    """FURNITURE 타입의 기본 본문 (T-117: 임의 문구 자동삽입 제거).
+
+    소재/크기/구성품/안전기준 필드에 코드가 만든 "상세참조"/"해당없음 / 상세참조"
+    같은 기본 문자열을 박던 옛 동작을 제거했다. 해당 필드들은 소비자 고시값이며
+    임의값을 지어 넣으면 허위 신고가 된다. 값이 없으면 필드를 생략하고
+    컴플라이언스 검사가 필수 항목 누락으로 FAIL 지적한다.
+    """
     notice = _base_etc_notice(defaults)
-    notice.update(
-        {
-            "material": _first_value(
-                p.get("material"), p.get("fabric"), p.get("소재"), default="상세참조"
-            ),
-            "size": _first_value(p.get("size"), p.get("dimensions"), default="상세참조"),
-            "components": _first_value(
-                p.get("components"), p.get("composition"), default="상세참조"
-            ),
-            "safetyStandard": _first_value(
-                p.get("safety_standard"), p.get("safetyStandard"), default="해당없음 / 상세참조"
-            ),
-        }
-    )
+    material = _first_value(p.get("material"), p.get("fabric"), p.get("소재"), default="")
+    size = _first_value(p.get("size"), p.get("dimensions"), default="")
+    components = _first_value(p.get("components"), p.get("composition"), default="")
+    safety = _first_value(p.get("safety_standard"), p.get("safetyStandard"), default="")
+    if material:
+        notice["material"] = material
+    if size:
+        notice["size"] = size
+    if components:
+        notice["components"] = components
+    if safety:
+        notice["safetyStandard"] = safety
     return notice
 
 
@@ -579,14 +616,15 @@ def _base_notice_body_for_type(p, defaults, notice_type, spec):
     # 나머지 33종: 공통 5필드 + afterServiceDirector(있는 타입만)로 시작.
     body = _common_notice_defaults(defaults)
     fields = spec.get("fields") or []
-    # afterServiceDirector / customerServicePhoneNumber 가 해당 타입의 필드에
-    # 포함되어 있으면 제조사/A/S 정보로 채운다(기존 ETC 패턴 준용).
-    if "afterServiceDirector" in fields:
+    # T-117: afterServiceDirector/customerServicePhoneNumber 는 제조사·AS 전화가
+    # 모두 있을 때만 합성/입력한다. 어느 한쪽이라도 비면 임의 문자열을 넣지
+    # 않고 컴플라이언스 검사가 필수 항목 누락으로 FAIL 지적한다.
+    if "afterServiceDirector" in fields and defaults.get("manufacturer") and defaults.get("as_tel"):
         body["afterServiceDirector"] = f"{defaults['manufacturer']} {defaults['as_tel']}"
-    if "customerServicePhoneNumber" in fields:
+    if "customerServicePhoneNumber" in fields and defaults.get("as_tel"):
         body["customerServicePhoneNumber"] = defaults["as_tel"]
-    # manufacturer 필드가 있으면 config/입력에서.
-    if "manufacturer" in fields:
+    # manufacturer 필드가 있으면 config/입력에서(값이 있을 때만).
+    if "manufacturer" in fields and defaults.get("manufacturer"):
         body["manufacturer"] = defaults["manufacturer"]
     if "importer" in fields and defaults.get("importer"):
         body["importer"] = defaults["importer"]

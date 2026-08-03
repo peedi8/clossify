@@ -469,6 +469,11 @@ class TestBypassBlocking:
                     "origin_content": "중국",
                     "as_tel": "070-1234-5678",
                     "manufacturer": "테스트제조사",
+                    "return_cost_reason": "단순변심 반품비용 구매자부담",
+                    "no_refund_reason": "주문제작 청약철회 제한",
+                    "quality_assurance_standard": "관련법에 따름",
+                    "compensation_procedure": "소비자분쟁해결기준",
+                    "trouble_shooting_contents": "고객센터 문의",
                 },
             ),
             mock.patch.object(naver_client, "_kc_config", return_value=({}, "")),
@@ -477,6 +482,7 @@ class TestBypassBlocking:
             # "smartstore_notice_defaults") 를 직접 읽기 때문에,
             # CI(config.example.json)의 플레이스홀더 원산지와 충돌한다.
             # _notice_config mock 값과 일치하도록 common.cfg 도 함께 덮어쓴다.
+            # T-117 이후 공통 5 고시 필드도 비면 FAIL 되므로 함께 채운다.
             with mock.patch.object(
                 common,
                 "cfg",
@@ -484,6 +490,13 @@ class TestBypassBlocking:
                     "smartstore_notice_defaults": {
                         "origin_area_code": "04",
                         "origin_content": "중국",
+                        "as_tel": "070-1234-5678",
+                        "manufacturer": "테스트제조사",
+                        "return_cost_reason": "단순변심 반품비용 구매자부담",
+                        "no_refund_reason": "주문제작 청약철회 제한",
+                        "quality_assurance_standard": "관련법에 따름",
+                        "compensation_procedure": "소비자분쟁해결기준",
+                        "trouble_shooting_contents": "고객센터 문의",
                     },
                 },
             ):
