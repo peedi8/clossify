@@ -706,6 +706,9 @@ def register_product(
         - ``prepared_key_used``: 실제로 prepared 조회에 쓴 product_key.
           유도한 키를 썼을 때와 달리 어디서 가져왔는지 드러낸다 (조용한
           치환 방지).
+        - ``notice_filled_from_config``: 설정에서 자동으로 채워진 규제값 필드
+          이름 리스트. 성공·차단·실패 모든 경로에서 나타난다 (조용한 자동
+          채움 금지). 비었으면 빈 리스트.
 
     Note:
         환경변수 ``COMMERCE_DRY_RUN=1`` 시 실제 등록 없이 페이로드를
@@ -742,6 +745,7 @@ def register_product(
             "blocked_by": "ambiguous_prepared",
             "filled_from_prepared": [],
             "prepared_lookup": {},
+            "notice_filled_from_config": [],
             "message": (
                 f"{_amb_exc}. name+price 로는 어느 prepared 가 이 등록의 것인지 " "결정할 수 없다."
             ),
@@ -886,6 +890,11 @@ def register_product(
             prepared_lookup=prepared_lookup,
         )
 
+    # build_payload 가 설정에서 자동으로 채운 규제값 필드 목록을 페이로드에서
+    # 추출한다. 이 값은 모든 이후 반환 경로에 실려 사용자에게 보고되어야 한다
+    # (조용한 자동 채움 금지). 전송 페이로드에서는 naver_client 가 이미 제거했다.
+    notice_filled = list(payload.get("notice_filled_from_config") or [])
+
     # 결정론 컴플라이언스 게이트 (fail-closed).
     # 네이버 API 호출 직전에 고시 필수 필드/KC/원산지 검사를 실행한다.
     # FAIL 심각도 위반이 있으면 네이버를 호출하지 않고 거부한다.
@@ -917,6 +926,7 @@ def register_product(
                 name_truncated=name_truncated,
                 filled_from_prepared=filled_from_prepared,
                 prepared_lookup=prepared_lookup,
+                notice_filled_from_config=notice_filled,
             )
 
     if gate["blocked"]:
@@ -942,6 +952,7 @@ def register_product(
             "needs_user": needs_user,
             "filled_from_prepared": filled_from_prepared,
             "prepared_lookup": prepared_lookup,
+            "notice_filled_from_config": notice_filled,
             "message": "\n".join(message_lines),
             "error": None,
         }
@@ -989,6 +1000,7 @@ def register_product(
                         "needs_user": _prepared.get("needs_user") or [],
                         "filled_from_prepared": filled_from_prepared,
                         "prepared_lookup": prepared_lookup,
+                        "notice_filled_from_config": notice_filled,
                         "message": (
                             "prepared payload 의 QA 게이트가 등록을 차단했다 "
                             f"(reason={_reason}). submit_reviews 로 PENDING 을 "
@@ -1007,6 +1019,7 @@ def register_product(
             name_truncated=name_truncated,
             filled_from_prepared=filled_from_prepared,
             prepared_lookup=prepared_lookup,
+            notice_filled_from_config=notice_filled,
         )
 
     # register_product 는 (status_code, body) 튜플을 반환하지만, DRY_RUN 시 dict.
@@ -1022,6 +1035,7 @@ def register_product(
             "pending_reviews": gate["pending_reviews"],
             "filled_from_prepared": filled_from_prepared,
             "prepared_lookup": prepared_lookup,
+            "notice_filled_from_config": notice_filled,
             "error": None,
         }
 
@@ -1050,6 +1064,7 @@ def register_product(
         "pending_reviews": gate["pending_reviews"],
         "filled_from_prepared": filled_from_prepared,
         "prepared_lookup": prepared_lookup,
+        "notice_filled_from_config": notice_filled,
         "error": None if ok else _sanitize_text(f"API 반환 상태 {status_code}"),
     }
 
@@ -1242,10 +1257,13 @@ def _fail(
     name_truncated: bool = False,
     filled_from_prepared: list[str] | None = None,
     prepared_lookup: dict[str, Any] | None = None,
+    notice_filled_from_config: list[str] | None = None,
 ) -> dict[str, Any]:
     # prepared_lookup 는 register_product 의 모든 반환 경로에서 무엇을 어느
     # 키로 찾았는지 드러낸다(조용한 치환 방지). 검증 실패 등 반환 시점에
     # 이미 결정된 lookup 이 있으면 그대로 실어 보낸다.
+    # notice_filled_from_config 는 설정에서 자동으로 채워진 규제값 필드 목록이다.
+    # 모든 반환 경로에서 이 키가 나와야 한다 (조용한 자동 채움 금지). 비었으면 빈 리스트.
     return {
         "ok": False,
         "status_code": None,
@@ -1255,6 +1273,9 @@ def _fail(
         "seller_tags": None,
         "filled_from_prepared": filled_from_prepared if filled_from_prepared is not None else [],
         "prepared_lookup": prepared_lookup if prepared_lookup is not None else {},
+        "notice_filled_from_config": (
+            notice_filled_from_config if notice_filled_from_config is not None else []
+        ),
         "error": message,
     }
 

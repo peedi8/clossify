@@ -796,18 +796,18 @@ class TestNormalizationNoNoOp:
 
     def test_normalize_collapses_whitespace(self):
         """정규화가 내부 공백 런을 축소하는가."""
-        std, compact = qa_agents._normalize_placeholder_value("a   b")
+        std, compact, _sep = qa_agents._normalize_placeholder_value("a   b")
         assert std == "a b"
         assert compact == "ab"
 
     def test_normalize_fullwidth_space(self):
         """전각 공백이 ASCII 공백으로 통일되는가."""
-        std, _ = qa_agents._normalize_placeholder_value("a\u3000b")
+        std, _compact, _sep = qa_agents._normalize_placeholder_value("a\u3000b")
         assert std == "a b"
 
     def test_normalize_lowercases(self):
         """소문자 변환이 일어나는가."""
-        std, _ = qa_agents._normalize_placeholder_value("N/A")
+        std, _compact, _sep = qa_agents._normalize_placeholder_value("N/A")
         assert std == "n/a"
 
     def test_is_placeholder_value_not_identity(self):

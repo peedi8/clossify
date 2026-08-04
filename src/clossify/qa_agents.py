@@ -391,14 +391,15 @@ def _normalize_placeholder_value(raw):
       3. 내부 공백 런을 단일 공백으로 축소 — ``"상 세  참 조"`` 같은
          공백 삽입 변형이 ``"상 세 참 조"`` 로 모이도록.
       4. 소문자 변환(영문 토큰 N/A, NULL 등 대소문자 차이 흡수).
-      5. 위 결과를 (a) 공백을 "유지한 표준형", (b) 공백을 "완전 제거한
-         축약형" 두 가지로 반환 — 판정 쪽에서 두 형태 모두 안내문구
-         집합과 대조한다(공백 삽입 변형까지 잡기 위함).
+      5. 세 가지 정규형을 반환한다(자세한 내용은 Returns 참고).
 
     인자로 전달된 값은 문자열로 캐스트한다 (None 안전).
 
     Returns:
-        ``(standard_form, compact_form)`` — 둘 다 str.
+        ``(standard_form, compact_form, compact_sep_form)`` — 셋 다 str.
+        standard 는 공백을 단일 스페이스로 축소한 형태.
+        compact 는 공백을 완전 제거한 형태(한국어 공백 삽입 변형 판정용).
+        compact_sep 은 공백/-/. 를 ``_`` 로 통일한 형태(영문 구분자 변형 판정용).
     """
     text = str(raw or "")
     # (1) 전각 공백(U+3000) 및 다양한 공백류을 ASCII 스페이스로 통일.
@@ -410,22 +411,47 @@ def _normalize_placeholder_value(raw):
     text = text.lower()
     # (4) 내부 공백 런 축소.
     standard = re.sub(r"\s+", " ", text)
-    # (5) 공백 완전 제거 형태 (공백 삽입 우회 판정용).
+    # (5) 축약형 두 가지를 만든다:
+    #     (a) whitespace_collapsed: 공백을 모두 제거한 형태.
+    #         한국어 안내문구의 공백 삽입 변형을 잡는다("상 세 참 조" → "상세참조").
+    #     (b) separator_unified: 공백/-/. 를 _ 로 통일한 형태.
+    #         영문 placeholder 의 구분자 변형을 잡는다("REPLACE-ME" → "replace_me",
+    #         "REPLACE ME" → "replace_me").
+    #     "/" 는 (b)에서 건드리지 않는다 — "n/a" 토큰이 그대로 대조되어야 한다.
     compact = re.sub(r"\s+", "", text)
-    return standard, compact
+    compact_sep = re.sub(r"[\s\-\.]+", "_", text)
+    return standard, compact, compact_sep
 
 
-# 안내문구/placeholder 표준 집합(정규화 후 대조).
-# 공백을 제거한 compact 형태와 공백을 유지한 standard 형태 양쪽에 대해 대조.
-# 하드코딩 나열이 아니라 "실질 정보가 없는 값" 판정의 기준선 역할 —
-# 정상 값(예: "면 100%", "2026-01", "어깨 42cm")은 여기에 절대 들지 않는다.
-_PLACEHOLDER_TOKENS_STANDARD = frozenset(
+# placeholder 정본 토큰 목록 (단일 진실 공급원).
+#
+# "실질 정보가 없는 값" 판정의 기준선. 감리가 지적한 대로 과거에는 이 판정이
+# qa_agents.py 세 지점(standard 집합, compact 집합, 구두점 휴리스틱)과
+# naver_client.py 한 지점(_has_text)에 흩어져 있었다. 본 개정은 토큰 목록을
+# 한 곳(_PLACEHOLDER_TOKENS)에 두고 standard/compact 대조 집합은 여기서 자동
+# 파생한다. naver_client._has_text 는 _is_placeholder_value 를 import 해서
+# 쓴다 — 새 판정 함수를 만들지 않는다.
+#
+# 정상 한국어 정책 문구와 정상 값("면 100%", "2026-01", "어깨 42cm",
+# "단순변심 시 왕복 배송비 6,000원")은 여기에 절대 들지 않는다.
+# 판정은 문자열 전체가 placeholder 일 때만 성립한다(부분 일치로 막지 않는다).
+_PLACEHOLDER_TOKENS = frozenset(
     {
+        # 빈 값 / 구분자만.
         "",
         "-",
+        # 영문 일반 placeholder (소문자 원형만 등록 — _normalize_placeholder_value
+        # 가 소문자화한다). 구분자 변형(-/_/./공백)은 compact 대조로 흡수.
         "n/a",
         "null",
         "none",
+        # 복사해온 예시 설정이나 채우다 만 값이 흔히 남기는 placeholder 표식.
+        "tbd",
+        "todo",
+        "replace_me",
+        "placeholder",
+        "dummy",
+        # 한국어 안내문구 (공백 삽입 변형은 compact 대조로 흡수).
         "해당없음",
         "해당없음없음",
         "상세참조",
@@ -441,10 +467,21 @@ _PLACEHOLDER_TOKENS_STANDARD = frozenset(
         "별도 표시",
     }
 )
-# compact 형태(공백 제거) 대조 집합 — standard 집합에서 공백을 없앤 것.
-_PLACEHOLDER_TOKENS_COMPACT = frozenset(
-    re.sub(r"\s+", "", tok) for tok in _PLACEHOLDER_TOKENS_STANDARD
+
+# standard/compact 대조 집합 — 정본 _PLACEHOLDER_TOKENS 에서 자동 파생.
+# 두 집합을 손으로 따로 유지하지 않는다(정본 하나에서 갈라지게).
+# COMPACT 는 공백을 제거한 형태(한국어 공백 삽입 변형 판정).
+# COMPACT_SEP 은 공백/-/. 를 _ 로 통일한 형태(영문 구분자 변형 판정).
+# NO_SEP 은 공백/-/. 를 **완전 제거**한 형태(구분자를 문자 그대로 찍은
+# 변형 판정). 정본 토큰 하나에서 네 집합이 모두 갈라진다 — 손으로 유지하는
+# 독자 토큰 목록이 아니다. "T.B.D" → COMPACT_SEP 은 "t_b_d" 가 되어 어떤
+# 토큰과도 맞지 않지만, NO_SEP 은 "tbd" 가 되어 정본 토큰 "tbd" 에 닿는다.
+_PLACEHOLDER_TOKENS_STANDARD = frozenset(_PLACEHOLDER_TOKENS)
+_PLACEHOLDER_TOKENS_COMPACT = frozenset(re.sub(r"\s+", "", tok) for tok in _PLACEHOLDER_TOKENS)
+_PLACEHOLDER_TOKENS_COMPACT_SEP = frozenset(
+    re.sub(r"[\s\-\.]+", "_", tok) for tok in _PLACEHOLDER_TOKENS
 )
+_PLACEHOLDER_TOKENS_NO_SEP = frozenset(re.sub(r"[\s\-\.]+", "", tok) for tok in _PLACEHOLDER_TOKENS)
 
 
 def _is_placeholder_value(raw):
@@ -452,16 +489,27 @@ def _is_placeholder_value(raw):
 
     "실질 정보가 없는 값" 으로 판정되면 True.
       - 정규화(공백 통일/축소·전각반각 통일·소문자) 후 알려진 안내문구
-        집합(standard/compact 양쪽)과 대조.
+        집합(standard/compact/compact_sep/no_sep 양쪽)과 대조.
       - 괄호/구두점/공백만 남은 값도 미제공으로 간주.
 
     과잉 차단 금지: 정상 값(예: ``면 100%``, ``2026-01``, ``어깨 42cm``)은
     안내문구 집합에 없으므로 판정을 통과한다.
     """
-    standard, compact = _normalize_placeholder_value(raw)
+    standard, compact, compact_sep = _normalize_placeholder_value(raw)
     if standard in _PLACEHOLDER_TOKENS_STANDARD:
         return True
     if compact in _PLACEHOLDER_TOKENS_COMPACT:
+        return True
+    if compact_sep in _PLACEHOLDER_TOKENS_COMPACT_SEP:
+        return True
+    # 구분자를 문자 그대로 찍은 변형(예: "T.B.D", "T-B-D")을 잡기 위한 네 번째
+    # 정규형. 공백/하이픈/마침표를 "_" 로 치환하지 않고 **완전히 제거**한다.
+    # 이렇게 하면 "T.B.D" → "tbd" 가 되어 정본 토큰 "tbd" 에 닿는다.
+    # 동일한 정본 토큰 집합에서 파생된 _PLACEHOLDER_TOKENS_NO_SEP 와 대조하며,
+    # 두 번째 판정 함수를 만들지 않는다. 대조는 항상 문자열 전체 일치로만
+    # 성립한다(부분 일치로 막지 않는다) — 정상 문구가 잘리지 않는다.
+    no_sep = re.sub(r"[\s\-\.]+", "", standard)
+    if no_sep in _PLACEHOLDER_TOKENS_NO_SEP:
         return True
     # 괄호/구두점/공백만 남은 값도 미제공으로 간주.
     stripped = re.sub(r"[\s\-\.\,\(\)\[\]\{\}\/]", "", compact)

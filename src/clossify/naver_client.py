@@ -491,10 +491,20 @@ _NOTICE_COMMON_FIELD_CANDIDATES = (
 
 
 def _has_text(value) -> bool:
-    """None/빈 문자열/공백만 을 "값 없음" 으로 본다 (placeholder 판정과 동일 기준)."""
-    if value is None:
-        return False
-    return bool(str(value).strip())
+    """값이 "실질 정보" 인지 판정. placeholder 판정은 단일 진실 공급원에 위임한다.
+
+    과거에는 None/빈 문자열/공백만 "값 없음" 으로 보는 독자 판정을 쓰다가,
+    ``qa_agents`` 의 placeholder 판정(해당없음/상세참조/TBD/TODO/...) 과 어긋나
+    복사해온 예시 설정의 placeholder 값이 "유효 입력" 으로 둔갑하는 회귀가 있었다
+    (감리 지적). 본 함수는 ``qa_agents._is_placeholder_value`` 에 판정을 위임한다
+    — 새 판정 함수를 만들지 않고 정본 하나를 쓴다.
+
+    Returns:
+        ``True`` = 실질 정보가 있는 값. ``False`` = None/빈/공백/placeholder.
+    """
+    from . import qa_agents
+
+    return not qa_agents._is_placeholder_value(value)
 
 
 def _notice_common_filled_from_config(p, cfg_notice) -> list:
@@ -1124,6 +1134,38 @@ def _attach_seller_tag_autostrip_meta(body, meta):
     return {"body": body, SELLER_TAG_AUTOSTRIP_KEY: clean_meta}
 
 
+# 페이로드 최상위에 붙는 내부 메타 키 목록 — 네이버 API 로 절대 나가면 안 된다.
+# 감리 지적: notice_filled_from_config 가 사용자 반환에 없는 대신 네이버 요청
+# 최상위 JSON 으로 전송되고 있었다. 형제 키(_kcWarning)도 같은 성격이므로
+# 한꺼번에 다룬다 — 하나만 고치고 형제를 남기지 않는다.
+_INTERNAL_PAYLOAD_META_KEYS = frozenset(
+    {
+        "notice_filled_from_config",
+        "_kcWarning",
+    }
+)
+
+
+def _strip_internal_meta(payload):
+    """네이버 API 로 나가면 안 되는 내부 메타 키를 페이로드 최상위에서 제거한다.
+
+    ``build_payload`` 는 내부 보고/사용자 안내용 메타를 페이로드 루트에 싣는다:
+      - ``notice_filled_from_config``: 공통 5필드 중 config 에서 채운 항목 보고.
+      - ``_kcWarning``: KC 설정 부재 경고.
+
+    이 값들은 사용자에게는 보여야 하지만 **네이버 요청 JSON 에는 없어야 한다.**
+    네이버 스키마에 없는 키라 거절될 수 있고, 애초에 내부 메타를 외부로 보내면
+    안 된다. 본 함수는 송신(dry-run 덤프 포함) 직전에 이 키들을 제거한다.
+
+    ``payload`` 를 직접 변경하지 않고 얕은 복사를 반환하지 않는다 — 호출자가
+    이미 deepcopy 한 working_payload 에 대해 in-place 로 pop 한다.
+    """
+    if not isinstance(payload, dict):
+        return
+    for key in _INTERNAL_PAYLOAD_META_KEYS:
+        payload.pop(key, None)
+
+
 def register_product(payload, tk=None):
     """POST /external/v2/products. (origin/channel No 반환)"""
     # 디스크의 prepared payload 를 그대로 등록하는 경로의 마지막 방어선.
@@ -1144,6 +1186,10 @@ def register_product(payload, tk=None):
             "실재하는 상품의 사진 없이는 등록을 진행하지 않습니다."
         )
     working_payload = copy.deepcopy(payload)
+    # 내부 메타 키(notice_filled_from_config/_kcWarning)를 송신 페이로드에서 제거.
+    # 이 값들은 사용자 반환에만 쓰이고 네이버 API 로 나가면 안 된다(감리 지적).
+    # dry-run 덤프 직전에 제거하여 dry-run 파일에도 내부 키가 없다.
+    _strip_internal_meta(working_payload)
     meta = {"removed": [], "restricted_terms": [], "attempts": []}
     prefilter_removed = _strip_seller_tags(working_payload, KNOWN_RESTRICTED_SELLER_TAGS)
     if prefilter_removed:
