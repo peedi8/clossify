@@ -122,11 +122,23 @@ def _patch_register_chain(
 
     def _fake_update(cn, p):
         update_calls.append((cn, p))
+        # 실 API 와 동일하게: originProduct 없는 단편 본문은 거부(400).
+        # 이것이 없으면 단편 회귀가 200 으로 통과한다 (실측에서는 무시됨).
+        if not isinstance(p, dict) or not isinstance(p.get("originProduct"), dict):
+            return 400, {"code": "BAD_REQUEST", "message": "originProduct required"}
         return 200, {}
 
     def _fake_get(no):
         get_calls.append(no)
-        return 200, {"originProduct": {"statusType": verified_status}}
+        # 보정 경로가 read-mutate-send 전체 본문을 보내려면 get_product 가
+        # 전체 리소스(originProduct + smartstoreChannelProduct) 를 반환해야 한다.
+        return 200, {
+            "originProduct": {"statusType": verified_status, "originProductNo": no},
+            "smartstoreChannelProduct": {
+                "channelProductDisplayStatusType": verified_status,
+                "channelProductNo": channel_no or "",
+            },
+        }
 
     monkeypatch.setattr(naver_client, "register_product", _fake_register)
     monkeypatch.setattr(naver_client, "update_product", _fake_update)
@@ -315,7 +327,10 @@ class TestStatusCorrectionUsesChannelNo:
             "보정 호출은 등록 응답의 채널상품번호로 해야 한다 "
             "(get_product 응답에는 그 번호가 없다)."
         )
-        assert sent_payload.get("statusType") == "SUSPENSION"
+        # 보정 PUT 본문은 전체 originProduct 를 포함한다 — 단편은 네이버 API
+        # 가 무시한다(실측 확인).
+        assert isinstance(sent_payload.get("originProduct"), dict)
+        assert sent_payload["originProduct"].get("statusType") == "SUSPENSION"
         # 최종 상태가 반영된다.
         assert result["applied_status"] == "SUSPENSION"
         assert result["ok"] is True

@@ -118,11 +118,17 @@ def _patch_register_chain(
     register_calls: list | None = None,
     origin_no: str = "ORIGIN-X",
     channel_no: str = "CH-X",
+    update_status_code: int = 200,
 ):
     """naver_client HTTP 계층(register/update/get)을 mock 으로 차단.
 
     - 생성 응답의 statusType 은 ``created_status``.
     - 보정 후 get_product 재확인 시 반환되는 statusType 은 ``verified_status``.
+    - ``update_status_code``: 보정 PUT 이 반환할 HTTP 상태. 실 API 와 달리
+      이 mock 은 단편 본문({"statusType": ...} 만) 을 **거부**한다 —
+      채널상품 PUT 은 리소스 교체이므로 originProduct 가 없는 본문은
+      400 을 반환한다(실등록에서 무시되는 것과 동일한 효과를 테스트에서
+      재현). 이 가드가 없으면 단편 회귀가 200 으로 통과한다.
     """
     if update_calls is None:
         update_calls = []
@@ -144,11 +150,23 @@ def _patch_register_chain(
 
     def _fake_update(cn, p):
         update_calls.append((cn, p))
-        return 200, {}
+        # 실 API 와 동일하게: originProduct 없는 단편 본문은 거부(400).
+        # 이것이 없으면 단편 회귀가 200 으로 통과한다 (실측에서는 무시됨).
+        if not isinstance(p, dict) or not isinstance(p.get("originProduct"), dict):
+            return 400, {"code": "BAD_REQUEST", "message": "originProduct required"}
+        return update_status_code, {}
 
     def _fake_get(no):
         get_calls.append(no)
-        return 200, {"originProduct": {"statusType": verified_status}}
+        # 보정 경로가 read-mutate-send 전체 본문을 보내려면 get_product 가
+        # 전체 리소스(originProduct + smartstoreChannelProduct) 를 반환해야 한다.
+        return 200, {
+            "originProduct": {"statusType": verified_status, "originProductNo": no},
+            "smartstoreChannelProduct": {
+                "channelProductDisplayStatusType": verified_status,
+                "channelProductNo": channel_no,
+            },
+        }
 
     monkeypatch.setattr(naver_client, "register_product", _fake_register)
     monkeypatch.setattr(naver_client, "update_product", _fake_update)
@@ -220,16 +238,37 @@ class TestStatusCorrectionHappens:
         assert (
             len(update_calls) == 1
         ), f"보정(update_product) 이 1회 일어나야 한다: {len(update_calls)}회"
-        assert len(get_calls) == 1, f"재확인(get_product) 이 1회 일어나야 한다: {len(get_calls)}회"
-        # 보정 페이로드에 요청 상태가 실려야 한다.
+        # get_product 는 2회: 보정 전 리소스 읽기(read-mutate-send 의 read) 와
+        # 보정 후 재확인. 예전 단편 PUT 시절에는 1회(재확인만) 였으나, 전체
+        # 본문 전송을 위해 리소스를 먼저 읽어야 한다 (실측 기반 정답).
+        assert (
+            len(get_calls) == 2
+        ), f"get_product 가 2회 일어나야 한다 (read + re-verify): {len(get_calls)}회"
+        # 보정 페이로드는 **전체 리소스** 여야 한다 — 단편({"statusType":...} 만)
+        # 은 네이버 API 가 무시한다(실등록에서 확인). 따라서 본문에 originProduct
+        # 딕셔너리가 들어있고 그 안의 statusType 이 요청값이어야 한다.
         sent_channel, sent_payload = update_calls[0]
         assert sent_channel == "CH-1"
-        assert sent_payload.get("statusType") == "SUSPENSION"
+        assert isinstance(sent_payload.get("originProduct"), dict), (
+            "보정 PUT 본문은 전체 originProduct 를 포함해야 한다 — 단편 본문은 "
+            "네이버 API 에 의해 무시된다(실측 확인)."
+        )
+        assert sent_payload["originProduct"].get("statusType") == "SUSPENSION"
+        # smartstoreChannelProduct 도 전체 본문에 포함되어야 한다 (display 필드).
+        assert isinstance(sent_payload.get("smartstoreChannelProduct"), dict)
+        assert (
+            sent_payload["smartstoreChannelProduct"].get("channelProductDisplayStatusType")
+            == "SUSPENSION"
+        )
         # 반환에 요청값·실제값이 모두 실린다.
         assert result["requested_status"] == "SUSPENSION"
         assert result["applied_status"] == "SUSPENSION", "보정 후 최종 상태가 반환에 실려야 한다"
         # 보정으로 맞춰졌으므로 ok=True.
         assert result["ok"] is True
+        # 성공 경로에서는 status_correction_error 가 None 이어야 한다.
+        assert (
+            result.get("status_correction_error") is None
+        ), "보정이 성공하면 status_correction_error 는 None 이어야 한다."
 
     def test_status_corrected_flag_set(self, monkeypatch):
         """보정이 성공적으로 적용되면 status_corrected=True."""
@@ -291,6 +330,12 @@ class TestStillMismatchReportsFailure:
         assert result["applied_status"] == "SALE"
         assert result.get("status_correction_attempted") is True
         assert result.get("status_corrected") is False
+        # 보정 시도는 했지만 여전히 불일치 — PUT 자체는 200 으로 성공했으므로
+        # status_correction_error 는 None 이다 (예외가 아니라 상태가 안 바뀐 것).
+        assert result.get("status_correction_error") is None, (
+            "보정 PUT 이 200 을 반환했으면 status_correction_error 는 None 이다 "
+            "(ok=False 는 상태가 바뀌지 않아서이지 예외가 아니다)."
+        )
 
     def test_requested_and_applied_always_present(self, monkeypatch):
         """반환에 requested_status/applied_status 가 항상 싣는다."""
@@ -359,6 +404,54 @@ class TestNoExtraCallWhenAlreadyMatching:
         assert result["requested_status"] == "SALE"
         assert result["applied_status"] == "SALE"
         assert result.get("status_correction_attempted") is False
+        # 보정 시도 자체가 없었으므로 status_correction_error 도 None 이다.
+        assert result.get("status_correction_error") is None
+
+
+# ============================================================================
+# (j) 보정 PUT 이 거부(non-2xx) 되면 status_correction_error 에 사유가 실린다.
+#     ok=False 와 함께 사유를 남겨야 판매자가 어찌할 바를 안다 (사유 삼킴 금지).
+# ============================================================================
+class TestCorrectionFailureReportsError:
+    def test_correction_put_rejected_sets_error(self, monkeypatch):
+        """보정 PUT 이 500 을 반환하면 status_correction_error 에 사유가 실린다."""
+        monkeypatch.delenv("COMMERCE_DRY_RUN", raising=False)
+
+        _patch_register_chain(
+            monkeypatch,
+            created_status="SALE",
+            verified_status="SALE",
+            origin_no="ORIGIN-6",
+            channel_no="CH-6",
+            update_status_code=500,
+        )
+
+        result = mcp_server.register_product(
+            name="보정실패테스트",
+            price=10000,
+            category_id=_GENERAL_CATEGORY,
+            image_urls=["http://x/img.png"],
+            detail_html="<html></html>",
+            status="SUSPENSION",
+            notice=_ETC_NOTICE_BODY,
+            preview_confirmed=True,
+        )
+
+        # 보정 PUT 이 500 → 예외 경로로 status_correction_error 설정.
+        assert result.get("status_correction_attempted") is True
+        assert result.get("status_corrected") is False
+        assert result.get("status_correction_error") is not None, (
+            "보정 PUT 이 거부되면 status_correction_error 에 사유가 실려야 한다 "
+            "(ok=False 만 남기면 판매자가 어찌할 바를 알 수 없다)."
+        )
+        # 사유 텍스트에 HTTP 상태가 드러나야 한다.
+        assert (
+            "500" in result["status_correction_error"]
+        ), "status_correction_error 에 HTTP 상태(500) 가 포함되어야 한다."
+        # ok=False (보정 실패로 상태가 맞춰지지 않았다).
+        assert result["ok"] is False
+        assert result["requested_status"] == "SUSPENSION"
+        assert result["applied_status"] == "SALE"
 
 
 if __name__ == "__main__":

@@ -1316,33 +1316,66 @@ def register_product(
     # 기본값(SALE)로 저장하는 경우가 있다(실측 확인). 판매중지(SUSPENSION)로
     # 올리려던 판매자가 판매중인 상품을 갖게 되는데 아무도 모르는 조용한 잘못된
     # 상태다. 본 보정 경로는:
-    #   1. 생성 응답의 statusType 이 요청값과 다르면 update_product 로 맞춘다.
-    #      update_product 는 채널상품번호를 요구하므로 위에서 추출한 값을 쓴다.
-    #   2. 보정 후 get_product 로 실제 상태를 재확인한다.
+    #   1. 생성 응답의 statusType 이 요청값과 다르면 보정을 시도한다.
+    #   2. 보정은 채널상품번호(channel-product) PUT 으로 한다.
     #   3. 그래도 다르면 ok=False 로 보고한다 (조용한 성공 금지).
     # status="SALE" 이고 응답도 SALE 이면 추가 호출이 일어나지 않는다.
+    #
+    # **보정 PUT 본문 (실측 확인된 정답)**: 채널상품 PUT 은 리소스를 교체한다.
+    # 단편({"statusType": ...}) 은 네이버 API 가 무시한다 — 200 을 반환하지만
+    # 상태는 바뀌지 않는다(실등록에서 확인). 따라서 보정은 다음 순서를 따른다:
+    #   a. get_product(origin_no) 로 현재 전체 리소스를 읽는다.
+    #   b. 응답의 originProduct.statusType 과
+    #      smartstoreChannelProduct.channelProductDisplayStatusType 을
+    #      요청값으로 덮어쓴다.
+    #   c. update_product(channel_no, {전체 originProduct, 전체
+    #      smartstoreChannelProduct}) 로 *전체* 본문을 보낸다.
+    #   d. get_product 로 재확인한다.
+    #
+    # 보정 실패의 사유(예외 텍스트 또는 HTTP 상태)는 status_correction_error
+    # 에 담는다. None 은 보정 시도가 없었거나 성공한 경우다. ok=False 만
+    # 남기고 사유를 삼키면 판매자가 어찌할 바를 알 수 없다.
     # ------------------------------------------------------------------ #
     applied_status = _extract_status_type(body) if ok else ""
     status_corrected = False
     status_correction_attempted = False
+    status_correction_error: str | None = None
     if ok and applied_status and applied_status != status.upper() and origin_product_no:
         status_correction_attempted = True
         # 보정은 채널상품번호로 한다. 위에서 추출한 값을 그대로 쓴다(응답의 정본).
         if channel_product_no:
             try:
-                correction_payload = {"statusType": status}
-                naver_client.update_product(channel_product_no, correction_payload)
-                # 보정 후 재확인.
+                # a. 현재 리소스를 전체 읽어온다 — 단편 PUT 은 무시된다(실측).
+                _rsc, _rbody = naver_client.get_product(origin_product_no)
+                if not isinstance(_rsc, int) or _rsc != 200 or not isinstance(_rbody, dict):
+                    raise RuntimeError(f"보정 전 리소스 조회 실패 (get_product status={_rsc})")
+                _origin = _rbody.get("originProduct")
+                _channel = _rbody.get("smartstoreChannelProduct")
+                if not isinstance(_origin, dict):
+                    raise RuntimeError("보정 전 리소스에 originProduct 가 없다")
+                # b. 두 status 필드를 요청값으로 덮어쓴다.
+                _origin["statusType"] = status
+                if isinstance(_channel, dict):
+                    _channel["channelProductDisplayStatusType"] = status
+                # c. 전체 본문으로 PUT.
+                correction_payload: dict[str, Any] = {"originProduct": _origin}
+                if isinstance(_channel, dict):
+                    correction_payload["smartstoreChannelProduct"] = _channel
+                _usc, _ubody = naver_client.update_product(channel_product_no, correction_payload)
+                if not isinstance(_usc, int) or not (200 <= _usc < 300):
+                    raise RuntimeError(f"보정 PUT 이 거부되었다 (update_product status={_usc})")
+                # d. 보정 후 재확인.
                 _vsc, _vbody = naver_client.get_product(origin_product_no)
                 if isinstance(_vbody, dict):
                     verified = _extract_status_type(_vbody)
                     if verified:
                         applied_status = verified
                 status_corrected = applied_status == status.upper()
-            except Exception:
+            except Exception as exc:
                 # 보정 실패 — applied_status 는 보정 전 값으로 둔다.
-                # 조용한 성공 금지: 최종 ok 판정에서 이 차이가 반영된다.
-                pass
+                # 사유를 captured 해서 반환에 실는다 (ok=False 만 남기지 않는다).
+                # HTTP 상태든 예외 텍스트든 _sanitize_error 로 위생화.
+                status_correction_error = _sanitize_error(exc)
         # ok 재판정: 보정 후에도 다르면 실패로 보고 (조용한 성공 금지).
         if applied_status != status.upper():
             ok = False
@@ -1391,6 +1424,9 @@ def register_product(
         "applied_status": applied_status,
         "status_corrected": status_corrected,
         "status_correction_attempted": status_correction_attempted,
+        # None 이면 보정 시도가 없었거나 성공한 것. 실패 시 예외/HTTP 상태 텍스트.
+        # ok=False 만 남기면 판매자가 어찌할 바를 알 수 없다 — 사유를 반드시 실는다.
+        "status_correction_error": status_correction_error,
         "registration_record": registration_record,
         "dry_run": _dry_run,
         "error": None if ok else _sanitize_text(f"API 반환 상태 {status_code}"),
