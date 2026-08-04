@@ -713,15 +713,18 @@ def register_product(
     Note:
         환경변수 ``COMMERCE_DRY_RUN=1`` 시 실제 등록 없이 페이로드를
         ``.local/dry_run_payload.json`` 에 덤프한다 (naver_client 동작).
+        리허설 모드에서도 컴플라이언스 게이트는 동일하게 실행되며, 반환에
+        ``dry_run: true`` 가 표시된다.
     """
+    _dry_run = os.environ.get("COMMERCE_DRY_RUN") == "1"
     if not isinstance(name, str) or not name.strip():
-        return _fail("name 은 비어있지 않은 문자열이어야 합니다.")
+        return _fail("name 은 비어있지 않은 문자열이어야 합니다.", dry_run=_dry_run)
     if not isinstance(price, int) or isinstance(price, bool) or price <= 0:
-        return _fail("price 는 0보다 큰 정수(KRW)여야 합니다.")
+        return _fail("price 는 0보다 큰 정수(KRW)여야 합니다.", dry_run=_dry_run)
     if not isinstance(category_id, str) or not category_id.strip():
-        return _fail("category_id 는 비어있지 않은 문자열이어야 합니다.")
+        return _fail("category_id 는 비어있지 않은 문자열이어야 합니다.", dry_run=_dry_run)
     if status not in {"SALE", "SUSPENSION"}:
-        return _fail("status 는 'SALE' 또는 'SUSPENSION' 이어야 합니다.")
+        return _fail("status 는 'SALE' 또는 'SUSPENSION' 이어야 합니다.", dry_run=_dry_run)
 
     # product_key 결정 — 명시 인자가 있으면 그것을, 없으면 이름+가격으로
     # 후보를 찾는다. 같은 이름·가격의 SKU 가 여러 개일 때(색상만 다른 옵션
@@ -746,6 +749,7 @@ def register_product(
             "filled_from_prepared": [],
             "prepared_lookup": {},
             "notice_filled_from_config": [],
+            "dry_run": _dry_run,
             "message": (
                 f"{_amb_exc}. name+price 로는 어느 prepared 가 이 등록의 것인지 " "결정할 수 없다."
             ),
@@ -836,6 +840,7 @@ def register_product(
                         f"product_key={_fill_pkey}, 사유={_img_exc}",
                         filled_from_prepared=filled_from_prepared,
                         prepared_lookup=prepared_lookup,
+                        dry_run=_dry_run,
                     )
                 _prepared_urls = [
                     str(u).strip() for u in _raw_prepared_urls if isinstance(u, str) and u.strip()
@@ -851,13 +856,17 @@ def register_product(
         naver_client._require_original_images(image_urls)
     except ValueError as exc:
         return _fail(
-            str(exc), filled_from_prepared=filled_from_prepared, prepared_lookup=prepared_lookup
+            str(exc),
+            filled_from_prepared=filled_from_prepared,
+            prepared_lookup=prepared_lookup,
+            dry_run=_dry_run,
         )
     if not isinstance(detail_html, str) or not detail_html.strip():
         return _fail(
             "detail_html 은 비어있지 않은 HTML 문자열이어야 합니다.",
             filled_from_prepared=filled_from_prepared,
             prepared_lookup=prepared_lookup,
+            dry_run=_dry_run,
         )
 
     # Fix 5 — 상품명 50자 정책 컷. naver_client 도 내부에서 자르지만,
@@ -888,6 +897,7 @@ def register_product(
             f"등록 중 오류(페이로드 빌드): {_sanitize_error(exc)}",
             filled_from_prepared=filled_from_prepared,
             prepared_lookup=prepared_lookup,
+            dry_run=_dry_run,
         )
 
     # build_payload 가 설정에서 자동으로 채운 규제값 필드 목록을 페이로드에서
@@ -900,34 +910,22 @@ def register_product(
     # FAIL 심각도 위반이 있으면 네이버를 호출하지 않고 거부한다.
     # 예외를 삼켜 등록을 진행시키지 않는다 (무동작·identity 금지).
     #
-    # 단, COMMERCE_DRY_RUN=1 인 경우에는 게이트를 건너뛴다. DRY_RUN 은 실제
-    # 등록이 일어나지 않고 페이로드를 파일로 덤프만 하는 개발/테스트 모드다.
-    # 게이트의 목적은 비컴플라이언스 상품의 **등록 차단**이며, DRY_RUN 에서는
-    # 등록 자체가 발생하지 않으므로 게이트가 무의미하다. 대신 DRY_RUN 이
-    # 아닌 모든 실제 등록 경로에서 게이트가 동작한다.
-    _dry_run = os.environ.get("COMMERCE_DRY_RUN") == "1"
-    if _dry_run:
-        gate: dict[str, Any] = {
-            "blocked": False,
-            "violations": [],
-            "needs_user": [],
-            "pending_reviews": [
-                "copy_qa: 카피 품질 LLM 판단 대기 중",
-                "image_qa: 이미지 적합성 LLM 판단 대기 중",
-            ],
-        }
-    else:
-        try:
-            gate = _run_compliance_gate(name, category_id, payload)
-        except Exception as exc:
-            # 검사 자체가 예외로 실패하면 fail-closed: 등록을 차단한다.
-            return _fail(
-                f"컴플라이언스 검사 중 오류(등록 차단): {_sanitize_error(exc)}",
-                name_truncated=name_truncated,
-                filled_from_prepared=filled_from_prepared,
-                prepared_lookup=prepared_lookup,
-                notice_filled_from_config=notice_filled,
-            )
+    # DRY_RUN(COMMERCE_DRY_RUN=1) 도 게이트를 통과한다. DRY_RUN 은 실제 네이버
+    # 호출만 생략하는 리허설이다 — "실제로 등록했다면 어떤 판정이 났을까" 를
+    # 보고해야 하므로, 게이트는 항상 실행된다. 스킵하면 비컴플라이언스 상품이
+    # DRY_RUN 에서는 성공으로 보고되고, 실제 경로에서는 거부되는 모순이 생긴다.
+    try:
+        gate = _run_compliance_gate(name, category_id, payload)
+    except Exception as exc:
+        # 검사 자체가 예외로 실패하면 fail-closed: 등록을 차단한다.
+        return _fail(
+            f"컴플라이언스 검사 중 오류(등록 차단): {_sanitize_error(exc)}",
+            name_truncated=name_truncated,
+            filled_from_prepared=filled_from_prepared,
+            prepared_lookup=prepared_lookup,
+            notice_filled_from_config=notice_filled,
+            dry_run=_dry_run,
+        )
 
     if gate["blocked"]:
         violations = gate["violations"]
@@ -953,6 +951,7 @@ def register_product(
             "filled_from_prepared": filled_from_prepared,
             "prepared_lookup": prepared_lookup,
             "notice_filled_from_config": notice_filled,
+            "dry_run": _dry_run,
             "message": "\n".join(message_lines),
             "error": None,
         }
@@ -966,49 +965,54 @@ def register_product(
     # 결정론 검사만 적용하고 응답에 gate:"deterministic_only" 를 표기한다.
     # 시그니처는 변경하지 않는다.
     #
+    # DRY_RUN 도 이 게이트를 통과한다. DRY_RUN 은 리허설이므로 "실제 등록했다면
+    # 어떤 게이트 판정이 났을까" 를 보고해야 한다. DRY_RUN 에서만 게이트를
+    # 스킵하면 prepared QA 가 FAIL 인 상품이 DRY_RUN 에서는 성공으로 보고되는
+    # 모순이 생긴다.
+    #
     # product_key 는 위에서 *한 번* 유도한 것을 그대로 쓴다. 여기서 다시 유도하면
     # 이름이 50자로 잘린 뒤라 다른 키가 나오고, 자동 채움이 찾은 prepared 와 게이트가
     # 판정한 prepared 가 달라진다(FAIL 판정 우회). 같은 키 하나를 공유한다.
     gate_label = "deterministic_only"
-    if not _dry_run:
-        _pkey = _product_key
-        if _pkey:
-            try:
-                _prepared = _register_mod.load_prepared_payload(product_key=_pkey)
-            except FileNotFoundError:
-                _prepared = None
-            except ValueError:
-                # version 불일치 등 — 조용히 무시하지 않고 결정론 게이트로만 진행.
-                _prepared = None
-            if isinstance(_prepared, dict):
-                # prepared 가 존재하면 QA 집계를 완전 게이트로 적용.
-                _qa = _prepared.get("qa") if isinstance(_prepared.get("qa"), dict) else {}
-                _allowed, _reason = qa_agents.qa_gate(_prepared)
-                if not _allowed:
-                    # PENDING/FAIL 차단 — 네이버 호출 없이 거부.
-                    return {
-                        "ok": False,
-                        "status_code": None,
-                        "origin_product_no": None,
-                        "name_truncated": name_truncated,
-                        "raw": None,
-                        "seller_tags": None,
-                        "blocked_by": "prepared_qa_gate",
-                        "gate": "full",
-                        "reason": _reason,
-                        "needs_llm": _prepared.get("needs_llm") or [],
-                        "needs_user": _prepared.get("needs_user") or [],
-                        "filled_from_prepared": filled_from_prepared,
-                        "prepared_lookup": prepared_lookup,
-                        "notice_filled_from_config": notice_filled,
-                        "message": (
-                            "prepared payload 의 QA 게이트가 등록을 차단했다 "
-                            f"(reason={_reason}). submit_reviews 로 PENDING 을 "
-                            "해소하거나 사용자 입력을 보완해야 한다."
-                        ),
-                        "error": None,
-                    }
-                gate_label = "full"
+    _pkey = _product_key
+    if _pkey:
+        try:
+            _prepared = _register_mod.load_prepared_payload(product_key=_pkey)
+        except FileNotFoundError:
+            _prepared = None
+        except ValueError:
+            # version 불일치 등 — 조용히 무시하지 않고 결정론 게이트로만 진행.
+            _prepared = None
+        if isinstance(_prepared, dict):
+            # prepared 가 존재하면 QA 집계를 완전 게이트로 적용.
+            _qa = _prepared.get("qa") if isinstance(_prepared.get("qa"), dict) else {}
+            _allowed, _reason = qa_agents.qa_gate(_prepared)
+            if not _allowed:
+                # PENDING/FAIL 차단 — 네이버 호출 없이 거부.
+                return {
+                    "ok": False,
+                    "status_code": None,
+                    "origin_product_no": None,
+                    "name_truncated": name_truncated,
+                    "raw": None,
+                    "seller_tags": None,
+                    "blocked_by": "prepared_qa_gate",
+                    "gate": "full",
+                    "reason": _reason,
+                    "needs_llm": _prepared.get("needs_llm") or [],
+                    "needs_user": _prepared.get("needs_user") or [],
+                    "filled_from_prepared": filled_from_prepared,
+                    "prepared_lookup": prepared_lookup,
+                    "notice_filled_from_config": notice_filled,
+                    "dry_run": _dry_run,
+                    "message": (
+                        "prepared payload 의 QA 게이트가 등록을 차단했다 "
+                        f"(reason={_reason}). submit_reviews 로 PENDING 을 "
+                        "해소하거나 사용자 입력을 보완해야 한다."
+                    ),
+                    "error": None,
+                }
+            gate_label = "full"
 
     # 결정론 게이트 통과 — 네이버 API 호출 진행.
     try:
@@ -1020,6 +1024,7 @@ def register_product(
             filled_from_prepared=filled_from_prepared,
             prepared_lookup=prepared_lookup,
             notice_filled_from_config=notice_filled,
+            dry_run=_dry_run,
         )
 
     # register_product 는 (status_code, body) 튜플을 반환하지만, DRY_RUN 시 dict.
@@ -1036,6 +1041,7 @@ def register_product(
             "filled_from_prepared": filled_from_prepared,
             "prepared_lookup": prepared_lookup,
             "notice_filled_from_config": notice_filled,
+            "dry_run": _dry_run,
             "error": None,
         }
 
@@ -1065,6 +1071,7 @@ def register_product(
         "filled_from_prepared": filled_from_prepared,
         "prepared_lookup": prepared_lookup,
         "notice_filled_from_config": notice_filled,
+        "dry_run": _dry_run,
         "error": None if ok else _sanitize_text(f"API 반환 상태 {status_code}"),
     }
 
@@ -1258,12 +1265,15 @@ def _fail(
     filled_from_prepared: list[str] | None = None,
     prepared_lookup: dict[str, Any] | None = None,
     notice_filled_from_config: list[str] | None = None,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
     # prepared_lookup 는 register_product 의 모든 반환 경로에서 무엇을 어느
     # 키로 찾았는지 드러낸다(조용한 치환 방지). 검증 실패 등 반환 시점에
     # 이미 결정된 lookup 이 있으면 그대로 실어 보낸다.
     # notice_filled_from_config 는 설정에서 자동으로 채워진 규제값 필드 목록이다.
     # 모든 반환 경로에서 이 키가 나와야 한다 (조용한 자동 채움 금지). 비었으면 빈 리스트.
+    # dry_run 은 COMMERCE_DRY_RUN=1 모드에서의 실패임을 표시한다. 실제 등록과
+    # 리허설 실패를 구분하기 위해 모든 반환 경로에 존재한다.
     return {
         "ok": False,
         "status_code": None,
@@ -1276,6 +1286,7 @@ def _fail(
         "notice_filled_from_config": (
             notice_filled_from_config if notice_filled_from_config is not None else []
         ),
+        "dry_run": dry_run,
         "error": message,
     }
 

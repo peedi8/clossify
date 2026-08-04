@@ -22,7 +22,7 @@ _SRC = _PROJECT_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from clossify import mcp_server, naver_client
+from clossify import common, mcp_server, naver_client
 
 
 # ============================================================================ #
@@ -86,32 +86,61 @@ class TestFix5NameTruncation:
     """register_product 가 50자 초과 상품명을 자르고 name_truncated=True 를 반환하는가."""
 
     def test_long_name_truncated_in_dry_run(self, monkeypatch):
+        # COMMERCE_DRY_RUN=1 모드에서도 컴플라이언스 게이트가 동작한다.
+        # 따라서 테스트는 게이트를 진심으로 통과하는 페이로드를 제공해야 한다:
+        #   - WEAR 카테고리(50021299, KC 불필요)
+        #   - WEAR 고시 필수 13필드를 모두 채운 notice 오버라이드
+        #   - 원산지/A/S 정보가 일치하는 _notice_config + common.cfg 목
+        # 이 테스트의 본질은 상품명 50자 절삭 여부이며, 게이트 통과는
+        # 리허설 모드에서도 동일하게 적용된다는 사실 그 자체다.
         monkeypatch.setenv("COMMERCE_DRY_RUN", "1")
         long_name = "A" * 80
-        # _notice_config 에 원산지/연락처 기본값을 주어 build_payload 의
-        # _notice_defaults 단계에서 ValueError 가 발생하지 않게 한다.
-        # CI 환경(config.example.json)은 플레이스홀더 값이라 실제 config 를
-        # 읽으면 fail-closed 로 거부된다. 이 테스트의 대상은 상품명 절삭
-        # 여부이지 원산지 검사가 아니다.
         _notice = {
             "origin_area_code": "04",
             "origin_content": "중국",
             "as_tel": "070-1234-5678",
             "manufacturer": "테스트제조사",
         }
+        _common_cfg = {
+            "smartstore_notice_defaults": {"origin_content": "중국"},
+        }
+        # WEAR 고시 본문 13개 필수필드를 플레이스홀더 없이 모두 채운다.
+        _wear_notice = {
+            "productInfoProvidedNoticeType": "WEAR",
+            "wear": {
+                "returnCostReason": "단순변심 반품비용 구매자부담",
+                "noRefundReason": "주문제작 청약철회 제한",
+                "qualityAssuranceStandard": "관련법에 따름",
+                "compensationProcedure": "소비자분쟁해결기준",
+                "troubleShootingContents": "고객센터 문의",
+                "material": "면 100%",
+                "color": "블랙",
+                "size": "FREE",
+                "manufacturer": "테스트제조사",
+                "caution": "물 세탁 가능",
+                "packDateText": "2026-01",
+                "warrantyPolicy": "구매 후 7일 교환 가능",
+                "afterServiceDirector": "테스트제조사 070-1234-5678",
+            },
+        }
         with mock.patch.object(naver_client, "_notice_config", return_value=_notice):
             with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
-                result = mcp_server.register_product(
-                    name=long_name,
-                    price=10000,
-                    image_urls=["http://x.png"],
-                    category_id="50002366",
-                    detail_html="<html></html>",
-                )
+                with mock.patch.object(common, "cfg", lambda: _common_cfg):
+                    result = mcp_server.register_product(
+                        name=long_name,
+                        price=10000,
+                        image_urls=["http://x.png"],
+                        category_id="50021299",
+                        detail_html="<html></html>",
+                        notice=_wear_notice,
+                    )
         assert result["ok"] is True
         assert result.get("name_truncated") is True
+        assert result.get("dry_run") is True
 
     def test_short_name_not_truncated(self, monkeypatch):
+        # 게이트가 DRY_RUN 에서도 동작하므로 동일한 컴플라이언스 통과 조건을
+        # 제공한다(자세한 사정은 test_long_name_truncated_in_dry_run 참고).
         monkeypatch.setenv("COMMERCE_DRY_RUN", "1")
         _notice = {
             "origin_area_code": "04",
@@ -119,17 +148,41 @@ class TestFix5NameTruncation:
             "as_tel": "070-1234-5678",
             "manufacturer": "테스트제조사",
         }
+        _common_cfg = {
+            "smartstore_notice_defaults": {"origin_content": "중국"},
+        }
+        _wear_notice = {
+            "productInfoProvidedNoticeType": "WEAR",
+            "wear": {
+                "returnCostReason": "단순변심 반품비용 구매자부담",
+                "noRefundReason": "주문제작 청약철회 제한",
+                "qualityAssuranceStandard": "관련법에 따름",
+                "compensationProcedure": "소비자분쟁해결기준",
+                "troubleShootingContents": "고객센터 문의",
+                "material": "면 100%",
+                "color": "블랙",
+                "size": "FREE",
+                "manufacturer": "테스트제조사",
+                "caution": "물 세탁 가능",
+                "packDateText": "2026-01",
+                "warrantyPolicy": "구매 후 7일 교환 가능",
+                "afterServiceDirector": "테스트제조사 070-1234-5678",
+            },
+        }
         with mock.patch.object(naver_client, "_notice_config", return_value=_notice):
             with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
-                result = mcp_server.register_product(
-                    name="짧은이름",
-                    price=10000,
-                    image_urls=["http://x.png"],
-                    category_id="50002366",
-                    detail_html="<html></html>",
-                )
+                with mock.patch.object(common, "cfg", lambda: _common_cfg):
+                    result = mcp_server.register_product(
+                        name="짧은이름",
+                        price=10000,
+                        image_urls=["http://x.png"],
+                        category_id="50021299",
+                        detail_html="<html></html>",
+                        notice=_wear_notice,
+                    )
         assert result["ok"] is True
         assert result.get("name_truncated") is False
+        assert result.get("dry_run") is True
 
     def test_max_product_name_len_is_50(self):
         assert naver_client.MAX_PRODUCT_NAME_LEN == 50

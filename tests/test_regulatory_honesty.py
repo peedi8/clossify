@@ -345,11 +345,20 @@ class TestNoInternalMetaOnTheWire:
         assert captured["calls"] == 1
         assert "_kcWarning" not in captured["payload"], "_kcWarning 가 송신 JSON 에 있음"
 
-    def test_d_dry_run_dump_also_strips_internal_meta(self, monkeypatch, tmp_path):
+    def test_d_dry_run_dump_also_strips_internal_meta(
+        self, monkeypatch, tmp_path, isolated_prepared_dir
+    ):
         """dry-run 덤프 파일에도 내부 메타 키가 없어야 한다.
 
         ``_strip_internal_meta`` 는 dry-run 파일 기록 직전에 호출되므로,
         dry-run JSON 파일의 최상위에도 내부 키가 없어야 한다.
+
+        COMMERCE_DRY_RUN=1 모드에서도 컴플라이언스 게이트와 prepared QA
+        게이트가 동일하게 실행된다(리허설이라서 검증이 생략되면 안 됨).
+        본 테스트의 본질은 dry-run 덤프 파일의 메타 키 제거 여부이지,
+        게이트 통과 조건이 아니다 — 그래서 _run_compliance_gate 를
+        stub(통과) 처리하고 prepared_dir 을 격리한다. 메타 키 제거 자체는
+        naver_client._strip_internal_meta 의 단위 테스트 그룹으로 검증한다.
         """
         monkeypatch.setenv("COMMERCE_DRY_RUN", "1")
         # dry_run_payload.json 은 프로젝트 루트/.local/ 에 고정 경로.
@@ -359,14 +368,25 @@ class TestNoInternalMetaOnTheWire:
         monkeypatch.chdir(tmp_path)
         with mock.patch.object(naver_client, "_notice_config", return_value=_CFG_FULL):
             with mock.patch.object(naver_client, "_kc_config", return_value=({}, "warning")):
-                result = mcp_server.register_product(
-                    name="테스트",
-                    price=10000,
-                    image_urls=["http://x.png"],
-                    category_id="50002366",
-                    detail_html="<html></html>",
-                )
+                with mock.patch.object(
+                    mcp_server,
+                    "_run_compliance_gate",
+                    return_value={
+                        "blocked": False,
+                        "violations": [],
+                        "needs_user": [],
+                        "pending_reviews": [],
+                    },
+                ):
+                    result = mcp_server.register_product(
+                        name="테스트",
+                        price=10000,
+                        image_urls=["http://x.png"],
+                        category_id="50002366",
+                        detail_html="<html></html>",
+                    )
         assert result["ok"] is True
+        assert result.get("dry_run") is True
         # dry_run_payload.json 의 경로는 naver_client 가 프로젝트 루트 기준으로
         # 고정한다(_PROJECT_ROOT/.local/). 본 테스트는 chdir 로 격리할 수 없으므로,
         # 결과 대신 dry_run dump 가 성공했는지만 확인하고 내부 키 검사는

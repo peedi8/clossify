@@ -59,7 +59,72 @@ _NOTICE_MOCK = {
     "origin_content": "중국",
     "as_tel": "070-1234-5678",
     "manufacturer": "테스트제조사",
+    "return_cost_reason": "단순변심 반품비용 구매자부담",
+    "no_refund_reason": "주문제작 청약철회 제한",
+    "quality_assurance_standard": "관련법에 따름",
+    "compensation_procedure": "소비자분쟁해결기준",
+    "trouble_shooting_contents": "고객센터 문의",
 }
+
+# common.cfg() mock 용 — origin 만 포함한 최소 config.
+# _compliance_code_check 가 common.cfg().get("smartstore_notice_defaults") 를
+# 직접 읽기 때문에 _notice_config 와 값이 일치해야 한다.
+_COMMON_CFG_MOCK = {
+    "smartstore_notice_defaults": {
+        "origin_area_code": "04",
+        "origin_content": "중국",
+    },
+}
+
+
+def _make_compliant_payload(extra: dict | None = None) -> dict:
+    """컴플라이언스 게이트를 통과하는 WEAR 페이로드를 반환.
+
+    DRY_RUN 모드에서도 게이트가 실행되므로, mock build_payload 가
+    게이트를 통과하는 페이로드를 반환해야 한다. WEAR 타입의 필수
+    필드를 모두 포함한다.
+    """
+    wear_body = {
+        "material": "면 100%",
+        "color": "블랙",
+        "size": "FREE",
+        "manufacturer": "테스트제조사",
+        "caution": "물 세탁 가능",
+        "packDateText": "2026-01",
+        "warrantyPolicy": "구매 후 7일 교환 가능",
+        "afterServiceDirector": "070-1234-5678",
+        "returnCostReason": "단순변심 반품비용 구매자부담",
+        "noRefundReason": "주문제작 청약철회 제한",
+        "qualityAssuranceStandard": "관련법에 따름",
+        "compensationProcedure": "소비자분쟁해결기준",
+        "troubleShootingContents": "고객센터 문의",
+    }
+    payload = {
+        "originProduct": {
+            "originProductNo": "test-no",
+            "images": {
+                "representativeImage": {
+                    "url": "http://cdn/test/representative.png",
+                },
+            },
+            "detailAttribute": {
+                "productInfoProvidedNotice": {
+                    "productInfoProvidedNoticeType": "WEAR",
+                    "wear": wear_body,
+                },
+                "originAreaInfo": {
+                    "originAreaCode": "04",
+                    "content": "중국",
+                },
+                "afterServiceInfo": {
+                    "afterServiceTelephoneNumber": "070-1234-5678",
+                },
+            },
+        },
+    }
+    if extra:
+        payload["originProduct"].update(extra)
+    return payload
 
 
 def _dry_run_naver_register(payload):
@@ -196,11 +261,12 @@ class TestFillDetailHtmlFromPrepared:
                     "image_urls": list(image_urls_arg),
                 }
             )
-            return {"originProduct": {"originProductNo": "test-no"}}
+            return _make_compliant_payload()
 
         monkeypatch.setenv("COMMERCE_DRY_RUN", "1")
         monkeypatch.setattr(naver_client, "_notice_config", lambda: _NOTICE_MOCK)
         monkeypatch.setattr(naver_client, "_kc_config", lambda: ({}, ""))
+        monkeypatch.setattr(common, "cfg", lambda: _COMMON_CFG_MOCK)
         monkeypatch.setattr(naver_client, "build_payload", fake_build)
         monkeypatch.setattr(naver_client, "register_product", _dry_run_naver_register)
 
@@ -208,7 +274,7 @@ class TestFillDetailHtmlFromPrepared:
         result = mcp_server.register_product(
             name=name,
             price=price,
-            category_id="50002366",
+            category_id="50021299",
             image_urls=["http://cdn/explicit.png"],
         )
         assert result["ok"] is True, f"등록 실패: {result}"
@@ -254,11 +320,12 @@ class TestFillImageUrlsFromPrepared:
                     "image_urls": list(image_urls_arg),
                 }
             )
-            return {"originProduct": {"originProductNo": "test-no"}}
+            return _make_compliant_payload()
 
         monkeypatch.setenv("COMMERCE_DRY_RUN", "1")
         monkeypatch.setattr(naver_client, "_notice_config", lambda: _NOTICE_MOCK)
         monkeypatch.setattr(naver_client, "_kc_config", lambda: ({}, ""))
+        monkeypatch.setattr(common, "cfg", lambda: _COMMON_CFG_MOCK)
         monkeypatch.setattr(naver_client, "build_payload", fake_build)
         monkeypatch.setattr(naver_client, "register_product", _dry_run_naver_register)
 
@@ -266,7 +333,7 @@ class TestFillImageUrlsFromPrepared:
         result = mcp_server.register_product(
             name=name,
             price=price,
-            category_id="50002366",
+            category_id="50021299",
             detail_html="<html><body>explicit</body></html>",
         )
         assert result["ok"] is True, f"등록 실패: {result}"
@@ -306,11 +373,12 @@ class TestExplicitValueWins:
 
         def fake_build(product, detail_html_arg, image_urls_arg, status="SALE"):
             captured.append({"detail_html": detail_html_arg})
-            return {"originProduct": {}}
+            return _make_compliant_payload()
 
         monkeypatch.setenv("COMMERCE_DRY_RUN", "1")
         monkeypatch.setattr(naver_client, "_notice_config", lambda: _NOTICE_MOCK)
         monkeypatch.setattr(naver_client, "_kc_config", lambda: ({}, ""))
+        monkeypatch.setattr(common, "cfg", lambda: _COMMON_CFG_MOCK)
         monkeypatch.setattr(naver_client, "build_payload", fake_build)
         monkeypatch.setattr(naver_client, "register_product", _dry_run_naver_register)
 
@@ -318,7 +386,7 @@ class TestExplicitValueWins:
         result = mcp_server.register_product(
             name=name,
             price=price,
-            category_id="50002366",
+            category_id="50021299",
             image_urls=["http://cdn/explicit.png"],
             detail_html=explicit_html,
         )
@@ -346,11 +414,12 @@ class TestExplicitValueWins:
 
         def fake_build(product, detail_html_arg, image_urls_arg, status="SALE"):
             captured.append({"image_urls": list(image_urls_arg)})
-            return {"originProduct": {}}
+            return _make_compliant_payload()
 
         monkeypatch.setenv("COMMERCE_DRY_RUN", "1")
         monkeypatch.setattr(naver_client, "_notice_config", lambda: _NOTICE_MOCK)
         monkeypatch.setattr(naver_client, "_kc_config", lambda: ({}, ""))
+        monkeypatch.setattr(common, "cfg", lambda: _COMMON_CFG_MOCK)
         monkeypatch.setattr(naver_client, "build_payload", fake_build)
         monkeypatch.setattr(naver_client, "register_product", _dry_run_naver_register)
 
@@ -358,7 +427,7 @@ class TestExplicitValueWins:
         result = mcp_server.register_product(
             name=name,
             price=price,
-            category_id="50002366",
+            category_id="50021299",
             image_urls=explicit_urls,
             detail_html="<html>explicit</html>",
         )
@@ -395,14 +464,16 @@ class TestNoBackdoorEmptyPreparedImages:
             "register_product",
             lambda payload: naver_calls.append(payload) or (200, {}),
         )
-        monkeypatch.setattr(naver_client, "build_payload", lambda *a, **kw: {"originProduct": {}})
+        monkeypatch.setattr(
+            naver_client, "build_payload", lambda *a, **kw: _make_compliant_payload()
+        )
         monkeypatch.delenv("COMMERCE_DRY_RUN", raising=False)
 
         # image_urls 를 생략 → prepared 에서 채우려 시도 → 비어있음 → 거부.
         result = mcp_server.register_product(
             name=name,
             price=price,
-            category_id="50002366",
+            category_id="50021299",
             detail_html="<html>explicit</html>",
         )
         assert result["ok"] is False, f"빈 이미지인데 통과함: {result}"
@@ -427,14 +498,16 @@ class TestRejectWhenNoInputsAndNoPrepared:
             "register_product",
             lambda payload: naver_calls.append(payload) or (200, {}),
         )
-        monkeypatch.setattr(naver_client, "build_payload", lambda *a, **kw: {"originProduct": {}})
+        monkeypatch.setattr(
+            naver_client, "build_payload", lambda *a, **kw: _make_compliant_payload()
+        )
         monkeypatch.delenv("COMMERCE_DRY_RUN", raising=False)
 
         # image_urls 와 detail_html 모두 생략.
         result = mcp_server.register_product(
             name=name,
             price=price,
-            category_id="50002366",
+            category_id="50021299",
         )
         assert result["ok"] is False, f"입력도 prepared 도 없는데 통과함: {result}"
         assert (
@@ -465,10 +538,11 @@ class TestFilledFromPreparedReporting:
         monkeypatch.setenv("COMMERCE_DRY_RUN", "1")
         monkeypatch.setattr(naver_client, "_notice_config", lambda: _NOTICE_MOCK)
         monkeypatch.setattr(naver_client, "_kc_config", lambda: ({}, ""))
+        monkeypatch.setattr(common, "cfg", lambda: _COMMON_CFG_MOCK)
         monkeypatch.setattr(
             naver_client,
             "build_payload",
-            lambda *a, **kw: {"originProduct": {}},
+            lambda *a, **kw: _make_compliant_payload(),
         )
         monkeypatch.setattr(naver_client, "register_product", _dry_run_naver_register)
 
@@ -476,7 +550,7 @@ class TestFilledFromPreparedReporting:
         result = mcp_server.register_product(
             name=name,
             price=price,
-            category_id="50002366",
+            category_id="50021299",
         )
         assert result["ok"] is True
         filled = result.get("filled_from_prepared", [])
@@ -498,17 +572,18 @@ class TestFilledFromPreparedReporting:
         monkeypatch.setenv("COMMERCE_DRY_RUN", "1")
         monkeypatch.setattr(naver_client, "_notice_config", lambda: _NOTICE_MOCK)
         monkeypatch.setattr(naver_client, "_kc_config", lambda: ({}, ""))
+        monkeypatch.setattr(common, "cfg", lambda: _COMMON_CFG_MOCK)
         monkeypatch.setattr(
             naver_client,
             "build_payload",
-            lambda *a, **kw: {"originProduct": {}},
+            lambda *a, **kw: _make_compliant_payload(),
         )
         monkeypatch.setattr(naver_client, "register_product", _dry_run_naver_register)
 
         result = mcp_server.register_product(
             name=name,
             price=price,
-            category_id="50002366",
+            category_id="50021299",
             image_urls=["http://cdn/explicit.png"],
             detail_html="<html>explicit</html>",
         )
@@ -532,17 +607,18 @@ class TestFilledFromPreparedReporting:
         monkeypatch.setenv("COMMERCE_DRY_RUN", "1")
         monkeypatch.setattr(naver_client, "_notice_config", lambda: _NOTICE_MOCK)
         monkeypatch.setattr(naver_client, "_kc_config", lambda: ({}, ""))
+        monkeypatch.setattr(common, "cfg", lambda: _COMMON_CFG_MOCK)
         monkeypatch.setattr(
             naver_client,
             "build_payload",
-            lambda *a, **kw: {"originProduct": {}},
+            lambda *a, **kw: _make_compliant_payload(),
         )
         monkeypatch.setattr(naver_client, "register_product", _dry_run_naver_register)
 
         result = mcp_server.register_product(
             name=name,
             price=price,
-            category_id="50002366",
+            category_id="50021299",
             image_urls=["http://cdn/explicit.png"],
             # detail_html 생략
         )

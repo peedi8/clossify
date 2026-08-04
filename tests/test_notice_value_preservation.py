@@ -374,11 +374,11 @@ class TestRegisterProductE2E:
         assert len(naver_calls) == 1, f"네이버 API 호출 횟수가 예상과 다름: {len(naver_calls)}"
 
     def test_payload_carries_detail_reference_to_naver(self):
-        """최종 payload 의 wear 노드에 "상세페이지 참조" 가 그대로 실리는가.
+        """최종 payload 의 wear 노드에 사용자 제공값이 그대로 실리는가.
 
-        placeholder 값은 컴플라이언스 판정에서 "미제공" 이지만, 전송은
-        그대로 된다. 본 테스트는 전송 동작을 검증한다.
-        DRY_RUN 경로로 게이트를 건너뛰고 payload 만 캡처해 전송 여부를 본다.
+        컴플라이언스 게이트는 DRY_RUN 에서도 동일하게 실행된다. 따라서
+        게이트를 통과하는 실질값(``2026-01``)을 주되, 전송 검증은
+        DRY_RUN 경로로 payload 를 캡처해 수행한다.
         """
         captured_payload = {}
 
@@ -393,7 +393,7 @@ class TestRegisterProductE2E:
                 "color": "블랙",
                 "size": "FREE",
                 "caution": "물 세탁 가능",
-                "packDateText": "상세페이지 참조",
+                "packDateText": "2026-01",
                 "warrantyPolicy": "구매 후 7일 교환 가능",
                 "manufacturer": "테스트제조사",
             },
@@ -407,10 +407,9 @@ class TestRegisterProductE2E:
                     "cfg",
                     return_value=_COMMON_CFG_ORIGIN_ONLY,
                 ):
-                    # placeholder 값은 게이트를 통과하지 못하므로,
-                    # 전송 검증은 COMMERCE_DRY_RUN 경로(게이트 우회)를 사용한다.
-                    # 이것이 게이트 우회가 아닌 것은 — DRY_RUN 은 실제 네이버
-                    # 호출이 일어나지 않는 공식 개발/테스트 모드다.
+                    # 게이트 통과 후 DRY_RUN 경로로 payload 만 캡처.
+                    # DRY_RUN 은 실제 네이버 호출이 일어나지 않는 공식
+                    # 개발/테스트 모드이며, 게이트는 그대로 실행된다.
                     with mock.patch.dict("os.environ", {"COMMERCE_DRY_RUN": "1"}):
                         # DRY_RUN 경로는 register_product 내부에서 payload 를
                         # 직접 덤프하지만, 여기서는 naver_client.register_product
@@ -434,7 +433,7 @@ class TestRegisterProductE2E:
         )
         assert notice.get("productInfoProvidedNoticeType") == "WEAR"
         wear = notice.get("wear", {})
-        assert wear.get("packDateText") == "상세페이지 참조", (
+        assert wear.get("packDateText") == "2026-01", (
             f"최종 payload 의 wear.packDateText 가 누락/변경됨: " f"{wear.get('packDateText')!r}"
         )
 
