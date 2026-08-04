@@ -614,6 +614,7 @@ class TestToolRegistrationPreserved:
             "image_urls",
             "category_id",
             "detail_html",
+            "product_key",
             "options",
             "tags",
             "status",

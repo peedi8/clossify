@@ -61,8 +61,14 @@ def _reject_url_inputs(d):
 # ---------------------------------------------------------------------------
 # product_key 생성 (핵심 정책).
 #
-# 외부 마켓 ID 를 쓰지 않는다. ``sha1(상품명 + 가격)[:12]`` 로 생성.
-# 빈 문자열/공백 키는 거부 (디렉터리 충돌·무음 덮어쓰기 방지).
+# 외부 마켓 ID 를 쓰지 않는다. 이름·가격만으로는 부족하다 — 색상만 다른 SKU
+# 처럼 이름·가격이 같은 서로 다른 상품이 같은 키를 받으면 두 번째 준비가 첫
+# 번째를 조용히 덮는다. 따라서 상품을 구별하는 입력(카테고리·이미지 소스 구성)을
+# 키 유도에 포함한다. 빈 문자열/공백 키는 거부 (디렉터리 충돌·무음 덮어쓰기 방지).
+#
+# 하위호환: ``make_product_key(name, price)`` 2-인자 호출은 구별 입력이 없을 때의
+# 기본 키(``sha1(name+price)[:12]``)를 그대로 반환한다. 구별 인자를 주면 그것들이
+# 해시에 추가로 반영되어 같은 이름·가격이라도 서로 다른 키가 나온다.
 # ---------------------------------------------------------------------------
 
 
@@ -74,14 +80,36 @@ def _sanitize_product_key(key):
     return re.sub(r"[^0-9A-Za-z_-]", "_", str(key or ""))[:80]
 
 
-def make_product_key(name, price):
-    """상품명 + 가격 으로 product_key 생성 (``sha1[:12]``).
+def _fingerprint_sources(category_id, image_sources):
+    """카테고리·이미지 소스 구성을 안정적인 문자열로 직렬화한다.
 
-    규칙: "호출자가 주지 않으면 ``sha1(상품명 + 가격)[:12]`` 로 생성."
+    같은 이름·가격이라도 카테고리가 다르거나 이미지 소스 구성이 다르면 다른
+    결과가 나와야 한다. 정렬하지 않고 입력 순서를 보존한다 — 이미지 순서 자체가
+    대표 이미지 선택에 영향을 주므로 순서가 바뀌면 다른 상품으로 보는 것이
+    안전하다(결정론 유지: 같은 입력은 같은 결과).
+    """
+    cat_part = str(category_id or "").strip()
+    if isinstance(image_sources, list):
+        src_parts = [str(s or "") for s in image_sources]
+    else:
+        src_parts = []
+    return f"cat={cat_part}|srcs={','.join(src_parts)}"
+
+
+def make_product_key(name, price, *, category_id=None, image_sources=None):
+    """상품명 + 가격(+ 구별 입력) 으로 product_key 생성 (``sha1[:12]``).
+
+    규칙:
+      - 기본: ``sha1(상품명 + 가격)[:12]`` (하위호환 — 2-인자 호출).
+      - 구별 입력 주어지면: ``sha1(상품명 + 가격 + 카테고리 + 이미지소스구성)[:12]``.
+        이름·가격이 같아도 카테고리나 이미지 소스 구성이 다르면 다른 키가 나온다.
+      - 같은 입력은 항상 같은 키를 낸다(결정론 — 재실행이 새 항목을 만들면 안 된다).
 
     Args:
         name: 상품명 (한국어).
         price: KRW 가격 (int/str).
+        category_id: 카테고리 ID. 상품을 구별하는 입력.
+        image_sources: 이미지 소스 리스트. 상품을 구별하는 입력.
 
     Returns:
         12자 hex product_key.
@@ -94,6 +122,9 @@ def make_product_key(name, price):
         raise ValueError("product_key 생성에 필요한 상품명이 비어 있습니다 (빈 키 방지).")
     price_str = str(price if price is not None else "").strip()
     raw = f"{name_str}+{price_str}"
+    # 구별 입력이 하나라도 주어지면 해시에 반영한다.
+    if category_id is not None or image_sources is not None:
+        raw += "+" + _fingerprint_sources(category_id, image_sources)
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
 
@@ -375,21 +406,26 @@ def register_prepared_listing(d):
     payload = load_prepared_payload(product_key=product_key)
 
     # --- payload 스키마: images.listing_urls / images.detail_urls ---
+    # prepared 에서 가져온 이미지도 명시 입력과 *동일한 검증* 을 통과해야 한다.
+    # 무효 항목을 조용히 걸러내면 2번 이미지가 대표 이미지로 승격되는
+    # 조용한 치환이 일어난다. 따라서 원본 리스트를 정규화 없이 정본 검증기에
+    # 그대로 넘겨 무효 항목이 하나라도 섞이면 거부한다 (filter-not-fix).
+    from . import naver_client as _nc_for_validation
+
     images_block = payload.get("images") or {}
     if not isinstance(images_block, dict):
         images_block = {}
-    listing_urls = [
-        str(u).strip()
-        for u in (images_block.get("listing_urls") or [])
-        if isinstance(u, str) and u.strip()
-    ]
-    detail_urls = [
-        str(u).strip()
-        for u in (images_block.get("detail_urls") or [])
-        if isinstance(u, str) and u.strip()
-    ]
+    raw_listing_urls = images_block.get("listing_urls") or []
+    raw_detail_urls = images_block.get("detail_urls") or []
+    # 정본 검증기 재사용 — 새 검증 함수를 만들지 않는다.
+    # 무효 항목이 섞이 있으면 ValueError 로 거부 (조용한 필터링 금지).
+    _nc_for_validation._require_original_images(raw_listing_urls)
 
-    # 이미지 0장 거부 (무음 통과 금지).
+    listing_urls = [str(u).strip() for u in raw_listing_urls if isinstance(u, str) and u.strip()]
+    detail_urls = [str(u).strip() for u in raw_detail_urls if isinstance(u, str) and u.strip()]
+
+    # 이미지 0장 거부 (무음 통과 금지) — 정본 검증기 통과 후에도
+    # 빈 리스트 케이스(전부 공백 등)를 명시적으로 거부한다.
     if not listing_urls:
         raise ValueError(
             "prepared payload 에 리스팅 이미지(listing_urls)가 0장입니다. "
@@ -813,8 +849,6 @@ def prepare_listing(d, *, attach_fn=None):
     if sale_price is None:
         raise ValueError("prepare_listing: 판매가(salePrice, KRW) 가 필요합니다.")
 
-    product_key = make_product_key(name, sale_price)
-
     # --- 1. 이미지 정규화 (images.attach_images) ---
     image_sources = d.get("image_sources")
     if not isinstance(image_sources, list) or not image_sources:
@@ -859,6 +893,34 @@ def prepare_listing(d, *, attach_fn=None):
 
     # --- 3. 카테고리/고시 컨텍스트 구성(최소) ---
     category_id = str(d.get("categoryId") or d.get("category_id") or "").strip()
+
+    # product_key 는 상품을 구별하는 입력(카테고리·이미지 소스 구성)을
+    # 반영해 만든다. 이름·가격만으로는 색상만 다른 SKU 처럼 같은 키가 나와
+    # 두 번째 준비가 첫 번째를 조용히 덮는다. category_id 와 image_sources 가
+    # 확정된 *지금* 키를 유도한다 (이 시점 이전에는 아직 모를 수 있다).
+    product_key = make_product_key(
+        name, sale_price, category_id=category_id, image_sources=image_sources
+    )
+
+    # 무음 덮어쓰기 탐지: 같은 키의 prepared 가 이미 있으면 내용이 다를 때
+    # 조용히 덮지 않는다. 반환값에 사실을 드러낸다(저장소 불변식).
+    overwrite_warning = None
+    try:
+        _existing = load_prepared_payload(product_key=product_key)
+        _existing_detail = str(_existing.get("detail_html") or "")
+        _existing_images = (
+            _existing.get("images", {}).get("listing_urls") if isinstance(_existing, dict) else None
+        )
+        if _existing_detail != detail_html or list(_existing_images or []) != listing_urls:
+            overwrite_warning = (
+                "기존 prepared payload 와 내용이 다릅니다(상세HTML 또는 이미지). "
+                "같은 키를 덮어쓴다 — 재실행이 아닌 이상 의도된 변경인지 확인하세요."
+            )
+    except FileNotFoundError:
+        pass
+    except ValueError:
+        # version 불일치 등 — 기존 것을 무시하고 새로 쓴다(스키마 변경 시).
+        overwrite_warning = "기존 prepared payload 의 version 이 불일치한다. 덮어쓴다(스키마 변경)."
 
     # --- 4. JPEG 비의존 QA 실행 ---
     # QA 규칙:
@@ -1007,20 +1069,139 @@ def prepare_listing(d, *, attach_fn=None):
         "qa": qa_result,
         "status": d.get("status") or "SALE",
     }
+    if overwrite_warning is not None:
+        payload["overwrite_warning"] = overwrite_warning
     write_prepared_payload(payload)
     return payload
+
+
+# ---------------------------------------------------------------------------
+# prepared 후보 스캔 + 모호성 거부.
+#
+# 등록 시 product_key 를 명시하지 않으면 이름+가격으로 후보를 찾는다. 같은
+# 이름·가격의 SKU 가 여러 개일 때(색상만 다른 옵션 상품 등) 후보가 2개 이상
+# 나올 수 있다. 이때 조용히 하나를 고르면 다른 상품의 내용이 전송되는 조용한
+# 오등록이 된다 — 모호하면 거부다.
+# ---------------------------------------------------------------------------
+
+
+def find_prepared_candidates(name, price):
+    """이름+가격 으로 prepared 후보를 모두 찾는다.
+
+    prepared 디렉터리의 모든 payload 를 훑어 ``product.name`` 과
+    ``product.salePrice`` 가 일치하는 항목을 반환한다. 색상만 다른 SKU 처럼
+    같은 이름·가격의 서로 다른 상품이 여러 prepared 로 존재할 수 있다.
+
+    Returns:
+        ``[{"key": str, "payload": dict}, ...]`` — 이름+가격 이 일치하는 모든
+        prepared. 빈 리스트일 수 있다(후보 0개).
+    """
+    candidates = []
+    _name = str(name or "").strip()
+    if not _name:
+        return candidates
+    try:
+        _price_int = int(price)
+    except (TypeError, ValueError):
+        return candidates
+    for path in iter_prepared_payload_paths():
+        data = read_prepared_payload(path)
+        if not isinstance(data, dict):
+            continue
+        product = data.get("product")
+        if not isinstance(product, dict):
+            continue
+        cand_name = str(product.get("name") or "").strip()
+        cand_price = product.get("salePrice")
+        try:
+            cand_price_int = int(cand_price) if cand_price is not None else None
+        except (TypeError, ValueError):
+            cand_price_int = None
+        if cand_name == _name and cand_price_int == _price_int:
+            candidates.append({"key": str(data.get("product_key") or "").strip(), "payload": data})
+    return candidates
+
+
+def resolve_prepared_for_register(name, price, *, product_key=None):
+    """등록 시 사용할 prepared payload 와 추적 정보를 결정.
+
+    - **명시 ``product_key`` 가 주어지면** 그것을 그대로 로드한다(정확).
+    - **주어지지 않으면** 이름+가격 으로 후보를 찾는다:
+      - 후보가 **정확히 1개** → 그것을 사용(하위호환).
+      - 후보가 **2개 이상** → ``ValueError`` 로 거부. 네이버 호출 0회.
+        ``product_key`` 를 지정하라고 안내한다. **조용히 하나를 고르지 않는다 —
+        이것이 이번 결함의 본질이다.**
+      - 후보가 0개 → ``(None, {})`` 반환 (호출자가 명시 인자만으로 진행하거나 거부).
+
+    Returns:
+        ``(payload_or_None, lookup_info)`` — ``lookup_info`` 는 어느 키를 어디서
+        어떻게 찾았는지 드러낸다::
+
+            {"key": str, "source": "explicit"|"derived"|"none",
+             "name": str, "salePrice": int|None}
+
+    Raises:
+        ValueError: 후보가 2개 이상이어서 모호성으로 거부할 때.
+    """
+    # 명시 키가 있으면 그것을 쓴다(정확).
+    explicit_key = str(product_key or "").strip()
+    if explicit_key:
+        try:
+            payload = load_prepared_payload(product_key=explicit_key)
+        except (FileNotFoundError, ValueError):
+            return None, {
+                "key": explicit_key,
+                "source": "explicit",
+                "name": "",
+                "salePrice": None,
+            }
+        _p = payload.get("product") if isinstance(payload.get("product"), dict) else {}
+        return payload, {
+            "key": explicit_key,
+            "source": "explicit",
+            "name": str(_p.get("name") or ""),
+            "salePrice": _p.get("salePrice"),
+        }
+
+    # 명시 키가 없으면 이름+가격 으로 후보를 찾는다.
+    candidates = find_prepared_candidates(name, price)
+    if len(candidates) == 1:
+        cand = candidates[0]
+        _p = (
+            cand["payload"].get("product")
+            if isinstance(cand["payload"].get("product"), dict)
+            else {}
+        )
+        return cand["payload"], {
+            "key": cand["key"],
+            "source": "derived",
+            "name": str(_p.get("name") or ""),
+            "salePrice": _p.get("salePrice"),
+        }
+    if len(candidates) >= 2:
+        # 모호하면 거부한다 — 조용히 하나를 고르지 않는다.
+        keys = [c["key"] for c in candidates]
+        raise ValueError(
+            f"같은 이름·가격의 prepared 가 {len(candidates)}개 있어 어느 것을 "
+            f"등록할지 결정할 수 없다 (조용한 선택 금지). product_key 를 명시적으로 "
+            f"지정하세요. 후보 키: {keys}"
+        )
+    # 후보 0개 — 호출자가 판단.
+    return None, {"key": "", "source": "none", "name": "", "salePrice": None}
 
 
 __all__ = [
     "_build_product_dict",
     "_build_register_product_dict",
     "_build_tentative_register_payload",
+    "_fingerprint_sources",
     "_prepared_dir",
     "_prepared_item_dir",
     "_prepared_payload_path",
     "_reject_url_inputs",
     "_sanitize_product_key",
     "_validate_review_submission",
+    "find_prepared_candidates",
     "inject_prepared_qa",
     "iter_prepared_payload_paths",
     "load_prepared_payload",
@@ -1029,6 +1210,7 @@ __all__ = [
     "read_prepared_payload",
     "register_listing",
     "register_prepared_listing",
+    "resolve_prepared_for_register",
     "resolve_product_key",
     "submit_reviews",
     "write_prepared_payload",

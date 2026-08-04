@@ -643,6 +643,7 @@ def register_product(
     image_urls: list[str] | None = None,
     category_id: str,
     detail_html: str | None = None,
+    product_key: str | None = None,
     options: list[dict[str, Any]] | None = None,
     tags: list[str] | None = None,
     status: str = "SALE",
@@ -675,6 +676,11 @@ def register_product(
             대표 이미지가 된다.
         detail_html: 상세페이지 HTML (``<html>``... 또는 조각 HTML). 생략 시
             prepared payload 의 상세 HTML 사용.
+        product_key: ``prepare_listing`` 이 반환한 prepared payload 키. 같은
+            이름·가격의 SKU(색상만 다른 옵션 상품 등) 가 여러 개일 때
+            ``name``+``price`` 유도 키로는 어느 prepared 가 이 등록의 것인지
+            구분할 수 없다 — 준비 단계가 반환한 키를 그대로 넘기면 모호성이
+            사라진다. 생략 시 ``name``+``price`` 유도 키로 동작한다(하위호환).
         options: 옵션 조합 목록. 각 원소는 ``{"name": str, "stock": int,
             "price": int}`` 또는 ``optionName1..3`` 형태. 단일 옵션 상품은
             생략 가능.
@@ -697,6 +703,9 @@ def register_product(
         - ``seller_tags``: 제한어 자동 제거 메타가 있을 때만 존재.
         - ``filled_from_prepared``: prepared payload 에서 채운 항목 리스트
           (``"detail_html"``/``"image_urls"``). 직접 준 값은 포함되지 않는다.
+        - ``prepared_key_used``: 실제로 prepared 조회에 쓴 product_key.
+          유도한 키를 썼을 때와 달리 어디서 가져왔는지 드러낸다 (조용한
+          치환 방지).
 
     Note:
         환경변수 ``COMMERCE_DRY_RUN=1`` 시 실제 등록 없이 페이로드를
@@ -711,15 +720,56 @@ def register_product(
     if status not in {"SALE", "SUSPENSION"}:
         return _fail("status 는 'SALE' 또는 'SUSPENSION' 이어야 합니다.")
 
-    # product_key 를 한 번만 유도한다 (이름 절단 *전* 의 원본 이름 기준).
-    # 자동 채움(prepared 조회)과 아래 prepared QA 게이트가 **같은 키** 를 써야
-    # 한다 — 이름이 50자로 잘린 뒤에 키를 다시 유도하면 다른 키가 나와,
-    # 게이트가 자동 채움이 찾은 prepared 를 못 찾고 FAIL 판정을 우회하게 된다.
-    # 정본은 원본 이름 기준 키 하나뿐이다.
+    # product_key 결정 — 명시 인자가 있으면 그것을, 없으면 이름+가격으로
+    # 후보를 찾는다. 같은 이름·가격의 SKU 가 여러 개일 때(색상만 다른 옵션
+    # 상품 등) 조용히 하나를 고르면 다른 상품이 전송되는 조용한 오등록이
+    # 된다 — 모호하면 거부다(네이버 호출 0회). ``resolve_prepared_for_register``
+    # 가 이 판정을 담당한다.
+    _explicit_key = product_key if isinstance(product_key, str) and product_key.strip() else None
     try:
-        _product_key = _register_mod.make_product_key(name, int(price))
-    except Exception:
-        _product_key = None
+        _resolved_payload, prepared_lookup = _register_mod.resolve_prepared_for_register(
+            name, int(price), product_key=_explicit_key
+        )
+    except ValueError as _amb_exc:
+        # 후보가 2개 이상 — 모호성으로 거부. 네이버 호출 0회.
+        return {
+            "ok": False,
+            "status_code": None,
+            "origin_product_no": None,
+            "name_truncated": False,
+            "raw": None,
+            "seller_tags": None,
+            "blocked_by": "ambiguous_prepared",
+            "filled_from_prepared": [],
+            "prepared_lookup": {},
+            "message": (
+                f"{_amb_exc}. name+price 로는 어느 prepared 가 이 등록의 것인지 " "결정할 수 없다."
+            ),
+            "error": _sanitize_text(str(_amb_exc)),
+        }
+    # 호환성: 기존 코드가 _product_key 를 사용한다. resolved 가 있으면 그 키를,
+    # 없으면 명시 키(비어있을 수 있다)를 쓴다. 둘 다 없으면 이름+가격 유도.
+    _product_key_source = prepared_lookup.get("source") or "none"
+    if _resolved_payload is not None:
+        _product_key = str(_resolved_payload.get("product_key") or "").strip()
+    elif _explicit_key:
+        _product_key = _register_mod._sanitize_product_key(_explicit_key)
+        _product_key_source = "explicit"
+    else:
+        try:
+            _product_key = _register_mod.make_product_key(name, int(price))
+            _product_key_source = "derived"
+        except Exception:
+            _product_key = None
+    # prepared_lookup.source 가 "none" 이지만 _product_key 가 유도된 경우 보정.
+    if _product_key_source == "none" and _product_key:
+        _product_key_source = "derived"
+        prepared_lookup = {
+            "key": _product_key,
+            "source": "derived",
+            "name": "",
+            "salePrice": None,
+        }
 
     # ------------------------------------------------------------------ #
     # prepared payload 로부터 image_urls / detail_html 채우기.
@@ -732,35 +782,59 @@ def register_product(
     _need_detail = detail_html is None
     filled_from_prepared: list[str] = []
 
-    if _need_images or _need_detail:
-        # 위에서 한 번 유도한 product_key 를 그대로 쓴다 (재유도 금지).
+    if (_need_images or _need_detail) and _resolved_payload is not None:
         _fill_pkey = _product_key
-        _fill_prepared: dict[str, Any] | None = None
-        if _fill_pkey:
-            try:
-                _fill_prepared = _register_mod.load_prepared_payload(product_key=_fill_pkey)
-            except FileNotFoundError:
-                _fill_prepared = None
-            except ValueError:
-                # version 불일치 등 — 조용히 무시하지 않고 None 으로 떨어진다.
-                _fill_prepared = None
+        _fill_prepared = _resolved_payload
 
-        if _fill_prepared is not None:
-            if _need_detail:
-                _prepared_html = _fill_prepared.get("detail_html")
-                if isinstance(_prepared_html, str) and _prepared_html.strip():
-                    detail_html = _prepared_html
-                    filled_from_prepared.append("detail_html")
-            if _need_images:
-                _images_block = (
-                    _fill_prepared.get("images")
-                    if isinstance(_fill_prepared.get("images"), dict)
-                    else {}
-                )
+        # 어느 키에서 무엇을 가져왔는지 기록한다 (조용한 치환 방지).
+        if not prepared_lookup:
+            _retrieved_name = ""
+            _retrieved_price = None
+            _fp = (
+                _fill_prepared.get("product")
+                if isinstance(_fill_prepared.get("product"), dict)
+                else {}
+            )
+            if isinstance(_fp, dict):
+                _retrieved_name = str(_fp.get("name") or "")
+                _retrieved_price = _fp.get("salePrice")
+            prepared_lookup = {
+                "key": _fill_pkey,
+                "source": _product_key_source,
+                "name": _retrieved_name,
+                "salePrice": _retrieved_price,
+            }
+        if _need_detail:
+            _prepared_html = _fill_prepared.get("detail_html")
+            if isinstance(_prepared_html, str) and _prepared_html.strip():
+                detail_html = _prepared_html
+                filled_from_prepared.append("detail_html")
+        if _need_images:
+            _images_block = (
+                _fill_prepared.get("images")
+                if isinstance(_fill_prepared.get("images"), dict)
+                else {}
+            )
+            # prepared 에서 가져온 이미지도 명시 입력과 *동일한 검증* 을
+            # 통과해야 한다. 무효 항목을 조용히 걸러내면 2번 이미지가 대표
+            # 이미지로 승격되는 조용한 치환이 일어난다. 원본 리스트를
+            # 정규화 없이 정본 검증기에 그대로 넘겨 무효 항목이 하나라도
+            # 섞이면 거부한다 (filter-not-fix). 새 검증 함수를 만들지 않고
+            # 기존 정본을 재사용한다.
+            _raw_prepared_urls = list(_images_block.get("listing_urls") or [])
+            if _raw_prepared_urls:
+                try:
+                    naver_client._require_original_images(_raw_prepared_urls)
+                except ValueError as _img_exc:
+                    return _fail(
+                        f"prepared payload 의 이미지에 무효 항목이 섞여 있어 "
+                        f"등록을 거부한다 (filter-not-fix). "
+                        f"product_key={_fill_pkey}, 사유={_img_exc}",
+                        filled_from_prepared=filled_from_prepared,
+                        prepared_lookup=prepared_lookup,
+                    )
                 _prepared_urls = [
-                    str(u).strip()
-                    for u in (_images_block.get("listing_urls") or [])
-                    if isinstance(u, str) and u.strip()
+                    str(u).strip() for u in _raw_prepared_urls if isinstance(u, str) and u.strip()
                 ]
                 if _prepared_urls:
                     image_urls = _prepared_urls
@@ -772,11 +846,14 @@ def register_product(
     try:
         naver_client._require_original_images(image_urls)
     except ValueError as exc:
-        return _fail(str(exc), filled_from_prepared=filled_from_prepared)
+        return _fail(
+            str(exc), filled_from_prepared=filled_from_prepared, prepared_lookup=prepared_lookup
+        )
     if not isinstance(detail_html, str) or not detail_html.strip():
         return _fail(
             "detail_html 은 비어있지 않은 HTML 문자열이어야 합니다.",
             filled_from_prepared=filled_from_prepared,
+            prepared_lookup=prepared_lookup,
         )
 
     # Fix 5 — 상품명 50자 정책 컷. naver_client 도 내부에서 자르지만,
@@ -806,6 +883,7 @@ def register_product(
         return _fail(
             f"등록 중 오류(페이로드 빌드): {_sanitize_error(exc)}",
             filled_from_prepared=filled_from_prepared,
+            prepared_lookup=prepared_lookup,
         )
 
     # 결정론 컴플라이언스 게이트 (fail-closed).
@@ -838,6 +916,7 @@ def register_product(
                 f"컴플라이언스 검사 중 오류(등록 차단): {_sanitize_error(exc)}",
                 name_truncated=name_truncated,
                 filled_from_prepared=filled_from_prepared,
+                prepared_lookup=prepared_lookup,
             )
 
     if gate["blocked"]:
@@ -862,6 +941,7 @@ def register_product(
             "violations": violations,
             "needs_user": needs_user,
             "filled_from_prepared": filled_from_prepared,
+            "prepared_lookup": prepared_lookup,
             "message": "\n".join(message_lines),
             "error": None,
         }
@@ -908,6 +988,7 @@ def register_product(
                         "needs_llm": _prepared.get("needs_llm") or [],
                         "needs_user": _prepared.get("needs_user") or [],
                         "filled_from_prepared": filled_from_prepared,
+                        "prepared_lookup": prepared_lookup,
                         "message": (
                             "prepared payload 의 QA 게이트가 등록을 차단했다 "
                             f"(reason={_reason}). submit_reviews 로 PENDING 을 "
@@ -925,6 +1006,7 @@ def register_product(
             f"등록 중 오류: {_sanitize_error(exc)}",
             name_truncated=name_truncated,
             filled_from_prepared=filled_from_prepared,
+            prepared_lookup=prepared_lookup,
         )
 
     # register_product 는 (status_code, body) 튜플을 반환하지만, DRY_RUN 시 dict.
@@ -939,6 +1021,7 @@ def register_product(
             "gate": gate_label,
             "pending_reviews": gate["pending_reviews"],
             "filled_from_prepared": filled_from_prepared,
+            "prepared_lookup": prepared_lookup,
             "error": None,
         }
 
@@ -966,6 +1049,7 @@ def register_product(
         "gate": gate_label,
         "pending_reviews": gate["pending_reviews"],
         "filled_from_prepared": filled_from_prepared,
+        "prepared_lookup": prepared_lookup,
         "error": None if ok else _sanitize_text(f"API 반환 상태 {status_code}"),
     }
 
@@ -1157,7 +1241,11 @@ def _fail(
     *,
     name_truncated: bool = False,
     filled_from_prepared: list[str] | None = None,
+    prepared_lookup: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    # prepared_lookup 는 register_product 의 모든 반환 경로에서 무엇을 어느
+    # 키로 찾았는지 드러낸다(조용한 치환 방지). 검증 실패 등 반환 시점에
+    # 이미 결정된 lookup 이 있으면 그대로 실어 보낸다.
     return {
         "ok": False,
         "status_code": None,
@@ -1166,6 +1254,7 @@ def _fail(
         "raw": None,
         "seller_tags": None,
         "filled_from_prepared": filled_from_prepared if filled_from_prepared is not None else [],
+        "prepared_lookup": prepared_lookup if prepared_lookup is not None else {},
         "error": message,
     }
 

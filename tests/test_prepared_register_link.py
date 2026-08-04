@@ -75,11 +75,19 @@ def _write_prepared_payload(
     *,
     listing_urls: list[str],
     detail_html: str,
+    name: str = "",
+    price: int | None = None,
     qa_agents_list: list[dict] | None = None,
     needs_llm: list | None = None,
     needs_user: list | None = None,
 ):
-    """테스트용 prepared payload 를 디스크에 저장한다."""
+    """테스트용 prepared payload 를 디스크에 저장한다.
+
+    ``name``/``price`` 를 ``product`` dict 에 넣어 후보 스캔
+    (``find_prepared_candidates``) 이 이름+가격 으로 찾을 수 있게 한다.
+    실제 ``prepare_listing`` 도 payload 에 ``product.name``/``product.salePrice``
+    를 저장하므로 이 형태가 실제 동작과 일치한다.
+    """
     if qa_agents_list is None:
         # 모두 PASS 인 기본 QA — 게이트 통과용.
         agent_rows = [
@@ -89,9 +97,14 @@ def _write_prepared_payload(
     else:
         agent_rows = qa_agents_list
     qa = qa_agents.aggregate_qa_results(agent_rows)
+    product = {
+        "name": name,
+        "salePrice": price if price is not None else 0,
+    }
     payload = {
         "product_key": pkey,
         "version": common.PREPARED_PAYLOAD_VERSION,
+        "product": product,
         "images": {
             "listing_urls": listing_urls,
             "detail_urls": [],
@@ -169,6 +182,8 @@ class TestFillDetailHtmlFromPrepared:
             pkey,
             listing_urls=["http://cdn/img1.png", "http://cdn/img2.png"],
             detail_html=prepared_html,
+            name=name,
+            price=price,
         )
 
         # build_payload 를 가로채서 detail_html 인자를 캡처.
@@ -226,6 +241,8 @@ class TestFillImageUrlsFromPrepared:
             pkey,
             listing_urls=prepared_urls,
             detail_html="<html><body>detail</body></html>",
+            name=name,
+            price=price,
         )
 
         captured: list[dict] = []
@@ -281,6 +298,8 @@ class TestExplicitValueWins:
             pkey,
             listing_urls=["http://cdn/prepared.png"],
             detail_html="<html>prepared</html>",
+            name=name,
+            price=price,
         )
 
         captured: list[dict] = []
@@ -319,6 +338,8 @@ class TestExplicitValueWins:
             pkey,
             listing_urls=["http://cdn/prepared1.png", "http://cdn/prepared2.png"],
             detail_html="<html>prepared</html>",
+            name=name,
+            price=price,
         )
 
         captured: list[dict] = []
@@ -364,6 +385,8 @@ class TestNoBackdoorEmptyPreparedImages:
             pkey,
             listing_urls=[],
             detail_html="<html>detail</html>",
+            name=name,
+            price=price,
         )
 
         naver_calls: list = []
@@ -435,6 +458,8 @@ class TestFilledFromPreparedReporting:
             pkey,
             listing_urls=["http://cdn/a.png"],
             detail_html="<html>both</html>",
+            name=name,
+            price=price,
         )
 
         monkeypatch.setenv("COMMERCE_DRY_RUN", "1")
@@ -466,6 +491,8 @@ class TestFilledFromPreparedReporting:
             pkey,
             listing_urls=["http://cdn/p.png"],
             detail_html="<html>p</html>",
+            name=name,
+            price=price,
         )
 
         monkeypatch.setenv("COMMERCE_DRY_RUN", "1")
@@ -498,6 +525,8 @@ class TestFilledFromPreparedReporting:
             pkey,
             listing_urls=["http://cdn/p.png"],
             detail_html="<html>prepared-detail</html>",
+            name=name,
+            price=price,
         )
 
         monkeypatch.setenv("COMMERCE_DRY_RUN", "1")
