@@ -260,6 +260,150 @@ def _utc_now_iso():
 
 
 # ---------------------------------------------------------------------------
+# 등록 기록(record) 저장/조회.
+#
+# 네이버 상태 변경(수정/삭제/상태보정) 은 **채널상품번호**(``channelProductNo``)
+# 를 요구한다. 그 번호는 **등록 응답에만** 들어 있고 ``get_product``(origin-products
+# 조회) 응답에는 없다. 따라서 등록 직후에 그 번호를 디스크에 남겨두지 않으면 이후
+# 그 상품을 다시 손댈 방법이 사라진다.
+#
+# 저장 위치는 prepared payload 가 사는 디렉터리 규약을 따른다(새 규약 만들지 않음).
+# 같은 product_key 하위에 ``registration_record.json`` 파일로 기록한다. 이후 수정
+# 기능이 올라탈 자리다.
+# ---------------------------------------------------------------------------
+
+
+def _registration_record_path(product_key):
+    """등록 기록 JSON 파일 경로(prepared 디렉터리 규약 하위).
+
+    같은 product_key 의 prepared payload 옆에 둔다 — 새 디렉터리 규약을 만들지
+    않는다. 경로 순회 검사는 ``_prepared_item_dir`` 이 이미 수행한다.
+    """
+    return _prepared_item_dir(product_key) / "registration_record.json"
+
+
+def _extract_channel_product_no(body):
+    """등록 응답 본문에서 ``channelProductNo`` 추출.
+
+    네이버 커머스 API 등록 응답의 구조 변형을 고려해 여러 자리를 찾는다:
+      - ``body.smartstoreChannelProductNo`` (실등록 관측 응답 — 최상위 키).
+      - ``body.channelProductNo``
+      - ``body.channelProduct.channelProductNo``
+      - ``body.originProduct.channelProductNo``
+      - ``body.smartstoreChannelProduct.channelProductNo``
+
+    실등록 응답은 ``originProductNo`` 와 **나란히** ``smartstoreChannelProductNo``
+    를 최상위에 둔다. 이 키를 인식하지 못하면 상태 변경에 필요한 채널상품번호가
+    응답에 있음에도 누락된다 — 본 함수가 존재하는 이유 자체가 사라진다.
+    기존 후보 키들은 폴백으로 그대로 둔다(다른 응답 형태를 가정한 기존 테스트 호환).
+    """
+    if not isinstance(body, dict):
+        return None
+    smartstore_direct = body.get("smartstoreChannelProductNo")
+    if smartstore_direct:
+        return smartstore_direct
+    direct = body.get("channelProductNo")
+    if direct:
+        return direct
+    for nested_key in ("channelProduct", "originProduct", "smartstoreChannelProduct"):
+        nested = body.get(nested_key)
+        if isinstance(nested, dict) and nested.get("channelProductNo"):
+            return nested["channelProductNo"]
+    return None
+
+
+def write_registration_record(
+    product_key,
+    *,
+    origin_product_no,
+    channel_product_no,
+    name,
+    sale_price,
+    category_id,
+    requested_status,
+    applied_status,
+):
+    """등록 결과를 디스크에 기록한다.
+
+    저장 위치는 prepared payload 가 사는 디렉터리 규약을 따른다(새 규약 금지).
+    같은 ``product_key`` 하위의 ``registration_record.json``.
+
+    **빈 값 가드**: ``channel_product_no`` 가 없으면 **조용히 넘기지 않는다** —
+    반환 dict 에 ``channel_product_no: None`` 과 ``missing_channel_no: True`` 를
+    드러낸다(이후 수정이 불가능해진다는 뜻이므로 사용자가 알아야 한다). 파일은
+    채널번호가 있을 때만 기록한다.
+
+    Returns:
+        기록 결과 dict::
+            {"written": bool, "path": str | None,
+             "channel_product_no": str | None, "missing_channel_no": bool}
+    """
+    key = str(product_key or "").strip()
+    if not key:
+        raise ValueError("product_key 가 필요합니다 (등록 기록 저장).")
+    sane_key = _sanitize_product_key(key)
+    ch_no = str(channel_product_no or "").strip() or None
+    record = {
+        "product_key": sane_key,
+        "origin_product_no": origin_product_no,
+        "channel_product_no": ch_no,
+        "name": name,
+        "salePrice": sale_price,
+        "categoryId": category_id,
+        "requested_status": requested_status,
+        "applied_status": applied_status,
+        "registered_at": _utc_now_iso(),
+    }
+    path = _registration_record_path(sane_key)
+    common._write_json_file(path, record)
+    return {
+        "written": True,
+        "path": str(path),
+        "channel_product_no": ch_no,
+        "missing_channel_no": ch_no is None,
+    }
+
+
+def read_registration_record(*, product_key=None, origin_product_no=None):
+    """저장된 등록 기록을 읽는다(내부 헬퍼 — MCP 도구로 노출하지 않는다).
+
+    ``product_key`` 또는 ``origin_product_no`` 중 하나를 받는다.
+    ``product_key`` 가 주어지면 그 키 하위의 기록 파일을 직접 읽는다.
+    ``origin_product_no`` 만 주어지면 prepared 디렉터리를 순회하며
+    ``origin_product_no`` 가 일치하는 기록을 찾는다(느리지만 이후 수정 기능의
+    폴백 경로가 된다).
+
+    Returns:
+        기록 dict. 없으면 ``None``.
+
+    Raises:
+        ValueError: 인자가 모두 비어 있을 때.
+    """
+    pkey = str(product_key or "").strip()
+    origin_no = str(origin_product_no or "").strip()
+    if not pkey and not origin_no:
+        raise ValueError(
+            "read_registration_record 는 product_key 또는 origin_product_no 가 필요합니다."
+        )
+    if pkey:
+        path = _registration_record_path(pkey)
+        data = common._read_json_file(path, None)
+        return data
+    # origin_product_no 만 있는 경우: prepared 디렉터리 순회.
+    base = _prepared_dir()
+    if not base.exists():
+        return None
+    for key_dir in base.iterdir():
+        if not key_dir.is_dir():
+            continue
+        record_path = key_dir / "registration_record.json"
+        data = common._read_json_file(record_path, None)
+        if isinstance(data, dict) and str(data.get("origin_product_no") or "") == origin_no:
+            return data
+    return None
+
+
+# ---------------------------------------------------------------------------
 # 등록 오케스트레이션.
 # ---------------------------------------------------------------------------
 
@@ -508,7 +652,15 @@ def register_prepared_listing(d):
     # QA 게이트 — fail-closed (PENDING/FAIL 차단).
     allowed, reason = qa_agents.qa_gate(payload)
     if not allowed:
-        return {"ok": False, "blocked": True, "reason": reason, "product_key": product_key}
+        return {
+            "ok": False,
+            "blocked": True,
+            "reason": reason,
+            "product_key": product_key,
+            "channelProductNo": None,
+            "channel_product_no": None,
+            "missing_channel_no": True,
+        }
 
     product = payload.get("product") or {}
     # prepared detail_html 를 그대로 사용(payload 의 detail_html).
@@ -537,6 +689,8 @@ def register_prepared_listing(d):
 
     ok = _is_register_success(status_code, body)
     origin_product_no = _extract_origin_product_no(body)
+    channel_product_no = _extract_channel_product_no(body)
+    missing_channel_no = channel_product_no is None
 
     # 등록 후 조회 재검증 (원본에 없는 단계).
     verify = None
@@ -557,6 +711,7 @@ def register_prepared_listing(d):
         "ok": ok,
         "status_code": status_code,
         "originProductNo": origin_product_no,
+        "channelProductNo": channel_product_no,
         "verify": verify,
     }
     try:
@@ -564,12 +719,40 @@ def register_prepared_listing(d):
     except Exception:
         pass
 
+    # 등록 기록(record) 저장 — 채널상품번호를 디스크에 남겨 이후 수정이 가능하게.
+    # 빈 값 가드: 채널번호가 없으면 조용히 넘기지 않는다(missing_channel_no 드러남).
+    registration_record = None
+    if ok and origin_product_no:
+        _prod = product if isinstance(product, dict) else {}
+        try:
+            registration_record = write_registration_record(
+                product_key,
+                origin_product_no=origin_product_no,
+                channel_product_no=channel_product_no,
+                name=str(_prod.get("name") or ""),
+                sale_price=_prod.get("salePrice"),
+                category_id=str(_prod.get("categoryId") or ""),
+                requested_status=status,
+                applied_status=status,
+            )
+        except Exception:
+            # 기록 저장 실패가 등록 자체를 실패시키지는 않는다 — 하지만 채널번호가
+            # 있음에도 기록을 못 쓰면 이후 수정이 불가능해지므로 그 사실은
+            # missing_channel_no 와 별개로 반환에 드러나지 않는다(이미 ok 로
+            # 보고됨). 단, 기록 파일이 없으면 read_registration_record 가 None 을
+            # 반환하므로 이후 수정 기능이 안전하게 차단된다.
+            registration_record = None
+
     return {
         "ok": ok,
         "status_code": status_code,
         "originProductNo": origin_product_no,
+        "channelProductNo": channel_product_no,
+        "channel_product_no": channel_product_no,
+        "missing_channel_no": missing_channel_no,
         "verify": verify,
         "product_key": product_key,
+        "registration_record": registration_record,
         "body": body if not ok else None,
     }
 
@@ -1288,11 +1471,13 @@ __all__ = [
     "_build_register_product_dict",
     "_build_tentative_register_payload",
     "_category_path_for",
+    "_extract_channel_product_no",
     "_fingerprint_sources",
     "_inject_notice_type",
     "_prepared_dir",
     "_prepared_item_dir",
     "_prepared_payload_path",
+    "_registration_record_path",
     "_reject_url_inputs",
     "_sanitize_product_key",
     "_validate_review_submission",
@@ -1303,10 +1488,12 @@ __all__ = [
     "make_product_key",
     "prepare_listing",
     "read_prepared_payload",
+    "read_registration_record",
     "register_listing",
     "register_prepared_listing",
     "resolve_prepared_for_register",
     "resolve_product_key",
     "submit_reviews",
     "write_prepared_payload",
+    "write_registration_record",
 ]

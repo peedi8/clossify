@@ -813,6 +813,8 @@ def register_product(
             "ok": False,
             "status_code": None,
             "origin_product_no": None,
+            "channel_product_no": None,
+            "missing_channel_no": True,
             "name_truncated": False,
             "raw": None,
             "seller_tags": None,
@@ -997,6 +999,8 @@ def register_product(
             "ok": False,
             "status_code": None,
             "origin_product_no": None,
+            "channel_product_no": None,
+            "missing_channel_no": True,
             "name_truncated": name_truncated,
             "raw": None,
             "seller_tags": None,
@@ -1055,6 +1059,8 @@ def register_product(
             "ok": False,
             "status_code": None,
             "origin_product_no": None,
+            "channel_product_no": None,
+            "missing_channel_no": True,
             "name_truncated": name_truncated,
             "raw": None,
             "seller_tags": None,
@@ -1106,6 +1112,8 @@ def register_product(
                     "ok": False,
                     "status_code": None,
                     "origin_product_no": None,
+                    "channel_product_no": None,
+                    "missing_channel_no": True,
                     "name_truncated": name_truncated,
                     "raw": None,
                     "seller_tags": None,
@@ -1146,6 +1154,8 @@ def register_product(
             "ok": bool(outcome.get("ok")),
             "status_code": None,
             "origin_product_no": outcome.get("originProductNo"),
+            "channel_product_no": None,
+            "missing_channel_no": True,
             "name_truncated": name_truncated,  # Fix 5
             "raw": outcome,
             "seller_tags": None,
@@ -1167,6 +1177,10 @@ def register_product(
         origin_product_no = body.get("originProductNo") or body.get("originProduct", {}).get(
             "originProductNo"
         )
+    # 채널상품번호 추출 — register 모듈의 정본 추출기 재사용(새 로직 만들지 않는다).
+    # 이 번호가 없으면 이후 수정·상태보정이 불가능하다(빈 값 가드로 드러낸다).
+    channel_product_no = _register_mod._extract_channel_product_no(body) if ok else None
+    missing_channel_no = channel_product_no is None
     seller_tags_meta = (
         naver_client.seller_tag_autostrip_meta(body) if isinstance(body, dict) else None
     )
@@ -1179,6 +1193,7 @@ def register_product(
     # 올리려던 판매자가 판매중인 상품을 갖게 되는데 아무도 모르는 조용한 잘못된
     # 상태다. 본 보정 경로는:
     #   1. 생성 응답의 statusType 이 요청값과 다르면 update_product 로 맞춘다.
+    #      update_product 는 채널상품번호를 요구하므로 위에서 추출한 값을 쓴다.
     #   2. 보정 후 get_product 로 실제 상태를 재확인한다.
     #   3. 그래도 다르면 ok=False 로 보고한다 (조용한 성공 금지).
     # status="SALE" 이고 응답도 SALE 이면 추가 호출이 일어나지 않는다.
@@ -1188,18 +1203,11 @@ def register_product(
     status_correction_attempted = False
     if ok and applied_status and applied_status != status.upper() and origin_product_no:
         status_correction_attempted = True
-        # 문서화된 상태 변경 경로로 맞춘다. update_product 는 채널 상품을
-        # 기준으로 하므로 originProductNo 가 아닌 채널 번호가 필요하다.
-        # 생성 응답에서 channelProductNo 를 함께 찾는다.
-        channel_no = None
-        if isinstance(body, dict):
-            channel_no = body.get("channelProductNo") or body.get("channelProduct", {}).get(
-                "channelProductNo"
-            )
-        if channel_no:
+        # 보정은 채널상품번호로 한다. 위에서 추출한 값을 그대로 쓴다(응답의 정본).
+        if channel_product_no:
             try:
                 correction_payload = {"statusType": status}
-                naver_client.update_product(channel_no, correction_payload)
+                naver_client.update_product(channel_product_no, correction_payload)
                 # 보정 후 재확인.
                 _vsc, _vbody = naver_client.get_product(origin_product_no)
                 if isinstance(_vbody, dict):
@@ -1215,6 +1223,29 @@ def register_product(
         if applied_status != status.upper():
             ok = False
 
+    # 등록 기록(record) 저장 — 채널상품번호를 디스크에 남겨 이후 수정이 가능하게.
+    # 성공(최종 ok) 일 때만 기록한다. 빈 값 가드: 채널번호가 없으면 기록은 쓰지
+    # 않되 missing_channel_no 로 그 사실을 반환에 드러낸다.
+    registration_record = None
+    if ok and origin_product_no and _product_key:
+        try:
+            registration_record = _register_mod.write_registration_record(
+                _product_key,
+                origin_product_no=origin_product_no,
+                channel_product_no=channel_product_no,
+                name=name,
+                sale_price=int(price),
+                category_id=category_id,
+                requested_status=status,
+                applied_status=applied_status or status,
+            )
+        except Exception:
+            # 기록 저장 실패가 등록 자체를 실패시키지는 않는다. 단, 기록 파일이
+            # 없으면 read_registration_record 가 None 을 반환하므로 이후 수정
+            # 기능이 안전하게 차단된다(조용한 성공이 아니다 — 채널번호가 없으면
+            # missing_channel_no 로 이미 드러났다).
+            registration_record = None
+
     # 에러 응답의 raw 본문은 화이트리스트 키만 남겨 노출.
     exposed_raw = _sanitize_body(body) if not ok else body
 
@@ -1222,6 +1253,8 @@ def register_product(
         "ok": ok,
         "status_code": status_code,
         "origin_product_no": origin_product_no,
+        "channel_product_no": channel_product_no,
+        "missing_channel_no": missing_channel_no,
         "name_truncated": name_truncated,  # Fix 5
         "raw": exposed_raw,
         "seller_tags": seller_tags_meta,
@@ -1234,6 +1267,7 @@ def register_product(
         "applied_status": applied_status,
         "status_corrected": status_corrected,
         "status_correction_attempted": status_correction_attempted,
+        "registration_record": registration_record,
         "dry_run": _dry_run,
         "error": None if ok else _sanitize_text(f"API 반환 상태 {status_code}"),
     }
@@ -1441,6 +1475,8 @@ def _fail(
         "ok": False,
         "status_code": None,
         "origin_product_no": None,
+        "channel_product_no": None,
+        "missing_channel_no": True,
         "name_truncated": name_truncated,  # Fix 5 — validation-fail 시 기본값
         "raw": None,
         "seller_tags": None,
