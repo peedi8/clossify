@@ -4,7 +4,7 @@
 # non-commercial purposes. See LICENSE.md.
 """고시 필드 라벨 데이터 파일(load) 및 조회 헬퍼 검증.
 
-검증 시나리오(T-125):
+검증 시나리오:
   (a) **공통 5필드 라벨 존재**: 35개 고시 타입 전체에 등장하는 5개 필드가
       모두 라벨을 갖는다. 이들은 카테고리와 무관하게 모든 사용자가 첫 화면에서
       보는 필드이므로 하드 요구사항이다.
@@ -41,7 +41,7 @@ from clossify import mcp_server, naver_client
 
 _LABELS_PATH = _PROJECT_ROOT / "data" / "notice_field_labels.json"
 
-# 35개 고시 타입 전체에 공통으로 등장하는 5개 필드 (T-125 하드 요구사항).
+# 35개 고시 타입 전체에 공통으로 등장하는 5개 필드 (하드 요구사항).
 _COMMON_FIVE = (
     "returnCostReason",
     "noRefundReason",

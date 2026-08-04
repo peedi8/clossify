@@ -460,7 +460,7 @@ _NOTICE_COMMON_FIELDS = (
 
 # 공통 5필드 "설정에서 채워졌는지" 보고용 후보.
 # 각 항목: (고시 camelCase 필드명, 상품 입력 후보 튜플, config 후보 튜플).
-# 별칭 만들지 말 것 — 매핑이 하나 더 생기면 갈라진다(티켓 T-127).
+# 별칭 만들지 말 것 — 매핑이 하나 더 생기면 갈라진다.
 _NOTICE_COMMON_FIELD_CANDIDATES = (
     (
         "returnCostReason",
@@ -1480,7 +1480,7 @@ def build_payload(p, detail_html, images, status="SALE"):
         payload["_kcWarning"] = kc_warning
     # 공통 5필드 중 config 에서 채워진 항목이 있으면 페이로드 메타에 알린다.
     # 빈 목록(아무것도 config 에서 채워지지 않았을 때)은 메타 키 자체를 싣지
-    # 않는다 — 비어있지 않은데 표시되지 않는 경로가 있으면 안 된다(티켓 T-127).
+    # 않는다 — 비어있지 않은데 표시되지 않는 경로가 있으면 안 된다.
     filled_from_config = defaults.get("notice_filled_from_config") or []
     if filled_from_config:
         payload["notice_filled_from_config"] = list(filled_from_config)

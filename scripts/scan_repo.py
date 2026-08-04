@@ -100,6 +100,16 @@ GENERIC_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
             re.IGNORECASE,
         ),
     ),
+    # - 내부 작업/티켓 식별자: 단일 대문자 + 하이픈 + 2~4자리 숫자.
+    #   대소문자를 구분하고(대문자 한 글자만), 앞에 다른 낱말 문자가 없어야
+    #   매칭한다. 이렇게 하면 ``YT-001``/``RT-001`` 같은 제품 코드는 앞의
+    #   모델 접두사가 ``T-001`` 부분을 보호하므로 잡히지 않고,
+    #   ``2026-08-04`` 같은 ISO 날짜도 숫자가 하이픈 앞에 오므로 잡히지
+    #   않으며, 보통의 하이픈 연결단(e.g. ``foo-bar``)도 걸리지 않는다.
+    (
+        "internal_ticket_id",
+        re.compile(r"(?<![\w])([A-Z])-(\d{2,4})(?!\d)"),
+    ),
 ]
 
 # tests/ 의 마스킹/검출 검증용 가짜 값 허용목록 — (파일경로 regex, 패턴명).
@@ -121,6 +131,15 @@ CJK_RANGES = [
     (0xF900, 0xFAFF),  # CJK Compatibility Ideographs
 ]
 
+# 이 스캐너 자신이 정의·문서화해야 하는 범용 패턴명 — 자기 자신을
+# 검사하면 정의부/해설 리터럴이 위반으로 잡히므로 self_skip 대상에서 제외.
+# (``local_word`` 는 층 이름으로 별도 처리한다.)
+_SELF_SKIP_GENERIC_NAMES = frozenset(
+    {
+        "windows_abs_path",
+        "internal_ticket_id",
+    }
+)
 # 커밋 메시지 형식 검사 — 특정 도구명이 아닌 **형태**로 검사.
 # 공동저자 트레일러 형태가 존재하면 위반 (LLM 도구 흔적의 범용 형태).
 # 트레일러 리터럴을 조립하여 이 스캐너 자신이 로컬 목록에 걸리지 않게 한다.
@@ -321,12 +340,12 @@ def scan_patterns(local_rx: re.Pattern[str] | None) -> list[str]:
             # 원문 라인별 검사.
             for lineno, line in enumerate(raw.splitlines(), start=1):
                 for pname, rx in compiled:
-                    # 스캐너 자신은 generic windows_abs_path 리터럴과
-                    # local_word 전체에서 제외 — 이 파일은 검사 대상
-                    # 패턴/트레일러 형태를 정의·문서화해야 하므로 자기
+                    # 스캐너 자신은 정의·문서화해야 하는 범용 패턴
+                    # 리터럴과 local_word 전체에서 제외 — 이 파일은 검사
+                    # 대상 패턴/트레일러 형태를 정의·문서화해야 하므로 자기
                     # 자신을 검사하면 정의부가 위반으로 잡힌다. 이것은
                     # 스캐너의 본질적 속성이지 우회가 아니다.
-                    if self_skip and (pname == "windows_abs_path" or layer_name == "local"):
+                    if self_skip and (pname in _SELF_SKIP_GENERIC_NAMES or layer_name == "local"):
                         continue
                     if _is_allowed(path, pname):
                         continue
@@ -341,7 +360,7 @@ def scan_patterns(local_rx: re.Pattern[str] | None) -> list[str]:
                 continue
             for lineno, line in enumerate(decoded.splitlines(), start=1):
                 for pname, rx in compiled:
-                    if self_skip and (pname == "windows_abs_path" or layer_name == "local"):
+                    if self_skip and (pname in _SELF_SKIP_GENERIC_NAMES or layer_name == "local"):
                         continue
                     if _is_allowed(path, pname):
                         continue

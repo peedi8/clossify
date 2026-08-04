@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: LicenseRef-SustainableUse-1.0
 # Providing this software to others is permitted only free of charge and for
 # non-commercial purposes. See LICENSE.md.
-"""전 카테고리 공통 고시 5필드를 설정에서 채우기 — 티켓 T-127.
+"""전 카테고리 공통 고시 5필드를 설정에서 채우기.
 
-검증 항목(티켓에 열거된 a~f):
+검증 항목(a~f):
 
   (a) config 에 5개를 넣고 상품 입력에 없으면 페이로드 고시에 그 값이 들어간다.
   (b) ``notice_filled_from_config`` 가 실제로 채운 필드만 정확히 보고한다.
@@ -404,6 +404,5 @@ class TestExampleConfigNoRealValues:
             "trouble_shooting_contents",
         ):
             assert snake not in section, (
-                f"config.example.json 에 snake_case 별칭 {snake!r} 가 있음 — "
-                f"별칭 금지(티켓 T-127)."
+                f"config.example.json 에 snake_case 별칭 {snake!r} 가 있음 — " f"별칭 금지."
             )
