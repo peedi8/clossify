@@ -608,21 +608,68 @@ class TestAllNoticeTypesCompliancePass:
     def test_etc_specifically_has_no_missing(self):
         """ETC 타입 정상 입력 → 필수 필드 누락 0건 (핵심 반례).
 
-        결함 1 정정 후 ETC 의 필수 목록에서 customerServicePhoneNumber 가
-        빠졌으므로 afterServiceDirector 만 있으면 통과해야 한다.
+        afterServiceDirector 와 customerServicePhoneNumber 는 ETC 의 상호배제
+        (XOR) 쌍이다. 둘 다 필수 목록에 선언되어 있으나, ``notice_field_relations
+        .json`` 의 XOR 관계가 이 쌍을 커버하므로 **둘 중 하나만 채워져도** 컴플라이
+        언스 누락 판정을 통과해야 한다. 둘 다 비어있으면 누락, 둘 다 채워지면
+        상호배제 위반으로 각각 별도 신호가 난다.
+
+        본 테스트가 지키는 것은 "유효한 ETC 등록이 게이트에 막히지 않는다" 는
+        원래 목적이다 — 예전엔 필드를 목록에서 지워 해결했으나, 이제는 XOR 관계
+        메커니즘이 같은 역할을 한다. 다른 모든 상호배제 쌍과 동일한 형태.
         """
         spec = naver_client._notice_type_spec("ETC")
         assert spec is not None
         fields = spec["fields"]
-        # ETC 필수 목록에 customerServicePhoneNumber 가 없는지 확인 (정정 확인).
-        assert "customerServicePhoneNumber" not in fields, (
-            "ETC 필수 목록에 customerServicePhoneNumber 가 남아있음 — "
-            "데이터 정정이 반영되지 않음"
+        # 두 필드 모두 필수 목록에 있어야 한다 (데이터 회복 확인).
+        assert "afterServiceDirector" in fields, "ETC 필수 목록에 afterServiceDirector 없음"
+        assert "customerServicePhoneNumber" in fields, (
+            "ETC 필수 목록에 customerServicePhoneNumber 없음 — "
+            "XOR 메커니즘 전환에 필요한 필드 회복이 반영되지 않음"
         )
-        assert "afterServiceDirector" in fields
-        body = _build_full_body_for_type("ETC", spec)
-        missing = qa_agents._notice_field_missing(body, fields)
-        assert missing == [], f"ETC 필수 필드 누락: {missing}"
+        # XOR 관계가 이 쌍을 커버하는지 확인 (notice_field_relations.json).
+        xor_groups = qa_agents._notice_xor_groups("ETC")
+        pair = {"afterServiceDirector", "customerServicePhoneNumber"}
+        assert any(set(g) == pair for g in xor_groups), (
+            f"ETC 의 XOR 관계에 afterServiceDirector/customerServicePhoneNumber 쌍이 "
+            f"선언되어 있지 않음: {xor_groups}"
+        )
+
+        base_body = _build_full_body_for_type("ETC", spec)
+
+        # 1) afterServiceDirector 만 있을 때 → 통과 (누락 0건).
+        body_director_only = {
+            **{k: v for k, v in base_body.items() if k != "customerServicePhoneNumber"},
+            "customerServicePhoneNumber": "",
+        }
+        missing_director = qa_agents._notice_field_missing_with_relations(
+            body_director_only, fields, notice_type="ETC"
+        )
+        assert missing_director == [], (
+            f"afterServiceDirector 만 있을 때 누락 발생 — 유효 ETC 등록이 차단됨: "
+            f"{missing_director}"
+        )
+
+        # 2) customerServicePhoneNumber 만 있을 때 → 통과 (누락 0건).
+        body_phone_only = {
+            **{k: v for k, v in base_body.items() if k != "afterServiceDirector"},
+            "afterServiceDirector": "",
+        }
+        missing_phone = qa_agents._notice_field_missing_with_relations(
+            body_phone_only, fields, notice_type="ETC"
+        )
+        assert missing_phone == [], (
+            f"customerServicePhoneNumber 만 있을 때 누락 발생 — 유효 ETC 등록이 차단됨: "
+            f"{missing_phone}"
+        )
+
+        # 3) 둘 다 채워졌을 때 → 상호배제 위반 (네이버가 거절하는 입력을 게이트가
+        #    미리 잡는다). 이 위반은 "누락" 이 아닌 별도 신호다.
+        xor_violations_both = qa_agents._notice_field_xor_violations(base_body, "ETC")
+        assert xor_violations_both, (
+            "afterServiceDirector 와 customerServicePhoneNumber 둘 다 채워졌을 때 "
+            "상호배제 위반이 잡히지 않음 — 네이버 거절 입력이 게이트를 통과함"
+        )
 
 
 # --------------------------------------------------------------------------- #

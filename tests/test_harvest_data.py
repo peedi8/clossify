@@ -313,3 +313,119 @@ class TestSchemaConsistency:
             "nutritionFacts 가 타입 파일에 있습니다 — 문자열로 실증되어 "
             "들어가지 않아야 합니다 (미기재=문자열이 기본)."
         )
+
+
+# =========================================================================== #
+# (e) date 필드 형식 — 2026-08-04 date-parse probe 수확.
+#
+# live API date-parse probe (2026-08-04) 로 타입별 date 필드 형식이 확정되었다.
+# 본 섹션은 확정된 형식이 formats_by_type 에 정확히 들어있는지, 그리고 probe
+# 하지 않은 필드/타입에는 형식이 없는지(목록 밖 유추 금지) 검증한다.
+# =========================================================================== #
+
+# releaseDate yyyy-MM — probe 로 확정된 14개 타입 (KITCHEN_UTENSILS, IMAGE_APPLIANCES
+# 는 기존 기록분이고 여기서는 수확분만 나열).
+_HARVESTED_RELEASE_DATE_YYYY_MM: set[str] = {
+    "CAR_ARTICLES",
+    "CELLPHONE",
+    "HOME_APPLIANCES",
+    "KIDS",
+    "MEDICAL_APPLIANCES",
+    "MICROELECTRONICS",
+    "MUSICAL_INSTRUMENT",
+    "NAVIGATION",
+    "OFFICE_APPLIANCES",
+    "OPTICS_APPLIANCES",
+    "SEASON_APPLIANCES",
+    "SPORTS_EQUIPMENT",
+}
+
+# expirationDate yyyy-MM — probe 로 확정된 2개 타입.
+_HARVESTED_EXPIRATION_DATE_YYYY_MM: set[str] = {
+    "COSMETIC",
+    "BIOCHEMISTRY",
+}
+
+# publishDate yyyy-MM-dd — probe 로 확정된 1개 타입.
+_HARVESTED_PUBLISH_DATE_YYYY_MM_DD: set[str] = {
+    "BOOKS",
+}
+
+
+class TestHarvestedDateFormats:
+    """(e) date-parse probe 로 확정된 타입별 date 형식이 데이터에 정확히 있다."""
+
+    def test_e_release_date_formats_present(self):
+        """releaseDate 의 formats_by_type 에 수확분 yyyy-MM 타입이 전부 있다."""
+        types = qa_agents._load_notice_field_types()
+        entry = types.get("releaseDate")
+        assert entry is not None, "releaseDate 가 타입 데이터에 없음"
+        fbt = entry.get("formats_by_type")
+        assert isinstance(fbt, dict), f"releaseDate formats_by_type 이 없음: {entry!r}"
+        for type_name in _HARVESTED_RELEASE_DATE_YYYY_MM:
+            assert (
+                fbt.get(type_name) == "yyyy-MM"
+            ), f"releaseDate.{type_name} 형식이 yyyy-MM 이 아님: {fbt.get(type_name)!r}"
+        # 기존 기록분도 보존되어야 한다.
+        assert fbt.get("KITCHEN_UTENSILS") == "yyyy-MM"
+        assert fbt.get("IMAGE_APPLIANCES") == "yyyy-MM"
+
+    def test_e_expiration_date_formats_present(self):
+        """expirationDate 가 타입 데이터에 있고 formats_by_type 이 정확하다."""
+        types = qa_agents._load_notice_field_types()
+        entry = types.get("expirationDate")
+        assert entry is not None, "expirationDate 가 타입 데이터에 없음"
+        assert entry["type"] == "date"
+        fbt = entry.get("formats_by_type")
+        assert isinstance(fbt, dict), f"expirationDate formats_by_type 이 없음: {entry!r}"
+        for type_name in _HARVESTED_EXPIRATION_DATE_YYYY_MM:
+            assert (
+                fbt.get(type_name) == "yyyy-MM"
+            ), f"expirationDate.{type_name} 형식이 yyyy-MM 이 아님: {fbt.get(type_name)!r}"
+
+    def test_e_publish_date_format_present(self):
+        """publishDate 가 타입 데이터에 있고 BOOKS 형식이 yyyy-MM-dd 이다."""
+        types = qa_agents._load_notice_field_types()
+        entry = types.get("publishDate")
+        assert entry is not None, "publishDate 가 타입 데이터에 없음"
+        assert entry["type"] == "date"
+        fbt = entry.get("formats_by_type")
+        assert isinstance(fbt, dict), f"publishDate formats_by_type 이 없음: {entry!r}"
+        for type_name in _HARVESTED_PUBLISH_DATE_YYYY_MM_DD:
+            assert (
+                fbt.get(type_name) == "yyyy-MM-dd"
+            ), f"publishDate.{type_name} 형식이 yyyy-MM-dd 가 아님: {fbt.get(type_name)!r}"
+
+    def test_e_biochemistry_pack_date_not_probed(self):
+        """BIOCHEMISTRY.packDate 는 probe 되지 않았으므로 형식이 없다.
+
+        핵심 계약: probe 하지 않은 필드/타입 조합에 형식을 유추 기록하지 않는다.
+        packDate 자체는 FOOD/GENERAL_FOOD/DIET_FOOD 에서 형식이 확인되었지만,
+        BIOCHEMISTRY 의 packDate 는 별도 probe 없이 yyyy-MM-dd 라고 단정하면
+        오신고가 된다.
+        """
+        types = qa_agents._load_notice_field_types()
+        entry = types.get("packDate")
+        assert entry is not None
+        fbt = entry.get("formats_by_type") or {}
+        assert (
+            "BIOCHEMISTRY" not in fbt
+        ), f"BIOCHEMISTRY.packDate 는 probe 되지 않았는데 형식이 기록됨: {fbt.get('BIOCHEMISTRY')!r}"
+
+    def test_e_no_format_for_unlisted_types(self):
+        """releaseDate 의 formats_by_type 에 목록 밖 타입이 없다.
+
+        핵심 계약: probe 하지 않은 타입에 형식을 유추하지 않는다.
+        예: FOOD 는 releaseDate 를 쓰지 않거나 형식이 확인되지 않았으므로
+        releaseDate.formats_by_type 에 들어가면 안 된다.
+        """
+        types = qa_agents._load_notice_field_types()
+        entry = types.get("releaseDate")
+        assert entry is not None
+        fbt = entry.get("formats_by_type") or {}
+        # 전체가 수확분 + 기존 기록분(KITCHEN_UTENSILS, IMAGE_APPLIANCES) 이어야 한다.
+        expected = _HARVESTED_RELEASE_DATE_YYYY_MM | {"KITCHEN_UTENSILS", "IMAGE_APPLIANCES"}
+        extra = set(fbt.keys()) - expected
+        assert (
+            not extra
+        ), f"releaseDate formats_by_type 에 probe 하지 않은 타입이 있음 (유추 금지 위반): {extra}"

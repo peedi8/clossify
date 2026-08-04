@@ -524,6 +524,8 @@ class TestNoticeFieldTypesDataIntegrity:
           - importDeclarationCheck → boolean (2026-08-04 수확)
           - packDate → date (2026-08-04 수확)
           - consumptionDate → date (2026-08-04 수확)
+          - expirationDate → date (2026-08-04 date-parse probe 수확)
+          - publishDate → date (2026-08-04 date-parse probe 수확)
         """
         types = qa_agents._load_notice_field_types()
         assert isinstance(types, dict)
@@ -537,6 +539,9 @@ class TestNoticeFieldTypesDataIntegrity:
         assert types["importDeclarationCheck"]["type"] == "boolean"
         assert types["packDate"]["type"] == "date"
         assert types["consumptionDate"]["type"] == "date"
+        # 2026-08-04 date-parse probe 수확분.
+        assert types["expirationDate"]["type"] == "date"
+        assert types["publishDate"]["type"] == "date"
 
     def test_no_unconfirmed_types(self):
         """미확인 필드가 데이터에 없다.
@@ -546,7 +551,8 @@ class TestNoticeFieldTypesDataIntegrity:
         """
         types = qa_agents._load_notice_field_types()
         # 허용된 필드 집합 — 확인된 것만.
-        # 기존 2개 + 2026-08-04 야간 수확 4개 (boolean 2, date 2).
+        # 기존 2개 + 2026-08-04 야간 수확 4개 (boolean 2, date 2)
+        # + 2026-08-04 date-parse probe 수확 2개 (date 2).
         allowed = {
             # 기존 기록분.
             "importDeclaration",
@@ -556,6 +562,9 @@ class TestNoticeFieldTypesDataIntegrity:
             "importDeclarationCheck",
             "packDate",
             "consumptionDate",
+            # 2026-08-04 date-parse probe 수확.
+            "expirationDate",
+            "publishDate",
         }
         extra = set(types.keys()) - allowed
         assert not extra, f"확인되지 않은 필드가 데이터에 있습니다 (타입 추측 금지 위반): {extra}"

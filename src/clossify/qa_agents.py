@@ -351,6 +351,9 @@ def _load_notice_field_types() -> dict[str, dict]:
     if not isinstance(field_types, dict):
         raise RuntimeError(f"notice_field_types.json 구조가 올바르지 않습니다: {path}")
     # 유효한 type 값만 보존한다(알 수 없는 type 은 문자열로 취급).
+    # date 필드의 경우 format(사람 읽기용 설명)과 formats_by_type(타입별 확정
+    # 형식 맵) 키가 있으면 함께 보존한다 — 그렇지 않으면 reader 가 형식 정보를
+    # 조용히 버려 소비자가 잘못된 형식을 보고하게 된다.
     valid_types = frozenset({"string", "boolean", "date"})
     normalized: dict[str, dict] = {}
     for name, entry in field_types.items():
@@ -359,7 +362,19 @@ def _load_notice_field_types() -> dict[str, dict]:
         ftype = str(entry.get("type") or "").strip().lower()
         if ftype not in valid_types:
             continue
-        normalized[str(name)] = {"type": ftype}
+        item: dict[str, object] = {"type": ftype}
+        raw_format = entry.get("format")
+        if isinstance(raw_format, str) and raw_format.strip():
+            item["format"] = raw_format.strip()
+        raw_fbt = entry.get("formats_by_type")
+        if isinstance(raw_fbt, dict):
+            fbt: dict[str, str] = {}
+            for type_name, fmt_value in raw_fbt.items():
+                if isinstance(fmt_value, str) and fmt_value.strip():
+                    fbt[str(type_name).strip().upper()] = fmt_value.strip()
+            if fbt:
+                item["formats_by_type"] = fbt
+        normalized[str(name)] = item
     _NOTICE_FIELD_TYPES_CACHE = normalized
     return normalized
 

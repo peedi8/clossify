@@ -13,9 +13,13 @@
     {
       "url": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
       "what": "Live API date format observation, 2026-08-04. packDate/consumptionDate on FOOD, GENERAL_FOOD and DIET_FOOD accepted 'yyyy-MM-dd' (a 'yyyy-MM' value failed parsing at index 7; 'yyyy-MM-dd' parsed and proceeded to the XOR stage). releaseDate on KITCHEN_UTENSILS and IMAGE_APPLIANCES accepted 'yyyy-MM' (a 'yyyy-MM-dd' value was truncated at index 7). No other type's date field format is confirmed — only the listed fields. Source: live API date format observation, 2026-08-04."
+    },
+    {
+      "url": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "what": "Live API date-parse probe, 2026-08-04. Non-Text date fields of the following notice types were probed: a full yyyy-MM-dd value was refused (date parse error at index 7), confirming the accepted format is yyyy-MM for: BIOCHEMISTRY.expirationDate, CAR_ARTICLES.releaseDate, CELLPHONE.releaseDate, COSMETIC.expirationDate, HOME_APPLIANCES.releaseDate, KIDS.releaseDate, MEDICAL_APPLIANCES.releaseDate, MICROELECTRONICS.releaseDate, MUSICAL_INSTRUMENT.releaseDate, NAVIGATION.releaseDate, OFFICE_APPLIANCES.releaseDate, OPTICS_APPLIANCES.releaseDate, SEASON_APPLIANCES.releaseDate, SPORTS_EQUIPMENT.releaseDate. BOOKS.publishDate accepted yyyy-MM-dd and proceeded to a successful HTTP 200 registration (format confirmed yyyy-MM-dd). BIOCHEMISTRY.packDate was not probed and remains format-unconfirmed. Source: live API date-parse probe, 2026-08-04."
     }
   ],
-  "note": "확인된 것만 기록한다. 필드 이름만 보고 타입을 추측하지 않는다. 미기재 필드는 문자열(기존 동작)로 둔다. date 필드의 정확한 형식은 확인된 필드에만 기록하며, 그 외의 date 필드는 형식 미확정으로 둔다. nutritionFacts 는 문자열로 통과 실증되어 타입 파일에 넣지 않는다 (미기재=문자열이 기본).",
+  "note": "확인된 것만 기록한다. 필드 이름만 보고 타입을 추측하지 않는다. 미기재 필드는 문자열(기존 동작)로 둔다. date 필드의 정확한 형식은 확인된 필드에만 기록하며, 그 외의 date 필드는 형식 미확정으로 둔다. nutritionFacts 는 문자열로 통과 실증되어 타입 파일에 넣지 않는다 (미기재=문자열이 기본). 필드별로 형식이 타입마다 다를 수 있으므로 formats_by_type 에 타입별 확정 형식을 기록한다.",
   "field_types": {
     "importDeclaration": {
       "type": "boolean",
@@ -36,19 +40,64 @@
       "type": "date",
       "source": "live API: date parse error at index 7",
       "collected_at": "2026-08-04",
-      "format": "per-type; yyyy-MM accepted for KITCHEN_UTENSILS and IMAGE_APPLIANCES (live API, 2026-08-04); other types unconfirmed"
+      "format": "per-type; see formats_by_type",
+      "formats_by_type": {
+        "KITCHEN_UTENSILS": "yyyy-MM",
+        "IMAGE_APPLIANCES": "yyyy-MM",
+        "CAR_ARTICLES": "yyyy-MM",
+        "CELLPHONE": "yyyy-MM",
+        "HOME_APPLIANCES": "yyyy-MM",
+        "KIDS": "yyyy-MM",
+        "MEDICAL_APPLIANCES": "yyyy-MM",
+        "MICROELECTRONICS": "yyyy-MM",
+        "MUSICAL_INSTRUMENT": "yyyy-MM",
+        "NAVIGATION": "yyyy-MM",
+        "OFFICE_APPLIANCES": "yyyy-MM",
+        "OPTICS_APPLIANCES": "yyyy-MM",
+        "SEASON_APPLIANCES": "yyyy-MM",
+        "SPORTS_EQUIPMENT": "yyyy-MM"
+      }
     },
     "packDate": {
       "type": "date",
       "source": "live API: yyyy-MM-dd accepted for FOOD, GENERAL_FOOD, DIET_FOOD (2026-08-04)",
       "collected_at": "2026-08-04",
-      "format": "yyyy-MM-dd accepted for FOOD, GENERAL_FOOD, DIET_FOOD; other types unconfirmed"
+      "format": "yyyy-MM-dd accepted for FOOD, GENERAL_FOOD, DIET_FOOD; other types unconfirmed",
+      "formats_by_type": {
+        "FOOD": "yyyy-MM-dd",
+        "GENERAL_FOOD": "yyyy-MM-dd",
+        "DIET_FOOD": "yyyy-MM-dd"
+      }
     },
     "consumptionDate": {
       "type": "date",
       "source": "live API: yyyy-MM-dd accepted for FOOD, GENERAL_FOOD, DIET_FOOD (2026-08-04)",
       "collected_at": "2026-08-04",
-      "format": "yyyy-MM-dd accepted for FOOD, GENERAL_FOOD, DIET_FOOD; other types unconfirmed"
+      "format": "yyyy-MM-dd accepted for FOOD, GENERAL_FOOD, DIET_FOOD; other types unconfirmed",
+      "formats_by_type": {
+        "FOOD": "yyyy-MM-dd",
+        "GENERAL_FOOD": "yyyy-MM-dd",
+        "DIET_FOOD": "yyyy-MM-dd"
+      }
+    },
+    "expirationDate": {
+      "type": "date",
+      "source": "live API: date-parse probe, 2026-08-04",
+      "collected_at": "2026-08-04",
+      "format": "per-type; see formats_by_type",
+      "formats_by_type": {
+        "COSMETIC": "yyyy-MM",
+        "BIOCHEMISTRY": "yyyy-MM"
+      }
+    },
+    "publishDate": {
+      "type": "date",
+      "source": "live API: date-parse probe, 2026-08-04 (yyyy-MM-dd accepted, HTTP 200)",
+      "collected_at": "2026-08-04",
+      "format": "per-type; see formats_by_type",
+      "formats_by_type": {
+        "BOOKS": "yyyy-MM-dd"
+      }
     }
   }
 }
