@@ -521,6 +521,38 @@ def _compliance_code_check(name, context, api_payload=None):
     if not detail_attr:
         detail_attr = ctx.get("detailAttribute") or {}
 
+    # --- 원본 이미지 검사 (보고 지점 — 페이로드 관측 시에만) ---
+    # 우연한 차단(고시 필드 등)과 명시적 차단(이미지 부재)을 구분하기 위해
+    # 별도 rule 로 발생한다. 단, **api_payload 가 dict 일 때만** 판정한다.
+    # api_payload 가 없는 경로(prepare_listing 등)에서 "없음" 으로 단정하면
+    # 정상 이미지가 있어도 FAIL 이 되어 영구 등록 불가가 된다.
+    #
+    # 이 지점은 강제 지점이 아니라 **보고 지점**이다. 네이버에 실제로 도달하는
+    # 모든 경로는 naver_client.build_payload 진입 게이트와 register_product 의
+    # POST 직전 검증을 반드시 통과하므로, 페이로드를 관측할 수 없는 여기서
+    # FAIL/PENDING 을 내지 않아도 fail-closed 가 무너지지 않는다. 강제는 페이로드
+    # 계층이 한다.
+    if isinstance(api_payload, dict):
+        rep_url = ""
+        op = api_payload.get("originProduct")
+        if isinstance(op, dict):
+            images = op.get("images")
+            if isinstance(images, dict):
+                rep = images.get("representativeImage")
+                if isinstance(rep, dict):
+                    rep_url = str(rep.get("url") or "").strip()
+        if not rep_url:
+            violations.append(
+                {
+                    "rule": "원본 이미지",
+                    "severity": FAIL,
+                    "detail": (
+                        "대표 이미지 URL 이 비어 있습니다. 원본 이미지가 최소 1장 필요합니다. "
+                        "실재하는 상품의 사진 없이는 등록을 진행하지 않습니다."
+                    ),
+                }
+            )
+
     # --- 고시 필수 필드 검사 (데이터 기반) ---
     notice = (
         detail_attr.get("productInfoProvidedNotice")

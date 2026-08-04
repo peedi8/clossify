@@ -94,6 +94,51 @@ def _notice_config():
     return {}
 
 
+def _require_original_images(images):
+    """유효 이미지 1장 이상을 강제. 실패 시 ValueError.
+
+    이것은 진입 게이트(entry gate)다. "이미지가 존재하는가"만 판정하며,
+    이미지의 진위·출처·내용은 판별하지 않는다(그런 코드는 만들지 않는다).
+
+    무효로 취급(전부 거부 사유):
+      - ``images`` 가 ``None``
+      - 리스트가 아님
+      - 빈 리스트
+      - 항목이 ``str`` 이 아님
+      - ``strip()`` 후 빈 문자열(공백·탭·개행 전용 포함)
+
+    유효 항목과 무효 항목이 섞인 경우 조용히 걸러내지 않고 거부한다.
+    (순서·대표 이미지 규약이 깨지는 것을 막기 위함)
+
+    Raises:
+        ValueError: 유효 이미지가 0개이거나 무효 항목이 하나라도 섞인 경우.
+    """
+    if images is None:
+        raise ValueError(
+            "원본 이미지가 최소 1장 필요합니다. 실재하는 상품의 사진 없이는 "
+            "등록을 진행하지 않습니다. (유효 0장 / 입력 None)"
+        )
+    if not isinstance(images, list):
+        raise ValueError(
+            "원본 이미지가 최소 1장 필요합니다. 실재하는 상품의 사진 없이는 "
+            "등록을 진행하지 않습니다. "
+            f"(유효 0장 / 입력 타입 {type(images).__name__} — 리스트여야 함)"
+        )
+    total = len(images)
+    valid = 0
+    invalid_count = 0
+    for item in images:
+        if isinstance(item, str) and item.strip():
+            valid += 1
+        else:
+            invalid_count += 1
+    if invalid_count > 0 or valid == 0:
+        raise ValueError(
+            "원본 이미지가 최소 1장 필요합니다. 실재하는 상품의 사진 없이는 "
+            f"등록을 진행하지 않습니다. (유효 {valid}장 / 입력 {total}개)"
+        )
+
+
 def _kc_config():
     """KC 인증정보 설정 블록을 config 에서 읽는다.
 
@@ -965,6 +1010,23 @@ def _attach_seller_tag_autostrip_meta(body, meta):
 
 def register_product(payload, tk=None):
     """POST /external/v2/products. (origin/channel No 반환)"""
+    # 디스크의 prepared payload 를 그대로 등록하는 경로의 마지막 방어선.
+    # 대표 이미지 URL 이 비어 있으면 페이로드 생성 단계의 게이트가 우회됐을 수 있으므로
+    # POST 송신 전에 한 번 더 검증한다 (fail-closed).
+    try:
+        rep_url = (
+            payload.get("originProduct", {})
+            .get("images", {})
+            .get("representativeImage", {})
+            .get("url", "")
+        )
+    except AttributeError:
+        rep_url = ""
+    if not isinstance(rep_url, str) or not rep_url.strip():
+        raise ValueError(
+            "대표 이미지 URL 이 비어 있습니다. 원본 이미지가 최소 1장 필요합니다. "
+            "실재하는 상품의 사진 없이는 등록을 진행하지 않습니다."
+        )
     working_payload = copy.deepcopy(payload)
     meta = {"removed": [], "restricted_terms": [], "attempts": []}
     prefilter_removed = _strip_seller_tags(working_payload, KNOWN_RESTRICTED_SELLER_TAGS)
@@ -1168,6 +1230,10 @@ def build_payload(p, detail_html, images, status="SALE"):
     p keys: name, categoryId, salePrice, options[{name,stock}], tags[], notice{...}, as_tel, as_guide, origin_code, display"""
     if status not in {"SALE", "SUSPENSION"}:
         raise ValueError("status must be one of {'SALE', 'SUSPENSION'}")
+    # 진입 게이트: 유효 원본 이미지 1장 이상을 본 함수에서 가장 먼저 강제한다.
+    # images[0] 접근보다 먼저여야 빈 리스트/무효 항목이 대표 이미지로 승격되는
+    # 것을 막는다 (IndexError 로 터지는 대신 명확한 ValueError 로 거부).
+    _require_original_images(images)
     opts = p.get("options", [])
     option_info = _build_option_info(p, opts)
     defaults = _notice_defaults(p)

@@ -668,8 +668,12 @@ def register_product(
         return _fail("name 은 비어있지 않은 문자열이어야 합니다.")
     if not isinstance(price, int) or isinstance(price, bool) or price <= 0:
         return _fail("price 는 0보다 큰 정수(KRW)여야 합니다.")
-    if not isinstance(image_urls, list) or not image_urls:
-        return _fail("image_urls 는 최소 1개 이상의 URL 리스트여야 합니다.")
+    # 진입 게이트: 단순 길이검사가 아니라 내용검사로 교체.
+    # 빈 문자열·공백·None·비문자열 항목이 섞이면 거부한다 (조용한 필터링 금지).
+    try:
+        naver_client._require_original_images(image_urls)
+    except ValueError as exc:
+        return _fail(str(exc))
     if not isinstance(category_id, str) or not category_id.strip():
         return _fail("category_id 는 비어있지 않은 문자열이어야 합니다.")
     if not isinstance(detail_html, str) or not detail_html.strip():
