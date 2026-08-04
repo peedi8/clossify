@@ -10,6 +10,7 @@
 
 - `category_meta.json` — 기준일 **2026-08-02T07:54:50Z**
 - `notice_types.json` — 기준일 **2026-08-02T07:22:10Z**
+- `notice_field_labels.json` — 기준일 **2026-08-04T00:00:00Z**
 
 플랫폼이 카테고리·고시 규격을 변경하면 이 데이터는 낡는다. 갱신 방법은
 `scripts/fetch_category_meta.py` 다.
@@ -90,6 +91,33 @@
 - **제약**: 토큰·계정 식별자·스토어명·한자 0건. 한글 라벨은 허용된 리터럴.
 - **갱신**: unverified 5종의 필드 구조는 동일 문서에서 별도 조사하면
   채울 수 있음.
+
+### `notice_field_labels.json`
+
+- **출처**: `notice_types.json` 의 필드명과 네이버 커머스 API 공식 문서의
+  한국어 표시 문구.
+- **목적**: 고시 필드의 camelCase 영어 이름을 사용자에게 보여줄 한국어 라벨과
+  힌트 문구로 연결. 라벨은 **신고값이 아니라 표시 문구**다.
+- **구조**:
+  ```json
+  {
+    "generated_at": "<ISO8601 UTC>",
+    "source": "https://apicenter.commerce.naver.com/docs/.../create-product-product",
+    "note": "라벨은 사용자에게 무엇을 입력해야 하는지 알려주는 표시 문구다. 신고값이 아니다.",
+    "labels": {
+      "<fieldName>": { "label": "<한국어 이름>", "hint": "<왜 필요한지 한 줄>" }
+    }
+  }
+  ```
+- **범위**: 고시 필드 123종 중 라벨이 확정된 일부만 포함. 전 카테고리 공통
+  5필드(`returnCostReason`, `noRefundReason`, `qualityAssuranceStandard`,
+  `compensationProcedure`, `troubleShootingContents`)와 소재/치수/색상 등
+  카테고리별 라벨. 라벨이 없는 필드는 영어 필드명 그대로 폴백한다.
+- **제약**: 라벨이 확인되지 않은 필드는 **추측해 채우지 않는다**. 공식 문서에서
+  별도 조사해 확보한 라벨만 추가한다.
+- **조회**: `src/clossify/mcp_server.py` 의 `_notice_field_label(field)` 가
+  이 파일을 1회 로드(캐싱)하여 `(라벨, 힌트)` 튜플을 반환한다. 파일이
+  없거나 깨지면 stderr 에 사실을 알리고 필드명 폴백으로 동작한다.
 
 ## 생성 방법
 

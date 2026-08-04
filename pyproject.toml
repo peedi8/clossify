@@ -42,6 +42,7 @@ packages = ["src/clossify"]
 "data/category_meta.json" = "clossify/data/category_meta.json"
 "data/certification_types.json" = "clossify/data/certification_types.json"
 "data/notice_types.json" = "clossify/data/notice_types.json"
+"data/notice_field_labels.json" = "clossify/data/notice_field_labels.json"
 
 [tool.hatch.build.targets.sdist]
 include = ["src/clossify", "agents", "data", "config.example.json", "README.md", "LICENSE.md", "pyproject.toml"]
