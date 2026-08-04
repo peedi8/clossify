@@ -618,10 +618,10 @@ def upload_images(paths: list[str]) -> dict[str, Any]:
 def register_product(
     name: str,
     price: int,
-    image_urls: list[str],
-    category_id: str,
-    detail_html: str,
     *,
+    image_urls: list[str] | None = None,
+    category_id: str,
+    detail_html: str | None = None,
     options: list[dict[str, Any]] | None = None,
     tags: list[str] | None = None,
     status: str = "SALE",
@@ -636,13 +636,24 @@ def register_product(
     페이로드 빌딩·고시 정보 자동 완성·판매자태그 제한어 자동 제거 등의 복잡도는
     naver_client 가 처리한다.
 
+    ``image_urls`` 와 ``detail_html`` 은 생략 가능하다(기본값 ``None``). 둘 중
+    하나라도 비어 있으면, ``name``+``price`` 에서 product_key 를 유도해
+    prepared payload(``prepare_listing`` 이 저장한 결과)를 조회하고, **거기에
+    저장된 값으로 채운다**. 명시적으로 준 값이 항상 우선하며, prepared 가
+    덮어쓰지 않는다. 채운 뒤에도 기존 검증(원본 이미지 진입 게이트, prepared
+    QA 게이트)은 전부 그대로 통과해야 한다 — 이 경로가 검증을 우회하는 뒷문이
+    되면 안 된다. 둘 다 비어 있고 prepared payload 도 없으면 거부한다(무동작·
+    빈 등록 금지).
+
     Args:
         name: 상품명 (네이버 정책상 길이 제한이 있음, naver_client 가 50자 컷).
         price: 판매가 (KRW, 양의 정수).
-        image_urls: ``upload_images`` 가 반환한 CDN URL 리스트.
-            첫 번째 URL 이 대표 이미지가 된다.
         category_id: 네이버 상품 카테고리 트리의 리프 카테고리 ID.
-        detail_html: 상세페이지 HTML (``<html>``... 또는 조각 HTML).
+        image_urls: ``upload_images`` 가 반환한 CDN URL 리스트. 생략 시
+            prepared payload 의 정규화된 이미지 URL 사용. 첫 번째 URL 이
+            대표 이미지가 된다.
+        detail_html: 상세페이지 HTML (``<html>``... 또는 조각 HTML). 생략 시
+            prepared payload 의 상세 HTML 사용.
         options: 옵션 조합 목록. 각 원소는 ``{"name": str, "stock": int,
             "price": int}`` 또는 ``optionName1..3`` 형태. 단일 옵션 상품은
             생략 가능.
@@ -663,6 +674,8 @@ def register_product(
         - ``ok``: HTTP 상태가 2xx(성공)인지.
         - ``raw``: API 응답 본문 (에러 메시지 포함 가능).
         - ``seller_tags``: 제한어 자동 제거 메타가 있을 때만 존재.
+        - ``filled_from_prepared``: prepared payload 에서 채운 항목 리스트
+          (``"detail_html"``/``"image_urls"``). 직접 준 값은 포함되지 않는다.
 
     Note:
         환경변수 ``COMMERCE_DRY_RUN=1`` 시 실제 등록 없이 페이로드를
@@ -672,18 +685,71 @@ def register_product(
         return _fail("name 은 비어있지 않은 문자열이어야 합니다.")
     if not isinstance(price, int) or isinstance(price, bool) or price <= 0:
         return _fail("price 는 0보다 큰 정수(KRW)여야 합니다.")
+    if not isinstance(category_id, str) or not category_id.strip():
+        return _fail("category_id 는 비어있지 않은 문자열이어야 합니다.")
+    if status not in {"SALE", "SUSPENSION"}:
+        return _fail("status 는 'SALE' 또는 'SUSPENSION' 이어야 합니다.")
+
+    # ------------------------------------------------------------------ #
+    # prepared payload 로부터 image_urls / detail_html 채우기.
+    #
+    # 명시적으로 준 값이 항상 우선한다. prepared 가 덮어쓰지 않는다. 채운 뒤에도
+    # 아래 진입 게이트(원본 이미지 검사)와 prepared QA 게이트가 그대로 실행된다
+    # — 이 경로가 검증을 우회하는 뒷문이 되면 안 된다.
+    # ------------------------------------------------------------------ #
+    _need_images = image_urls is None
+    _need_detail = detail_html is None
+    filled_from_prepared: list[str] = []
+
+    if _need_images or _need_detail:
+        # name+price 에서 product_key 를 유도해 prepared payload 조회.
+        try:
+            _fill_pkey = _register_mod.make_product_key(name, int(price))
+        except Exception:
+            _fill_pkey = None
+        _fill_prepared: dict[str, Any] | None = None
+        if _fill_pkey:
+            try:
+                _fill_prepared = _register_mod.load_prepared_payload(product_key=_fill_pkey)
+            except FileNotFoundError:
+                _fill_prepared = None
+            except ValueError:
+                # version 불일치 등 — 조용히 무시하지 않고 None 으로 떨어진다.
+                _fill_prepared = None
+
+        if _fill_prepared is not None:
+            if _need_detail:
+                _prepared_html = _fill_prepared.get("detail_html")
+                if isinstance(_prepared_html, str) and _prepared_html.strip():
+                    detail_html = _prepared_html
+                    filled_from_prepared.append("detail_html")
+            if _need_images:
+                _images_block = (
+                    _fill_prepared.get("images")
+                    if isinstance(_fill_prepared.get("images"), dict)
+                    else {}
+                )
+                _prepared_urls = [
+                    str(u).strip()
+                    for u in (_images_block.get("listing_urls") or [])
+                    if isinstance(u, str) and u.strip()
+                ]
+                if _prepared_urls:
+                    image_urls = _prepared_urls
+                    filled_from_prepared.append("image_urls")
+
     # 진입 게이트: 단순 길이검사가 아니라 내용검사로 교체.
     # 빈 문자열·공백·None·비문자열 항목이 섞이면 거부한다 (조용한 필터링 금지).
+    # prepared 로 채운 값을 포함해 어떤 경로로든 여기를 통과해야 한다.
     try:
         naver_client._require_original_images(image_urls)
     except ValueError as exc:
-        return _fail(str(exc))
-    if not isinstance(category_id, str) or not category_id.strip():
-        return _fail("category_id 는 비어있지 않은 문자열이어야 합니다.")
+        return _fail(str(exc), filled_from_prepared=filled_from_prepared)
     if not isinstance(detail_html, str) or not detail_html.strip():
-        return _fail("detail_html 은 비어있지 않은 HTML 문자열이어야 합니다.")
-    if status not in {"SALE", "SUSPENSION"}:
-        return _fail("status 는 'SALE' 또는 'SUSPENSION' 이어야 합니다.")
+        return _fail(
+            "detail_html 은 비어있지 않은 HTML 문자열이어야 합니다.",
+            filled_from_prepared=filled_from_prepared,
+        )
 
     # Fix 5 — 상품명 50자 정책 컷. naver_client 도 내부에서 자르지만,
     # 호출자에게 truncation 여부를 명시적으로 알리기 위해 여기서도 자르고 플래그 노출.
@@ -709,7 +775,10 @@ def register_product(
     try:
         payload = naver_client.build_payload(product, detail_html, image_urls, status=status)
     except Exception as exc:  # Fix 7 — sanitized
-        return _fail(f"등록 중 오류(페이로드 빌드): {_sanitize_error(exc)}")
+        return _fail(
+            f"등록 중 오류(페이로드 빌드): {_sanitize_error(exc)}",
+            filled_from_prepared=filled_from_prepared,
+        )
 
     # 결정론 컴플라이언스 게이트 (fail-closed).
     # 네이버 API 호출 직전에 고시 필수 필드/KC/원산지 검사를 실행한다.
@@ -737,7 +806,11 @@ def register_product(
             gate = _run_compliance_gate(name, category_id, payload)
         except Exception as exc:
             # 검사 자체가 예외로 실패하면 fail-closed: 등록을 차단한다.
-            return _fail(f"컴플라이언스 검사 중 오류(등록 차단): {_sanitize_error(exc)}")
+            return _fail(
+                f"컴플라이언스 검사 중 오류(등록 차단): {_sanitize_error(exc)}",
+                name_truncated=name_truncated,
+                filled_from_prepared=filled_from_prepared,
+            )
 
     if gate["blocked"]:
         violations = gate["violations"]
@@ -760,6 +833,7 @@ def register_product(
             "blocked_by": "compliance",
             "violations": violations,
             "needs_user": needs_user,
+            "filled_from_prepared": filled_from_prepared,
             "message": "\n".join(message_lines),
             "error": None,
         }
@@ -804,6 +878,7 @@ def register_product(
                         "reason": _reason,
                         "needs_llm": _prepared.get("needs_llm") or [],
                         "needs_user": _prepared.get("needs_user") or [],
+                        "filled_from_prepared": filled_from_prepared,
                         "message": (
                             "prepared payload 의 QA 게이트가 등록을 차단했다 "
                             f"(reason={_reason}). submit_reviews 로 PENDING 을 "
@@ -817,7 +892,11 @@ def register_product(
     try:
         outcome = naver_client.register_product(payload)
     except Exception as exc:  # Fix 7 — sanitized
-        return _fail(f"등록 중 오류: {_sanitize_error(exc)}")
+        return _fail(
+            f"등록 중 오류: {_sanitize_error(exc)}",
+            name_truncated=name_truncated,
+            filled_from_prepared=filled_from_prepared,
+        )
 
     # register_product 는 (status_code, body) 튜플을 반환하지만, DRY_RUN 시 dict.
     if isinstance(outcome, dict):
@@ -830,6 +909,7 @@ def register_product(
             "seller_tags": None,
             "gate": gate_label,
             "pending_reviews": gate["pending_reviews"],
+            "filled_from_prepared": filled_from_prepared,
             "error": None,
         }
 
@@ -856,6 +936,7 @@ def register_product(
         "seller_tags": seller_tags_meta,
         "gate": gate_label,
         "pending_reviews": gate["pending_reviews"],
+        "filled_from_prepared": filled_from_prepared,
         "error": None if ok else _sanitize_text(f"API 반환 상태 {status_code}"),
     }
 
@@ -955,12 +1036,22 @@ def prepare_listing(product: dict[str, Any]) -> dict[str, Any]:
             "qa": {},
             "error": f"prepare_listing 중 오류: {_sanitize_error(exc)}",
         }
+    # 정규화된 네이버 CDN URL 리스트를 images 키로 노출한다.
+    # 상세 HTML 전문은 반환에 싣지 않는다(컨텍스트 비용·변형 위험).
+    # 클라이언트는 images 를 보고 무엇이 올라갔는지 확인할 수 있다.
+    _images_block = payload.get("images") if isinstance(payload.get("images"), dict) else {}
+    _listing_urls = [
+        str(u).strip()
+        for u in (_images_block.get("listing_urls") or [])
+        if isinstance(u, str) and u.strip()
+    ]
     return {
         "ok": True,
         "product_key": payload.get("product_key"),
         "needs_llm": payload.get("needs_llm") or [],
         "needs_user": payload.get("needs_user") or [],
         "qa": payload.get("qa") or {},
+        "images": _listing_urls,
         "error": None,
     }
 
@@ -1032,14 +1123,20 @@ def submit_reviews(product_key: str, reviews: list[dict[str, Any]]) -> dict[str,
     }
 
 
-def _fail(message: str) -> dict[str, Any]:
+def _fail(
+    message: str,
+    *,
+    name_truncated: bool = False,
+    filled_from_prepared: list[str] | None = None,
+) -> dict[str, Any]:
     return {
         "ok": False,
         "status_code": None,
         "origin_product_no": None,
-        "name_truncated": False,  # Fix 5 — validation-fail 시 기본값
+        "name_truncated": name_truncated,  # Fix 5 — validation-fail 시 기본값
         "raw": None,
         "seller_tags": None,
+        "filled_from_prepared": filled_from_prepared if filled_from_prepared is not None else [],
         "error": message,
     }
 
