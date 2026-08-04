@@ -213,6 +213,7 @@ class TestStatusCorrectionHappens:
             detail_html="<html></html>",
             status="SUSPENSION",
             notice=_ETC_NOTICE_BODY,
+            preview_confirmed=True,
         )
 
         # 보정(update_product) 과 재확인(get_product) 이 각각 1회.
@@ -250,6 +251,7 @@ class TestStatusCorrectionHappens:
             detail_html="<html></html>",
             status="SUSPENSION",
             notice=_ETC_NOTICE_BODY,
+            preview_confirmed=True,
         )
         assert result.get("status_corrected") is True
         assert result.get("status_correction_attempted") is True
@@ -279,6 +281,7 @@ class TestStillMismatchReportsFailure:
             detail_html="<html></html>",
             status="SUSPENSION",
             notice=_ETC_NOTICE_BODY,
+            preview_confirmed=True,
         )
 
         assert (
@@ -309,6 +312,7 @@ class TestStillMismatchReportsFailure:
             detail_html="<html></html>",
             status="SUSPENSION",
             notice=_ETC_NOTICE_BODY,
+            preview_confirmed=True,
         )
         assert "requested_status" in result
         assert "applied_status" in result
@@ -342,6 +346,7 @@ class TestNoExtraCallWhenAlreadyMatching:
             detail_html="<html></html>",
             status="SALE",
             notice=_ETC_NOTICE_BODY,
+            preview_confirmed=True,
         )
 
         assert (

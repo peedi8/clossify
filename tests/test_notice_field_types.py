@@ -173,6 +173,7 @@ def _register_kitchen(*, product_notice, monkeypatch, isolated_prepared_dir):
             category_id="50004528",
             detail_html="<html><body>detail</body></html>",
             notice=product_notice,
+            preview_confirmed=True,
         )
     finally:
         for p in patches:
@@ -415,6 +416,7 @@ class TestNeedsUserBooleanAnswerShape:
                 category_id="50004528",
                 detail_html="<html><body>detail</body></html>",
                 notice=notice,
+                preview_confirmed=True,
             )
         finally:
             for p in patches:

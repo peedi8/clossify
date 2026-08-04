@@ -110,6 +110,23 @@ GENERIC_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         "internal_ticket_id",
         re.compile(r"(?<![\w])([A-Z])-(\d{2,4})(?!\d)"),
     ),
+    # - 내부 작업 식별자 (FIX-<letter>): ``FIX-`` 대문자 접두사 + 하이픈 +
+    #   단일 알파벳. 앞에 낱말 문자가 없어야 하고, 뒤에 낱말 문자가 바로
+    #   오지 않아야 한다(``FIX-able`` 같은 일반 영단어는 잡지 않는다 —
+    #   하이픈 뒤가 단일 문자로 끝나는 경우만 매칭).
+    #   ``FIX-a``, ``FIX-B`` 형태의 내부 식별자를 잡는다.
+    (
+        "internal_fix_id",
+        re.compile(r"(?<![\w])FIX-([A-Za-z])(?![\w])"),
+    ),
+    # - 내부 작업 식별자 (FEAT-<word>): ``FEAT-`` 대문자 접두사 + 하이픈 +
+    #   2개 이상의 알파벳으로 이루어진 낱말. 앞에 낱말 문자가 없어야 한다.
+    #   일반 영단어(``feat-`` 소문자)는 대소문자 구분으로 제외된다.
+    #   ``FEAT-preview``, ``FEAT-gate`` 형태의 내부 식별자를 잡는다.
+    (
+        "internal_feat_id",
+        re.compile(r"(?<![\w])FEAT-([A-Za-z]{2,})(?![\w])"),
+    ),
 ]
 
 # tests/ 의 마스킹/검출 검증용 가짜 값 허용목록 — (파일경로 regex, 패턴명).
@@ -138,6 +155,8 @@ _SELF_SKIP_GENERIC_NAMES = frozenset(
     {
         "windows_abs_path",
         "internal_ticket_id",
+        "internal_fix_id",
+        "internal_feat_id",
     }
 )
 # 커밋 메시지 형식 검사 — 특정 도구명이 아닌 **형태**로 검사.

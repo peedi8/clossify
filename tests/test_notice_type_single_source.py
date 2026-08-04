@@ -198,6 +198,7 @@ class TestNoticeTypeTripwire:
                 category_id=_FURNITURE_CATEGORY,
                 image_urls=["http://x/img.png"],
                 detail_html="<html></html>",
+                preview_confirmed=True,
             )
 
         assert result["ok"] is False, "타입 불일치임에도 성공으로 보고하면 안 된다"

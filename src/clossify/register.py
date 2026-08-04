@@ -1232,6 +1232,10 @@ def prepare_listing(d, *, attach_fn=None):
     # 예외 처리: 빌더는 필수 설정(원산지 등)이 없으면 예외를 던진다. 준비 단계의
     # 역할은 "무엇이 부족한지 알려주는 것" 이므로, 예외를 컴플라이언스 위반 +
     # needs_user 요청으로 번역한다 (예외가 그대로 터지면 정상 흐름이 막힌다).
+    # 미리보기가 등록 단계와 같은 고시 값을 보여주려면 임시 페이로드가
+    # 필요하다. 컴플라이언스 검사 경로에서 만들어지지만, 예외 시에는
+    # None 로 떨어뜨린다 — 미리보기는 있으면 좋고 없어도 준비는 산다.
+    tentative_payload = None
     try:
         tentative_payload = _build_tentative_register_payload(
             d, name, category_id, listing_urls, detail_html
@@ -1348,6 +1352,31 @@ def prepare_listing(d, *, attach_fn=None):
     if overwrite_warning is not None:
         payload["overwrite_warning"] = overwrite_warning
     write_prepared_payload(payload)
+
+    # --- 7. 미리보기 HTML 파일 생성 ---
+    # prepared payload 와 같은 디렉터리에 preview.html 을 쓴다. 외부 리소스를
+    # 참조하지 않는 단일 HTML 이며, 브라우저로 열어 판매자가 직접 눈으로
+    # 확인하는 용도다. 미리보기 생성이 실패해도 준비 자체는 죽지 않는다 —
+    # 그 사실은 payload 의 preview_path(None) 로 드러난다.
+    preview_path: str | None = None
+    try:
+        from . import preview as _preview_mod
+
+        preview_file = _preview_mod.write_preview_html(
+            product_key,
+            payload,
+            api_payload=tentative_payload,
+        )
+        preview_path = str(preview_file)
+    except Exception:
+        preview_path = None
+    payload["preview_path"] = preview_path
+    # preview_path 를 payload 에 기록하기 위해 다시 쓴다. 쓰기 실패는
+    # 준비 자체를 망가뜨리지 않는다(이미 한 번 썼다).
+    try:
+        write_prepared_payload(payload)
+    except Exception:
+        pass
     return payload
 
 

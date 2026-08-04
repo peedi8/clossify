@@ -296,6 +296,7 @@ def test_e_51char_name_fail_prepared_blocks_at_qa_gate(isolated_prepared_dir, mo
         price=price,
         category_id=_CLOTHING_CATEGORY,
         # image_urls 와 detail_html 을 생략 → 자동 채움이 prepared 에서 가져온다.
+        preview_confirmed=True,
     )
 
     assert (
@@ -369,6 +370,7 @@ def test_f_short_name_fail_prepared_also_blocks(isolated_prepared_dir, monkeypat
         name=short_name,
         price=price,
         category_id=_CLOTHING_CATEGORY,
+        preview_confirmed=True,
     )
 
     assert len(naver_calls) == 0
@@ -454,6 +456,7 @@ def test_g_single_key_for_autofill_and_gate_51char(isolated_prepared_dir, monkey
         name=long_name,
         price=price,
         category_id=_CLOTHING_CATEGORY,
+        preview_confirmed=True,
     )
 
     # 자동 채움이 찾은 prepared 의 detail_html 가 채워졌는지 확인 (autofill hit).

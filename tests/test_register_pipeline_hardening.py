@@ -133,6 +133,7 @@ class TestFix5NameTruncation:
                         category_id="50021299",
                         detail_html="<html></html>",
                         notice=_wear_notice,
+                        preview_confirmed=True,
                     )
         assert result["ok"] is True
         assert result.get("name_truncated") is True
@@ -179,6 +180,7 @@ class TestFix5NameTruncation:
                         category_id="50021299",
                         detail_html="<html></html>",
                         notice=_wear_notice,
+                        preview_confirmed=True,
                     )
         assert result["ok"] is True
         assert result.get("name_truncated") is False
@@ -507,6 +509,7 @@ class TestOptionStockFailClosed:
             category_id="50002366",
             detail_html="<html></html>",
             options=[{"name": "블랙", "price": 0}],  # stock 누락
+            preview_confirmed=True,
         )
         assert result["ok"] is False
         assert "error" in result

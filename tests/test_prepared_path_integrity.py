@@ -163,6 +163,7 @@ def test_a_mcp_rejects_mixed_valid_invalid_prepared_images(isolated_prepared_dir
         price=price,
         category_id=_CLOTHING_CATEGORY,
         # image_urls 생략 → prepared 에서 자동 채움.
+        preview_confirmed=True,
     )
 
     assert result["ok"] is False, "무효 혼합 이미지가 거부되어야 한다"
@@ -226,6 +227,7 @@ def test_b_mcp_rejection_reason_mentions_prepared_images(isolated_prepared_dir, 
         name=name,
         price=price,
         category_id=_CLOTHING_CATEGORY,
+        preview_confirmed=True,
     )
 
     assert result["ok"] is False
@@ -261,6 +263,7 @@ def test_c_valid_prepared_images_proceed_normally(isolated_prepared_dir, monkeyp
         name=name,
         price=price,
         category_id=_CLOTHING_CATEGORY,
+        preview_confirmed=True,
     )
 
     assert result["ok"] is True, f"전부 유효한 prepared 이미지인데 거부되었다: {result}"
@@ -320,6 +323,7 @@ def test_d_explicit_product_key_selects_correct_prepared(isolated_prepared_dir, 
         price=shared_price,
         category_id=_CLOTHING_CATEGORY,
         product_key=pkey_b,
+        preview_confirmed=True,
     )
 
     assert result["ok"] is True, f"명시 product_key 등록이 실패했다: {result}"
@@ -367,6 +371,7 @@ def test_e_no_explicit_key_backward_compatible(isolated_prepared_dir, monkeypatc
         price=price,
         category_id=_CLOTHING_CATEGORY,
         # product_key 생략 — 하위호환 경로.
+        preview_confirmed=True,
     )
 
     assert result["ok"] is True, f"하위호환 경로가 실패했다: {result}"
@@ -402,6 +407,7 @@ def test_f_derived_key_surfaces_prepared_lookup(isolated_prepared_dir, monkeypat
         price=price,
         category_id=_CLOTHING_CATEGORY,
         # product_key 생략 → 유도 키 사용.
+        preview_confirmed=True,
     )
 
     assert result["ok"] is True, f"유도 키 경로 등록이 실패했다: {result}"

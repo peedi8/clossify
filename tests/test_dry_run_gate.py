@@ -177,6 +177,7 @@ class TestDryRunGateBlocksWhenRealPathBlocks:
             category_id="50021299",
             image_urls=["http://cdn/x.png"],
             detail_html="<html></html>",
+            preview_confirmed=True,
         )
         # 게이트가 dry-run 에서도 차단해야 한다.
         assert (
@@ -214,6 +215,7 @@ class TestDryRunMarkerOnAllReturnPaths:
             category_id="50021299",
             image_urls=["http://cdn/x.png"],
             detail_html="<html></html>",
+            preview_confirmed=True,
         )
         assert result["ok"] is True
         assert result.get("dry_run") is True, "성공 경로에 dry_run: true 없음"
@@ -234,6 +236,7 @@ class TestDryRunMarkerOnAllReturnPaths:
             category_id="50021299",
             image_urls=["http://cdn/x.png"],
             detail_html="<html></html>",
+            preview_confirmed=True,
         )
         assert result["ok"] is False
         assert result.get("blocked_by") == "compliance"
@@ -248,6 +251,7 @@ class TestDryRunMarkerOnAllReturnPaths:
             category_id="50021299",
             image_urls=["http://cdn/x.png"],
             detail_html="<html></html>",
+            preview_confirmed=True,
         )
         assert result["ok"] is False
         assert result.get("dry_run") is True, "초기 검증 실패에 dry_run: true 없음"
@@ -268,6 +272,7 @@ class TestDryRunMarkerOnAllReturnPaths:
             category_id="50021299",
             image_urls=["http://cdn/x.png"],
             detail_html="<html></html>",
+            preview_confirmed=True,
         )
         assert result["ok"] is False
         assert result.get("dry_run") is True, "빌드 실패 경로에 dry_run: true 없음"
@@ -306,6 +311,7 @@ class TestDryRunMarkerFalseWhenUnset:
             category_id="50021299",
             image_urls=["http://cdn/x.png"],
             detail_html="<html></html>",
+            preview_confirmed=True,
         )
         assert result["ok"] is True
         assert result.get("dry_run") is False, "DRY_RUN 꺼짐인데 dry_run: false 없음"
@@ -325,6 +331,7 @@ class TestDryRunMarkerFalseWhenUnset:
                 category_id="50021299",
                 image_urls=["http://cdn/x.png"],
                 detail_html="<html></html>",
+                preview_confirmed=True,
             )
         finally:
             if old is not None:
@@ -395,6 +402,7 @@ class TestDryRunPreparedQaGate:
             category_id="50021299",
             image_urls=["http://cdn/explicit.png"],
             detail_html="<html>explicit</html>",
+            preview_confirmed=True,
         )
         # PENDING prepared 는 DRY_RUN 에서도 차단되어야 한다.
         assert result["ok"] is False, (

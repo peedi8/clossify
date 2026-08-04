@@ -436,6 +436,7 @@ class TestBypassBlocking:
             image_urls=["http://x.png"],
             category_id="50002366",
             detail_html="<html></html>",
+            preview_confirmed=True,
         )
         assert result["ok"] is False
         # 네이버 API 가 호출되지 않아야 한다.
@@ -510,6 +511,7 @@ class TestBypassBlocking:
                         category_id="50021299",
                         detail_html="<html></html>",
                         notice=notice_override,
+                        preview_confirmed=True,
                     )
         assert result.get("gate") == "deterministic_only"
 

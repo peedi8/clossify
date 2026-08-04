@@ -164,6 +164,7 @@ class TestMcpRegisterRejectsInvalidImages:
                             category_id=_CLOTHING_CATEGORY,
                             detail_html="<html><body>상세</body></html>",
                             notice=_WEAR_NOTICE_COMPLETE,
+                            preview_confirmed=True,
                         )
 
         # ok=False 여야 함.
@@ -205,6 +206,7 @@ class TestMcpRegisterRejectsInvalidImages:
                             category_id=_CLOTHING_CATEGORY,
                             detail_html="<html><body>상세</body></html>",
                             notice=_WEAR_NOTICE_COMPLETE,
+                            preview_confirmed=True,
                         )
 
         error_text = str(result.get("error") or "")
@@ -332,6 +334,7 @@ class TestMixedInputRejected:
                             category_id=_CLOTHING_CATEGORY,
                             detail_html="<html><body>상세</body></html>",
                             notice=_WEAR_NOTICE_COMPLETE,
+                            preview_confirmed=True,
                         )
         assert result["ok"] is False
         assert len(naver_calls) == 0, "혼합 입력 시 네이버 API 호출 금지"
@@ -378,6 +381,7 @@ class TestValidImagePassesImageGate:
                             category_id=_CLOTHING_CATEGORY,
                             detail_html="<html><body>상세</body></html>",
                             notice=_WEAR_NOTICE_COMPLETE,
+                            preview_confirmed=True,
                         )
         # 통과해야 함.
         assert result["ok"] is True, f"유효 이미지 1장 + 고시 완비 시 통과해야 함: {result}"
@@ -422,6 +426,7 @@ class TestValidImagePassesImageGate:
                             category_id=_CLOTHING_CATEGORY,
                             detail_html="<html><body>상세</body></html>",
                             notice=_WEAR_NOTICE_COMPLETE,
+                            preview_confirmed=True,
                         )
         assert result["ok"] is True, f"유효 이미지 3장 시 통과해야 함: {result}"
         assert len(naver_calls) == 1

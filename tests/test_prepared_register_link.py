@@ -276,6 +276,7 @@ class TestFillDetailHtmlFromPrepared:
             price=price,
             category_id="50021299",
             image_urls=["http://cdn/explicit.png"],
+            preview_confirmed=True,
         )
         assert result["ok"] is True, f"등록 실패: {result}"
         assert len(captured) == 1, f"build_payload 호출 횟수: {len(captured)}"
@@ -335,6 +336,7 @@ class TestFillImageUrlsFromPrepared:
             price=price,
             category_id="50021299",
             detail_html="<html><body>explicit</body></html>",
+            preview_confirmed=True,
         )
         assert result["ok"] is True, f"등록 실패: {result}"
         assert len(captured) == 1
@@ -389,6 +391,7 @@ class TestExplicitValueWins:
             category_id="50021299",
             image_urls=["http://cdn/explicit.png"],
             detail_html=explicit_html,
+            preview_confirmed=True,
         )
         assert result["ok"] is True
         assert (
@@ -430,6 +433,7 @@ class TestExplicitValueWins:
             category_id="50021299",
             image_urls=explicit_urls,
             detail_html="<html>explicit</html>",
+            preview_confirmed=True,
         )
         assert result["ok"] is True
         assert (
@@ -475,6 +479,7 @@ class TestNoBackdoorEmptyPreparedImages:
             price=price,
             category_id="50021299",
             detail_html="<html>explicit</html>",
+            preview_confirmed=True,
         )
         assert result["ok"] is False, f"빈 이미지인데 통과함: {result}"
         # 네이버 API 가 호출되지 않아야 한다.
@@ -508,6 +513,7 @@ class TestRejectWhenNoInputsAndNoPrepared:
             name=name,
             price=price,
             category_id="50021299",
+            preview_confirmed=True,
         )
         assert result["ok"] is False, f"입력도 prepared 도 없는데 통과함: {result}"
         assert (
@@ -551,6 +557,7 @@ class TestFilledFromPreparedReporting:
             name=name,
             price=price,
             category_id="50021299",
+            preview_confirmed=True,
         )
         assert result["ok"] is True
         filled = result.get("filled_from_prepared", [])
@@ -586,6 +593,7 @@ class TestFilledFromPreparedReporting:
             category_id="50021299",
             image_urls=["http://cdn/explicit.png"],
             detail_html="<html>explicit</html>",
+            preview_confirmed=True,
         )
         assert result["ok"] is True
         filled = result.get("filled_from_prepared", [])
@@ -621,6 +629,7 @@ class TestFilledFromPreparedReporting:
             category_id="50021299",
             image_urls=["http://cdn/explicit.png"],
             # detail_html 생략
+            preview_confirmed=True,
         )
         assert result["ok"] is True
         filled = result.get("filled_from_prepared", [])

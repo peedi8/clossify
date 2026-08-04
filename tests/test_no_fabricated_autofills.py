@@ -241,6 +241,7 @@ class TestComplianceFailOnMinimumInput:
                             image_urls=["http://cdn/x.png"],
                             category_id=_CLOTHING_CATEGORY,
                             detail_html="<html><body>상세</body></html>",
+                            preview_confirmed=True,
                         )
         assert result["ok"] is False, "최소 입력인데 등록이 허용됨"
         assert (

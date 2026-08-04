@@ -160,6 +160,7 @@ class TestRecordFileCreated:
             detail_html="<html></html>",
             status="SALE",
             notice=_ETC_NOTICE_BODY,
+            preview_confirmed=True,
         )
 
         assert result["ok"] is True
@@ -195,6 +196,7 @@ class TestChannelNoKeyAlwaysPresent:
             detail_html="<html></html>",
             status="SALE",
             notice=_ETC_NOTICE_BODY,
+            preview_confirmed=True,
         )
         assert "channel_product_no" in result
         assert result["channel_product_no"] == "CH-B1"
@@ -208,6 +210,7 @@ class TestChannelNoKeyAlwaysPresent:
             category_id=_GENERAL_CATEGORY,
             image_urls=["http://x/img.png"],
             detail_html="<html></html>",
+            preview_confirmed=True,
         )
         assert "channel_product_no" in result
         assert result["channel_product_no"] is None
@@ -230,6 +233,7 @@ class TestChannelNoKeyAlwaysPresent:
             detail_html="<html></html>",
             status="SALE",
             notice=_ETC_NOTICE_BODY,
+            preview_confirmed=True,
         )
         assert "channel_product_no" in result
         assert result["channel_product_no"] is None
@@ -259,6 +263,7 @@ class TestMissingChannelNoSurfaced:
             detail_html="<html></html>",
             status="SALE",
             notice=_ETC_NOTICE_BODY,
+            preview_confirmed=True,
         )
 
         # 등록 자체는 성공(SALE=SALE 이므로 보정 없음).
@@ -300,6 +305,7 @@ class TestStatusCorrectionUsesChannelNo:
             detail_html="<html></html>",
             status="SUSPENSION",
             notice=_ETC_NOTICE_BODY,
+            preview_confirmed=True,
         )
 
         # 보정이 채널번호로 일어난다.
@@ -338,6 +344,7 @@ class TestStillMismatchReportsFailure:
             detail_html="<html></html>",
             status="SUSPENSION",
             notice=_ETC_NOTICE_BODY,
+            preview_confirmed=True,
         )
 
         assert (
@@ -375,6 +382,7 @@ class TestNoExtraCallWhenAlreadyMatching:
             detail_html="<html></html>",
             status="SALE",
             notice=_ETC_NOTICE_BODY,
+            preview_confirmed=True,
         )
 
         assert (
@@ -410,6 +418,7 @@ class TestReadRecordByKey:
             detail_html="<html></html>",
             status="SALE",
             notice=_ETC_NOTICE_BODY,
+            preview_confirmed=True,
         )
         assert result["ok"] is True
 
@@ -444,6 +453,7 @@ class TestReadRecordByKey:
             detail_html="<html></html>",
             status="SALE",
             notice=_ETC_NOTICE_BODY,
+            preview_confirmed=True,
         )
         assert result["ok"] is True
 
@@ -474,6 +484,7 @@ class TestNoRecordOnFailure:
             detail_html="<html></html>",
             status="SALE",
             notice=_ETC_NOTICE_BODY,
+            preview_confirmed=True,
         )
 
         assert result["ok"] is False
@@ -535,6 +546,7 @@ class TestRealObservedSmartstoreKey:
             detail_html="<html></html>",
             status="SALE",
             notice=_ETC_NOTICE_BODY,
+            preview_confirmed=True,
         )
 
         assert result["ok"] is True

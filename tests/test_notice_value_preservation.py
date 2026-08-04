@@ -366,6 +366,7 @@ class TestRegisterProductE2E:
                             category_id=_CLOTHING_CATEGORY,
                             detail_html="<html><body>상세</body></html>",
                             notice=notice_override,
+                            preview_confirmed=True,
                         )
         assert result["ok"] is True, f"등록 실패(컴플라이언스 차단?): {result}"
         assert (
@@ -424,6 +425,7 @@ class TestRegisterProductE2E:
                                 category_id=_CLOTHING_CATEGORY,
                                 detail_html="<html><body>상세</body></html>",
                                 notice=notice_override,
+                                preview_confirmed=True,
                             )
         assert result["ok"] is True, f"DRY_RUN 등록 실패: {result}"
         notice = (
@@ -471,6 +473,7 @@ class TestRegisterProductE2E:
                             category_id=_CLOTHING_CATEGORY,
                             detail_html="<html><body>상세</body></html>",
                             notice=notice_override,
+                            preview_confirmed=True,
                         )
         # (2) 컴플라이언스 FAIL 차단.
         assert result["ok"] is False, "placeholder 값이 게이트를 통과해선 안 됨"
@@ -533,6 +536,7 @@ class TestRegisterProductE2E:
                         category_id=_CLOTHING_CATEGORY,
                         detail_html="<html><body>상세</body></html>",
                         notice=notice_override,
+                        preview_confirmed=True,
                     )
         # 빈 문자열은 누락 → 컴플라이언스 차단.
         assert result["ok"] is False

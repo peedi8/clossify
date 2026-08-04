@@ -133,6 +133,7 @@ def _register_with_dry_run_off(*, notice_cfg=None, product_notice=None, monkeypa
             category_id="50002366",
             detail_html="<html><body>detail</body></html>",
             notice=product_notice,
+            preview_confirmed=True,
         )
     finally:
         for p in patches:
@@ -178,6 +179,7 @@ def _register_blocked(monkeypatch, *, notice_cfg=None, product_notice=None):
             category_id="50002366",
             detail_html="<html><body>detail</body></html>",
             notice=product_notice,
+            preview_confirmed=True,
         )
     finally:
         for p in patches:
@@ -239,6 +241,7 @@ class TestNoticeFilledFromConfigInAllReturns:
                         image_urls=["http://x.png"],
                         category_id="50002366",
                         detail_html="<html></html>",
+                        preview_confirmed=True,
                     )
         assert result["ok"] is False
         assert "notice_filled_from_config" in result
@@ -252,6 +255,7 @@ class TestNoticeFilledFromConfigInAllReturns:
             image_urls=["http://x.png"],
             category_id="50002366",
             detail_html="<html></html>",
+            preview_confirmed=True,
         )
         assert result["ok"] is False
         assert "notice_filled_from_config" in result
@@ -283,6 +287,7 @@ class TestNoticeFilledFromConfigInAllReturns:
                             image_urls=["http://x.png"],
                             category_id="50002366",
                             detail_html="<html></html>",
+                            preview_confirmed=True,
                         )
         assert result["ok"] is False
         assert "notice_filled_from_config" in result
@@ -340,6 +345,7 @@ class TestNoInternalMetaOnTheWire:
                                 image_urls=["http://x.png"],
                                 category_id="50002366",
                                 detail_html="<html></html>",
+                                preview_confirmed=True,
                             )
         assert result["ok"] is True
         assert captured["calls"] == 1
@@ -384,6 +390,7 @@ class TestNoInternalMetaOnTheWire:
                         image_urls=["http://x.png"],
                         category_id="50002366",
                         detail_html="<html></html>",
+                        preview_confirmed=True,
                     )
         assert result["ok"] is True
         assert result.get("dry_run") is True
@@ -507,6 +514,7 @@ class TestPlaceholderDetectionExtended:
                         category_id="50002366",
                         detail_html="<html></html>",
                         notice=placeholder_notice,
+                        preview_confirmed=True,
                     )
         # 컴플라이언스 게이트가 placeholder 를 미제공으로 보고 차단해야 한다.
         # 단, ETC 타입은 위 5필드가 required 가 아닐 수 있다. 따라서
@@ -566,6 +574,7 @@ class TestPlaceholderDetectionExtended:
                             category_id="50002366",
                             detail_html="<html></html>",
                             notice=placeholder_notice,
+                            preview_confirmed=True,
                         )
         assert (
             result["ok"] is False
@@ -635,6 +644,7 @@ class TestSeparatorLiteralPlaceholderVariants:
                             category_id="50002366",
                             detail_html="<html></html>",
                             notice=tbd_notice,
+                            preview_confirmed=True,
                         )
         assert result["ok"] is False, (
             f'"T.B.D" 가 유효 규제값으로 통과함: {result.get("blocked_by")} / '

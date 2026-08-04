@@ -94,6 +94,7 @@ class TestBlockClothingMissingFields:
                         image_urls=["http://cdn/x.png"],
                         category_id=_CLOTHING_CATEGORY,
                         detail_html="<html><body>상세</body></html>",
+                        preview_confirmed=True,
                     )
 
         # 등록이 거부되어야 한다.
@@ -115,6 +116,7 @@ class TestBlockClothingMissingFields:
                         image_urls=["http://cdn/x.png"],
                         category_id=_CLOTHING_CATEGORY,
                         detail_html="<html><body>상세</body></html>",
+                        preview_confirmed=True,
                     )
 
         assert result["ok"] is False
@@ -138,6 +140,7 @@ class TestBlockClothingMissingFields:
                         image_urls=["http://cdn/x.png"],
                         category_id=_CLOTHING_CATEGORY,
                         detail_html="<html><body>상세</body></html>",
+                        preview_confirmed=True,
                     )
 
         needs_user = result.get("needs_user")
@@ -165,6 +168,7 @@ class TestBlockClothingMissingFields:
                         image_urls=["http://cdn/x.png"],
                         category_id=_CLOTHING_CATEGORY,
                         detail_html="<html><body>상세</body></html>",
+                        preview_confirmed=True,
                     )
 
         message = result.get("message")
@@ -198,6 +202,7 @@ class TestBlockKcMissing:
                         image_urls=["http://cdn/x.png"],
                         category_id=_KC_CATEGORY,
                         detail_html="<html><body>상세</body></html>",
+                        preview_confirmed=True,
                     )
 
         assert result["ok"] is False
@@ -217,6 +222,7 @@ class TestBlockKcMissing:
                         image_urls=["http://cdn/x.png"],
                         category_id=_KC_CATEGORY,
                         detail_html="<html><body>상세</body></html>",
+                        preview_confirmed=True,
                     )
 
         violations = result.get("violations", [])
@@ -281,6 +287,7 @@ class TestPassClothingComplete:
                             category_id=_CLOTHING_CATEGORY,
                             detail_html="<html><body>상세</body></html>",
                             notice=notice_override,
+                            preview_confirmed=True,
                         )
 
         assert result["ok"] is True, f"등록 실패: {result}"
@@ -328,6 +335,7 @@ class TestPassClothingComplete:
                             category_id=_CLOTHING_CATEGORY,
                             detail_html="<html><body>상세</body></html>",
                             notice=notice_override,
+                            preview_confirmed=True,
                         )
 
         pending = result.get("pending_reviews")
@@ -365,6 +373,7 @@ class TestPassClothingComplete:
                         category_id=_CLOTHING_CATEGORY,
                         detail_html="<html><body>상세</body></html>",
                         notice=notice_override,
+                        preview_confirmed=True,
                     )
 
         # 통과 시 needs_user 가 없거나 빈 리스트.
@@ -425,6 +434,7 @@ class TestLlmPendingNotBlocked:
                             category_id=_CLOTHING_CATEGORY,
                             detail_html="<html><body>상세</body></html>",
                             notice=notice_override,
+                            preview_confirmed=True,
                         )
 
         # LLM 미회신만 있는 경우 차단되지 않는다.
@@ -450,6 +460,7 @@ class TestLlmPendingNotBlocked:
                         image_urls=["http://cdn/x.png"],
                         category_id=_CLOTHING_CATEGORY,
                         detail_html="<html><body>상세</body></html>",
+                        preview_confirmed=True,
                     )
 
         assert result["ok"] is False
@@ -603,7 +614,11 @@ class TestToolRegistrationPreserved:
         assert names == expected, f"도구 이름 불일치: {names}"
 
     def test_register_product_signature_unchanged(self):
-        """register_product 의 파라미터 이름/타입이 유지되는가."""
+        """register_product 의 파라미터 이름/타입이 유지되는가.
+
+        preview_confirmed 는 미리보기 승인 게이트를 위해 추가된 키워드 전용
+        인자다. 기존 파라미터 순서는 변경되지 않았고, 새 인자가 끝에 추가되었다.
+        """
         import inspect
 
         sig = inspect.signature(mcp_server.register_product)
@@ -622,6 +637,7 @@ class TestToolRegistrationPreserved:
             "delivery_fee",
             "courier",
             "notice",
+            "preview_confirmed",
         ]
         assert param_names == expected, f"시그니처 변경 감지: {param_names}"
 
@@ -655,6 +671,7 @@ class TestFailClosed:
                             image_urls=["http://cdn/x.png"],
                             category_id=_CLOTHING_CATEGORY,
                             detail_html="<html><body>상세</body></html>",
+                            preview_confirmed=True,
                         )
 
         # 예외를 삼키지 않고 fail-closed 차단.

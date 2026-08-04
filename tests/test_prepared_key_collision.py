@@ -304,6 +304,7 @@ def test_c_ambiguous_candidates_refused_without_naver_call(isolated_prepared_dir
         price=shared_price,
         category_id=_CLOTHING_CATEGORY,
         # product_key 생략 → 후보 2개 → 거부되어야 한다.
+        preview_confirmed=True,
     )
 
     assert result["ok"] is False, "후보가 2개인데 조용히 진행되었다 (조용한 선택)"
@@ -362,6 +363,7 @@ def test_d_explicit_key_sends_that_products_content(isolated_prepared_dir, monke
         price=shared_price,
         category_id=_KC_CATEGORY,
         product_key=key_b,
+        preview_confirmed=True,
     )
 
     assert result["ok"] is True, f"명시 키 등록이 실패했다: {result}"
@@ -419,6 +421,7 @@ def test_e_single_candidate_works_without_explicit_key(isolated_prepared_dir, mo
         name=name,
         price=price,
         category_id=_CLOTHING_CATEGORY,
+        preview_confirmed=True,
     )
 
     assert result["ok"] is True, f"단일 후보 하위호환이 실패했다: {result}"
@@ -471,6 +474,7 @@ def test_f_prepared_lookup_present_on_compliance_block(isolated_prepared_dir, mo
         name=name,
         price=price,
         category_id=_CLOTHING_CATEGORY,
+        preview_confirmed=True,
     )
 
     assert result["ok"] is False

@@ -201,6 +201,24 @@ def _resolve_upload_path(raw_path: str) -> str:
     return os.path.normpath(os.path.join(_resolve_upload_root(), raw_path))
 
 
+def _config_require_preview_confirmation() -> bool:
+    """config 의 ``require_preview_confirmation`` 설정을 읽는다.
+
+    기본값은 ``True`` (켬). 위험한 쪽이 기본이 되면 안 된다. config 에 키가
+    없거나 값이 bool 이 아니면 기본값(True) 을 반환한다 — 조용히 끄지 않는다.
+    """
+    cfg_path = naver_client.config_path()
+    try:
+        with open(cfg_path, encoding="utf-8-sig") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        return True
+    value = cfg.get("require_preview_confirmation")
+    if isinstance(value, bool):
+        return value
+    return True
+
+
 # --------------------------------------------------------------------------- #
 # 결정론 컴플라이언스 게이트 (fail-closed).
 #
@@ -776,6 +794,7 @@ def register_product(
     delivery_fee: int = 3000,
     courier: str = "CJGLS",
     notice: dict[str, Any] | None = None,
+    preview_confirmed: bool = False,
 ) -> dict[str, Any]:
     """상품 정보를 받아 등록 페이로드를 빌드하고 네이버 커머스 API 로 등록한다.
 
@@ -819,6 +838,12 @@ def register_product(
         notice: 상품정보제공고시 오버라이드. ``{"productInfoProvidedNoticeType":
             "ETC"|"FURNITURE", ...}`` 형태. 미제공 시 naver_client 가
             카테고리/기본값으로 자동 완성.
+        preview_confirmed: 미리보기 승인 게이트. 설정의
+            ``require_preview_confirmation`` 이 켜져 있을 때(기본 켬),
+            ``preview_confirmed`` 가 ``True`` 가 아니면 등록을 거부하고
+            미리보기 파일 경로를 사유에 포함한다 (네이버 호출 0회). 이것은
+            **선언 게이트**다 — 사용자가 실제로 미리보기를 봤는지 기계적으로
+            알 수 없으므로, "``True`` 로 회신했다" 는 선언일 뿐이다.
 
     Returns:
         ``{"ok": bool, "status_code": int | None, "origin_product_no": str | None,
@@ -904,6 +929,51 @@ def register_product(
             "source": "derived",
             "name": "",
             "salePrice": None,
+        }
+
+    # ------------------------------------------------------------------ #
+    # 미리보기 승인 게이트 (선언 게이트).
+    #
+    # 설정의 require_preview_confirmation 이 켜져 있을 때(기본 켬),
+    # preview_confirmed 가 True 가 아니면 등록을 거부하고 미리보기 파일
+    # 경로를 사유에 포함한다 (네이버 호출 0회). 이것은 선언 게이트다 —
+    # 사용자가 실제로 미리보기를 봤는지 기계적으로 알 수 없으므로,
+    # "True 로 회신했다" 는 선언일 뿐이다. 원본 사진 게이트와 같은 성격이며,
+    # 문서에 그렇게 정직하게 적는다. 과장 금지.
+    # ------------------------------------------------------------------ #
+    _preview_path_for_gate: str | None = None
+    if isinstance(_resolved_payload, dict):
+        _preview_path_for_gate = _resolved_payload.get("preview_path") or None
+    _require_preview = _config_require_preview_confirmation()
+    if _require_preview and not preview_confirmed:
+        _msg_parts = [
+            "미리보기 승인 없이 등록을 거부했습니다 (require_preview_confirmation 켜짐).",
+            "브라우저로 미리보기 파일을 열어 내용을 확인한 뒤 preview_confirmed=True 로 다시 호출하세요.",
+        ]
+        if _preview_path_for_gate:
+            _msg_parts.append(f"미리보기 파일: {_preview_path_for_gate}")
+        else:
+            _msg_parts.append(
+                "미리보기 파일 경로를 찾을 수 없습니다 — prepare_listing 을 먼저 호출했는지 확인하세요."
+            )
+        return {
+            "ok": False,
+            "status_code": None,
+            "origin_product_no": None,
+            "channel_product_no": None,
+            "missing_channel_no": True,
+            "name_truncated": False,
+            "raw": None,
+            "seller_tags": None,
+            "blocked_by": "preview_confirmation",
+            "preview_path": _preview_path_for_gate,
+            "require_preview_confirmation": True,
+            "filled_from_prepared": [],
+            "prepared_lookup": prepared_lookup,
+            "notice_filled_from_config": [],
+            "dry_run": _dry_run,
+            "message": " ".join(_msg_parts),
+            "error": None,
         }
 
     # ------------------------------------------------------------------ #
@@ -1438,6 +1508,7 @@ def prepare_listing(product: dict[str, Any]) -> dict[str, Any]:
         "needs_user": payload.get("needs_user") or [],
         "qa": payload.get("qa") or {},
         "images": _listing_urls,
+        "preview_path": payload.get("preview_path"),
         "error": None,
     }
 

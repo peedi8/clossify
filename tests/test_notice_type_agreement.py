@@ -357,6 +357,7 @@ def test_a_prepare_needs_user_satisfies_register_for_50001060(isolated_prepared_
         category_id=_FURNITURE_CATEGORY,
         product_key=pkey,
         notice=filled_notice,
+        preview_confirmed=True,
     )
 
     # 핵심 단언: 고시 필수필드 누락으로 거부되지 않는다.

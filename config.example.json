@@ -1,5 +1,5 @@
 {
-  "_comment": "Example configuration for clossify. Copy to .local/config.json and fill real values. Never commit real credentials. All values below are placeholders. Keys: naver (Commerce API), naver_searchad (Search Ads keyword API), image_providers (image generation), smartstore_notice_defaults (product information notice / origin), kc_declaration (KC certification reporting). The agent documents use placeholders {AS_TEL}, {STORE_SLUG}, {STORE_NAME}, {VISION_MODEL} which are resolved from this config at runtime.",
+  "_comment": "Example configuration for clossify. Copy to .local/config.json and fill real values. Never commit real credentials. All values below are placeholders. Keys: naver (Commerce API), naver_searchad (Search Ads keyword API), image_providers (image generation), smartstore_notice_defaults (product information notice / origin), kc_declaration (KC certification reporting), require_preview_confirmation (gate: require preview HTML confirmation before registration, default true). The agent documents use placeholders {AS_TEL}, {STORE_SLUG}, {STORE_NAME}, {VISION_MODEL} which are resolved from this config at runtime.",
   "naver": {
     "_comment": "Naver Commerce API OAuth2 client_credentials. client_secret is used as the bcrypt signing key in naver_client.get_token.",
     "client_id": "REPLACE_WITH_NAVER_CLIENT_ID",
@@ -50,6 +50,7 @@
     "_comment": "KC 인증 신고값. 판매자가 실제 신고하는 값을 입력. 미입력 시 등록이 거부됩니다 (fail-closed, 조용한 기본값 금지).kcCertifiedProductExclusionYn / kcExemptionType 두 값 중 하나라도 비어있으면 KC 필드 전체가 payload에서 생략되며, 네이버 커머스 API가 요구하면 에러로 알려줍니다.",
     "kcCertifiedProductExclusionYn": "REPLACE_WITH_KC_EXCLUSION_YN",
     "kcExemptionType": "REPLACE_WITH_KC_EXEMPTION_TYPE"
-  }
+  },
+  "require_preview_confirmation": true
 }
 

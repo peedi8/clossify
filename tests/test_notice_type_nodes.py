@@ -394,6 +394,7 @@ class TestMcpIntegration:
                             category_id=_CLOTHING_CATEGORY,
                             detail_html="<html><body>상세</body></html>",
                             notice=notice_override,
+                            preview_confirmed=True,
                         )
         assert result["ok"] is True, f"등록 실패: {result}"
         assert len(naver_calls) == 1, f"네이버 API 호출 횟수가 예상과 다름: {len(naver_calls)}"
@@ -443,6 +444,7 @@ class TestMcpIntegration:
                             category_id=_CLOTHING_CATEGORY,
                             detail_html="<html><body>상세</body></html>",
                             notice=notice_override,
+                            preview_confirmed=True,
                         )
         assert result["ok"] is True
         notice = (
@@ -472,6 +474,7 @@ class TestMcpIntegration:
                         category_id=_CLOTHING_CATEGORY,
                         detail_html="<html><body>상세</body></html>",
                         notice=notice_override,
+                        preview_confirmed=True,
                     )
         assert result["ok"] is False
         # 에러 메시지에 관련 안내 포함.
@@ -578,7 +581,12 @@ class TestToolRegistrationPreserved:
         assert len(tools) == 6, f"도구가 6개여야 함: {len(tools)}"
 
     def test_register_product_signature_unchanged(self):
-        """register_product 파라미터가 유지되는가."""
+        """register_product 파라미터가 유지되는가.
+
+        ``preview_confirmed`` 는 미리보기 승인 게이트로
+        추가된 키워드 인자다. 기본값 ``False`` 이며, 설정의
+        ``require_preview_confirmation`` 이 켜져 있을 때 게이트로 동작한다.
+        """
         import inspect
 
         sig = inspect.signature(mcp_server.register_product)
@@ -597,5 +605,6 @@ class TestToolRegistrationPreserved:
             "delivery_fee",
             "courier",
             "notice",
+            "preview_confirmed",
         ]
         assert param_names == expected, f"시그니처 변경 감지: {param_names}"
