@@ -217,9 +217,9 @@
       "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
       "node": "kitchenUtensils",
       "label_ko": "주방용품 상품 요약 정보",
-      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "itemName", "modelName", "material", "components", "size", "releaseDate", "releaseDateText", "manufacturer", "producer", "importDeclaration", "warrantyPolicy", "afterServiceDirector"],
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "itemName", "modelName", "material", "component", "size", "releaseDate", "releaseDateText", "manufacturer", "producer", "importDeclaration", "warrantyPolicy", "afterServiceDirector"],
       "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
-      "note": "Promoted from official create-product-product docs."
+      "note": "Promoted from official create-product-product docs. Field name corrected from 'components' (plural) to 'component' (singular) — confirmed by live API registration (category 50004528) which rejected 'components' as NotNull-missing on 'kitchenUtensils.component' while accepting 'component'. Other types that use 'components' (FURNITURE, SLEEPING_GEAR, BOOKS, MUSICAL_INSTRUMENT, SPORTS_EQUIPMENT) are NOT changed — only KITCHEN_UTENSILS was verified against the live API."
     },
     {
       "type": "COSMETIC",

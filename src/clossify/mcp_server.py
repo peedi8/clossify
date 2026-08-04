@@ -279,6 +279,26 @@ def _notice_field_label(field: str) -> tuple[str, str]:
     return labels.get(field, (field, "이 카테고리 고시 필수 항목입니다"))
 
 
+def _notice_field_answer_shape(field: str) -> str:
+    """고시 필드의 타입에서 산출된 답변 형태 안내 문자열.
+
+    ``data/notice_field_types.json`` 의 타입 정보를 읽어 사용자가 어떤 형태로
+    답해야 하는지 안내한다. 이 안내는 needs_user 항목의 answer_shape 키에 실려
+    클라이언트 LLM 에게 전달된다 — boolean 필드를 자유 텍스트로 물으면 사용자가
+    문장을 쓰고, 그것을 조용히 true/false 로 변환하면 잘못 신고된다.
+
+    라벨을 새로 창작하지 않는다 — 데이터에 기록된 타입에서 기계적으로 산출한다.
+    미기재 필드(문자열)는 빈 문자열을 반환해 기존 동작을 보존한다.
+    """
+    ftype = qa_agents._notice_field_type(field)
+    if ftype == "boolean":
+        return "예/아니오 질문입니다. true 또는 false(Python bool) 로 답해주세요."
+    if ftype == "date":
+        return "날짜 항목입니다. 정확한 형식은 네이버 고시 스펙을 확인해주세요."
+    # string/미기재 — 기존 동작(자유 텍스트). 빈 문자열로 둬 기존 필드와 회귀 없이.
+    return ""
+
+
 def _category_path_for(category_id: str) -> str:
     """``category_id`` 의 카테고리 경로를 반환 (알 수 없으면 빈 문자열).
 
@@ -468,34 +488,68 @@ def _run_compliance_gate(
                 }
             )
 
-    # needs_user: 결정론 위반 중 "고시 필수필드" 위반에서 누락 필드명을 추출해
-    # 사용자 입력 요청으로 변환. 요구되는 구조:
-    #   {"field": ..., "label": ..., "why": ...}
+    # needs_user: 결정론 위반 중 "고시 필수필드" / "고시 필드 상호배제" 위반에서
+    # 사용자 입력 요청을 조립. 요구되는 구조:
+    #   {"field": ..., "label": ..., "why": ..., "answer_shape": ...}
+    # answer_shape 는 해당 필드의 타입에서 산출된 답변 형태 안내다:
+    #   - boolean → "예/아니오 질문입니다. true 또는 false 로 답해주세요."
+    #   - date → "날짜 항목입니다. 형식은 네이버 고시 스펙을 확인해주세요."
+    #   - string/미기재 → 빈 문자열(기존 동작 — 자유 텍스트).
+    # boolean 필드를 자유 텍스트로 물으면 사용자가 문장을 쓰고, 그 문자열을
+    # 조용히 true/false 로 변환하면 잘못 신고된다. answer_shape 가 예/아니오
+    # 질문임을 드러내면 클라이언트 LLM 이 올바른 형태의 질문을 만든다.
+    #
+    # "고시 필드 상호배제"(XOR) 위반은 누락과 반대 방향이다 — 사용자가 *너무
+    # 많이* 제공했다. needs_user 항목의 why 에 "둘 중 하나만" 임을 드러내고
+    # field 에는 그룹 전체를 ", " 로.join 해 올려 클라이언트 LLM 이 어떤 필드들이
+    # 충돌하는지 알 수 있게 한다 (조용한 선택 금지 — 어느 하나를 버리지 않는다).
     needs_user: list[dict[str, str]] = []
     seen_fields: set[str] = set()
     for row in check_result.get("violations") or []:
         if not isinstance(row, dict):
             continue
-        if str(row.get("rule") or "") != "고시 필수필드":
-            continue
         if str(row.get("severity") or "").upper() != qa_agents.FAIL:
             continue
+        rule_name = str(row.get("rule") or "")
         detail_text = str(row.get("detail") or "")
-        # detail 형태: "고시 타입 WEAR 필수 필드 누락: material, size, color"
-        if "누락:" in detail_text:
-            after = detail_text.split("누락:", 1)[1]
-            for field in after.split(","):
-                field = field.strip()
-                if field and field not in seen_fields:
-                    seen_fields.add(field)
-                    label, why = _notice_field_label(field)
-                    needs_user.append(
-                        {
-                            "field": field,
-                            "label": label,
-                            "why": why,
-                        }
-                    )
+        if rule_name == "고시 필수필드":
+            # detail 형태: "고시 타입 WEAR 필수 필드 누락: material, size, color"
+            if "누락:" in detail_text:
+                after = detail_text.split("누락:", 1)[1]
+                for field in after.split(","):
+                    field = field.strip()
+                    if field and field not in seen_fields:
+                        seen_fields.add(field)
+                        label, why = _notice_field_label(field)
+                        answer_shape = _notice_field_answer_shape(field)
+                        needs_user.append(
+                            {
+                                "field": field,
+                                "label": label,
+                                "why": why,
+                                "answer_shape": answer_shape,
+                            }
+                        )
+        elif rule_name == "고시 필드 상호배제":
+            # XOR "둘 다 채워짐" 위반. detail 에 전체 그룹 필드명이 들어있다.
+            # field 자리에 그룹 전체를 올려 클라이언트가 충돌을 인식하게 한다.
+            # 중복 보고 방지용 키는 detail 전체로 잡는다(같은 그룹이 여러 번
+            # 보고될 일은 없지만 방어적으로).
+            dedup_key = "xor:" + detail_text
+            if dedup_key in seen_fields:
+                continue
+            seen_fields.add(dedup_key)
+            needs_user.append(
+                {
+                    "field": "(상호배제 그룹)",
+                    "label": "고시 필드 상호배제",
+                    "why": detail_text,
+                    "answer_shape": (
+                        "네이버가 이 필드들을 상호배제(XOR) 로 다룹니다. "
+                        "둘 중 하나만 남기고 나머지를 비워주세요."
+                    ),
+                }
+            )
 
     pending_reviews: list[str] = []
     # 카피/이미지 QA 는 위임 왕복이 붙기 전까지 항상 미회신이다.

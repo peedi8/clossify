@@ -1,0 +1,24 @@
+{
+  "generated_at": "2026-08-04T00:00:00Z",
+  "method": "live API observation",
+  "sources": [
+    {
+      "url": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "what": "Naver Commerce API live response (category 50004528, KITCHEN_UTENSILS) returned: Cannot deserialize value of type `java.lang.Boolean` from String for importDeclaration. This directly establishes importDeclaration is a Boolean field. The same live observation showed releaseDate reject free-text with a date parse error at index 7, confirming it is a date-typed field (exact format still unconfirmed)."
+    }
+  ],
+  "note": "확인된 것만 기록한다. 필드 이름만 보고 타입을 추측하지 않는다. 미기재 필드는 문자열(기존 동작)로 둔다. date 필드의 정확한 형식은 아직 미확정이므로 형식 검증을 하지 않고 사용자가 준 값을 가공 없이 싣는다.",
+  "field_types": {
+    "importDeclaration": {
+      "type": "boolean",
+      "source": "live API: java.lang.Boolean deserialize error",
+      "collected_at": "2026-08-04"
+    },
+    "releaseDate": {
+      "type": "date",
+      "source": "live API: date parse error at index 7",
+      "collected_at": "2026-08-04",
+      "format": "unconfirmed"
+    }
+  }
+}

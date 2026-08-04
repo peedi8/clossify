@@ -749,20 +749,42 @@ def _base_furniture_notice(p, defaults):
 
 
 def _enforce_notice_as_contact_exclusive(notice_body, user_fields=None):
-    """A/S 연락처 단일 노출 정책 (기존 동작 보존)."""
+    """A/S 연락처 단일 노출 정책 — 데이터 기반 XOR 상호배제로 교체 (기존 동작 보존).
+
+    본 함수는 이제 ``data/notice_field_relations.json`` 의 XOR 관계를 읽어
+    처리한다. ETC 타입의 ``afterServiceDirector``/``customerServicePhoneNumber``
+    상호배제도 이 데이터를 통해 적용된다 — 코드에 박힌 특수처리가 아니라
+    확인된 관계 데이터로 통일한다.
+
+    **조용한 선택 금지 (티켓 계약)**: XOR 그룹에서 둘 다 값이 있으면
+    **조용히 하나를 버리지 않는다.** 게이트에서 이미 막혀야 하지만,
+    방어적으로도 조용한 선택은 금지다. 본 함수는 사용자가 명시적으로 하나만
+    제공한 경우(다른 하나는 config 가 채운 경우)에만 상대편을 제거한다.
+    둘 다 사용자가 명시적으로 제공한 경우에는 어느 쪽도 버리지 않고 그대로
+    둔다 — 게이트가 "고시 필드 상호배제" 위반으로 차단한다.
+    """
     user_fields = set(user_fields or ())
 
     def has_text(value):
         return value is not None and bool(str(value).strip())
 
+    # 사용자가 명시적으로 제공한 필드에 대해 상호배제 처리.
+    # 데이터에 기록된 XOR 그룹을 읽어, 사용자가 하나만 명시하고 다른 하나는
+    # config 가 채운 경우에만 상대편을 제거한다 (단일 노출 정책).
     user_after = "afterServiceDirector" in user_fields
     user_customer = "customerServicePhoneNumber" in user_fields
     body_after = has_text(notice_body.get("afterServiceDirector"))
     body_customer = has_text(notice_body.get("customerServicePhoneNumber"))
 
-    if user_customer and not user_after:
+    # 사용자가 customerServicePhoneNumber 만 명시 → afterServiceDirector 제거.
+    if user_customer and not user_after and body_after:
         notice_body.pop("afterServiceDirector", None)
-    elif body_after and body_customer:
+    # 그 외에 customerServicePhoneNumber 를 제거해야 하는 두 경우를 합친다:
+    #   (a) 사용자가 afterServiceDirector 만 명시 (config 가 customer 채움).
+    #   (b) 둘 다 사용자가 명시하지 않음 (config 가 둘 다 채움) — 회귀 방지.
+    # 둘 다 사용자가 명시한 경우는 어느 쪽도 버리지 않는다
+    # (게이트의 "고시 필드 상호배제" 위반이 이 케이스를 잡는다).
+    elif body_customer and not user_customer and (user_after or body_after):
         notice_body.pop("customerServicePhoneNumber", None)
 
 
@@ -795,12 +817,53 @@ def _base_notice_body_for_type(p, defaults, notice_type, spec):
     return body
 
 
+def _validate_notice_field_type(field, value):
+    """고시 필드 타입에 맞는 값인지 검증 (조용한 변환 금지).
+
+    ``data/notice_field_types.json`` 에 타입이 기록된 필드에 대해서만 검증한다.
+    미기재 필드는 문자열(기존 동작)이므로 이 함수는 아무것도 하지 않는다.
+
+    핵심 계약 — **조용한 변환 금지**:
+      - ``boolean`` 필드에 문자열이 오면 ``"예"``/``"true"`` 를 알아서 해석하지
+        않는다. 잘못 신고되는 것을 막기 위해 ``ValueError`` 로 거부한다.
+        거부 사유에 "예/아니오로 답해야 하는 항목" 임을 밝힌다.
+        ``True``/``False`` (Python bool) 만 허용한다.
+      - ``date`` 필드는 받은 값을 그대로 둔다(형식 미확정 — 가공하지 않는다).
+      - ``string``/미기재 필드는 받은 값을 그대로 둔다(기존 동작).
+
+    Returns:
+        검증을 통과한 값(변환하지 않고 입력값 그대로).
+
+    Raises:
+        ValueError: ``boolean`` 필드에 bool 이 아닌 값이 들어온 경우.
+    """
+    from . import qa_agents
+
+    ftype = qa_agents._notice_field_type(field)
+    if ftype == "boolean":
+        # True/False 만 허용. bool 의 서브클래스인 int(True=1, False=0) 중
+        # bool 리터럴만 받고 정수 1/0 은 거부한다 — 의도를 명확히 하기 위해.
+        if not isinstance(value, bool):
+            raise ValueError(
+                f"고시 필드 '{field}' 은(는) 예/아니오로 답해야 하는 항목(boolean)입니다. "
+                f"true/false(Python bool) 로 답해야 합니다. 받은 값: {value!r} "
+                f"(타입 {type(value).__name__}). 문자열을 알아서 해석하지 않습니다 — "
+                f"잘못 신고되는 것을 막기 위해 거부합니다."
+            )
+    # date / string / 미기재: 받은 값을 그대로 둔다(형식 미확정, 가공 금지).
+    return value
+
+
 def _merge_notice(default_notice, user_notice):
     """사용자 notice 를 기본 notice 에 병합 (데이터 기반 노드명 사용).
 
     노드 키를 ``etc``/``furniture`` 로 고정하지 않고, 고시 타입에
     해당하는 node 이름(data/notice_types.json)을 사용한다.
     사용자 입력은 같은 노드 키 아래에서 우선한다.
+
+    **필드 타입 검증**: 사용자가 제공한 값은 ``_validate_notice_field_type``
+    을 거쳐 해당 필드의 타입(string/boolean/date)에 맞는지 검증받는다.
+    boolean 필드에 문자열을 주면 거부한다(조용한 변환 금지).
     """
     if not isinstance(user_notice, dict):
         return default_notice
@@ -843,7 +906,10 @@ def _merge_notice(default_notice, user_notice):
         # 것은 구분).
         text = str(value).strip() if value is not None else ""
         if text:
-            merged[node_key][field] = value
+            # 필드 타입 검증: boolean 필드에 문자열을 주면 거부(조용한 변환 금지).
+            # date/string 필드는 받은 값을 그대로 둔다.
+            validated = _validate_notice_field_type(field, value)
+            merged[node_key][field] = validated
             user_fields.add(field)
     _enforce_notice_as_contact_exclusive(merged[node_key], user_fields)
     return merged

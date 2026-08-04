@@ -306,6 +306,175 @@ def _notice_type_spec(notice_type):
     return None
 
 
+# ---------------------------------------------------------------------------
+# notice_field_types.json 로더 (고시 필드 타입 정보).
+#
+# 핵심 계약: **타입을 지어내지 않는다.** 이 파일에는 실호출로 확인된
+# 필드만 기록된다. 미기재 필드는 문자열(기존 동작)로 둔다. 확인되지
+# 않은 필드를 "아마 boolean 일 것이다" 로 채우면 규제 필드 오신고가 된다.
+#
+# 값은 ``string`` / ``boolean`` / ``date`` 세 가지. ``string`` 은 기존
+# 동작(공백·placeholder = 미제공)을, ``boolean`` 은 True/False 둘 다
+# 제공으로, ``date`` 는 비어있지 않으면 제공(형식 미확정)으로 다룬다.
+# ---------------------------------------------------------------------------
+_NOTICE_FIELD_TYPES_CACHE: dict[str, dict] | None = None
+
+
+def _load_notice_field_types() -> dict[str, dict]:
+    """``data/notice_field_types.json`` 의 ``field_types`` 맵을 반환 (캐싱).
+
+    Returns:
+        필드명 → 타입 딕셔너리. 각 값은 최소한 ``{"type": "string"|"boolean"|
+        "date"}`` 키를 갖는다. 파일 부재 시 **빈 dict** 를 반환한다 —
+        "확인된 것이 없으면 전부 문자열" 이 기존 동작이기 때문이다.
+        단, 파일이 존재하면서 구조가 깨졌으면 fail-closed 로 예외를
+        던진다 (조용한 문자열 폴백으로 회귀하는 것을 막는다).
+    """
+    global _NOTICE_FIELD_TYPES_CACHE
+    if _NOTICE_FIELD_TYPES_CACHE is not None:
+        return _NOTICE_FIELD_TYPES_CACHE
+    import json
+    import os
+
+    repo_root = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    path = os.path.join(repo_root, "data", "notice_field_types.json")
+    if not os.path.exists(path):
+        # 파일 자체가 없으면 확인된 타입이 없는 것 → 빈 맵(전부 문자열).
+        _NOTICE_FIELD_TYPES_CACHE = {}
+        return _NOTICE_FIELD_TYPES_CACHE
+    try:
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"notice_field_types.json 읽기 실패: {path} ({exc})") from exc
+    field_types = doc.get("field_types") if isinstance(doc, dict) else None
+    if not isinstance(field_types, dict):
+        raise RuntimeError(f"notice_field_types.json 구조가 올바르지 않습니다: {path}")
+    # 유효한 type 값만 보존한다(알 수 없는 type 은 문자열로 취급).
+    valid_types = frozenset({"string", "boolean", "date"})
+    normalized: dict[str, dict] = {}
+    for name, entry in field_types.items():
+        if not isinstance(entry, dict):
+            continue
+        ftype = str(entry.get("type") or "").strip().lower()
+        if ftype not in valid_types:
+            continue
+        normalized[str(name)] = {"type": ftype}
+    _NOTICE_FIELD_TYPES_CACHE = normalized
+    return normalized
+
+
+def _notice_field_type(field: str) -> str:
+    """특정 고시 필드의 타입을 반환.
+
+    Returns:
+        ``"string"`` / ``"boolean"`` / ``"date"``. 미기재 필드는 ``"string"``
+        (기존 동작). 타입을 추측하지 않는다 — 데이터에 없으면 문자열이다.
+    """
+    types = _load_notice_field_types()
+    entry = types.get(str(field or ""))
+    if isinstance(entry, dict):
+        return str(entry.get("type") or "string")
+    return "string"
+
+
+# ---------------------------------------------------------------------------
+# notice_field_relations.json 로더 (고시 필드 관계 — XOR 상호배제).
+#
+# 핵심 계약: **확인된 것만 기록한다.** 이 파일에는 실호출로 확인된
+# 상호배제 관계만 기록된다. 다른 타입의 필드를 보고 "이것도 XOR 같다"
+# 로 채우면 규제 필드 오신고가 된다. 확인되지 않은 관계를 기록하지 않는다
+# (= 기존 동작 유지).
+#
+# XOR 그룹은 "이 필드들 중 정확히 하나" 를 뜻한다:
+#   - 둘 다 비면 미제공(차단).
+#   - 하나만 있으면 충족.
+#   - 둘 다 있으면 위반(네이버가 거절하므로 미리 막는 편이 낫다).
+# ---------------------------------------------------------------------------
+_NOTICE_FIELD_RELATIONS_CACHE: dict[str, list[list[str]]] | None = None
+
+
+def _load_notice_field_relations() -> dict[str, list[list[str]]]:
+    """``data/notice_field_relations.json`` 의 XOR 관계 맵을 반환 (캐싱).
+
+    Returns:
+        고시 타입명(대문자) → XOR 그룹 리스트. 각 XOR 그룹은 필드명 리스트.
+        파일 부재 시 **빈 dict** 를 반환한다 — "확인된 관계가 없으면 기존 동작"
+        이 계약이기 때문이다. 단, 파일이 존재하면서 구조가 깨졌으면 fail-closed
+        로 예외를 던진다 (조용한 폴백으로 회귀하는 것을 막는다).
+    """
+    global _NOTICE_FIELD_RELATIONS_CACHE
+    if _NOTICE_FIELD_RELATIONS_CACHE is not None:
+        return _NOTICE_FIELD_RELATIONS_CACHE
+    import json
+    import os
+
+    repo_root = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    path = os.path.join(repo_root, "data", "notice_field_relations.json")
+    if not os.path.exists(path):
+        # 파일 자체가 없으면 확인된 관계가 없는 것 → 빈 맵(기존 동작).
+        _NOTICE_FIELD_RELATIONS_CACHE = {}
+        return _NOTICE_FIELD_RELATIONS_CACHE
+    try:
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"notice_field_relations.json 읽기 실패: {path} ({exc})") from exc
+    relations = doc.get("relations") if isinstance(doc, dict) else None
+    if not isinstance(relations, dict):
+        raise RuntimeError(f"notice_field_relations.json 구조가 올바르지 않습니다: {path}")
+    normalized: dict[str, list[list[str]]] = {}
+    for type_name, entry in relations.items():
+        if not isinstance(entry, dict):
+            continue
+        xor_groups = entry.get("xor")
+        if not isinstance(xor_groups, list):
+            continue
+        groups: list[list[str]] = []
+        for group in xor_groups:
+            if not isinstance(group, list):
+                continue
+            fields = [str(f) for f in group if isinstance(f, str) and f]
+            if len(fields) >= 2:
+                groups.append(fields)
+        if groups:
+            normalized[str(type_name).strip().upper()] = groups
+    _NOTICE_FIELD_RELATIONS_CACHE = normalized
+    return normalized
+
+
+def _notice_xor_groups(notice_type: str) -> list[list[str]]:
+    """특정 고시 타입의 XOR 그룹 리스트를 반환.
+
+    Returns:
+        XOR 그룹 리스트. 각 그룹은 필드명 리스트(길이 2 이상).
+        기록된 관계가 없으면 빈 리스트(기존 동작 유지).
+    """
+    relations = _load_notice_field_relations()
+    return relations.get(str(notice_type or "").strip().upper(), [])
+
+
+def _notice_field_filled(notice_body, field) -> bool:
+    """단일 필드가 "제공됨" 인지 판정 (타입 인지).
+
+    ``_notice_field_missing`` 의 단일 필드 판정 로직을 분리한 헬퍼.
+    XOR 그룹 판정에서 재사용하기 위해 같은 규칙을 적용한다:
+      - ``boolean``: None 만 미제공, True/False 모두 제공.
+      - ``date``: placeholder 가 아니면 제공.
+      - ``string``/미기재: placeholder 가 아니면 제공.
+    """
+    if not isinstance(notice_body, dict):
+        return False
+    raw = notice_body.get(field)
+    ftype = _notice_field_type(field)
+    if ftype == "boolean":
+        return raw is not None
+    if ftype == "date":
+        return not _is_placeholder_value(raw)
+    # string/미기재.
+    return not _is_placeholder_value(raw)
+
+
 # 고시 타입 결정: 입력에서 명시적으로 주어지거나, 카테고리 경로에서 휴리스틱.
 # (원본의 _is_furniture_notice 휴리스틱을 일반화한 데이터 기반 매핑)
 #
@@ -505,15 +674,147 @@ def _notice_field_missing(notice_body, fields):
       - **변형 우회 차단**: 판정 시 값을 정규화한 뒤 비교한다(공백 제거·
         전각/반각 통일 등). 공백 삽입/표기 차이로 안내문구가 "채워짐" 으로
         우회되지 않도록 한다 (``_is_placeholder_value`` 참고).
+
+    **필드 타입 인지 (중요)**: ``_notice_field_type`` 이 반환하는 타입에 따라
+    "제공됨" 판정이 다르다.
+
+      - ``boolean``: ``True`` 와 ``False`` **둘 다 제공된 것**이다. 미제공은
+        ``None`` (또는 키 부재) 뿐이다. 과거의 결정적 결함 — boolean ``False``
+        를 미제공으로 읽어 게이트가 차단하던 동작 — 을 바로잡는다. 문자열 등
+        다른 타입의 값은 "제공된 것으로" 두고 naver_client 전송 단계에서
+        타입 검증·거부한다 (여기서 조용히 판정하지 않는다).
+      - ``date``: 비어있지 않은 값이면 제공. 형식 검증은 하지 않는다(형식
+        미확정 — 사용자가 준 값을 가공 없이 싣는다).
+      - ``string`` (기본/미기재): 기존 동작(공백·placeholder = 미제공).
+
+    **XOR 그룹 인지 (상호배제)**: ``notice_field_relations.json`` 에 기록된
+    XOR 그룹의 필드들은 "이 필드들 중 정확히 하나" 가 충족 조건이다. 호출자가
+    ``fields`` 에 XOR 그룹의 모든 멤버를 개별적으로 넣더라도, 하나만 채워져
+    있으면 그 멤버들을 누락에서 제외한다. "둘 다 채워짐" 위반은 본 함수가
+    아닌 ``_compliance_code_check`` 의 별도 위반 규칙으로 잡는다(분리된 관심).
+    본 함수는 "누락" 만 다룬다.
     """
     missing = []
     if not isinstance(notice_body, dict):
         return list(fields)
+    # notice_type 을 알 수 없으므로, 본 함수는 XOR 인지를 외부에서 받지 않는다.
+    # XOR 처리는 _compliance_code_check 가 notice_type 을 아는 상태에서
+    # _notice_field_missing 을 호출하기 전에 fields 를 가공하는 경로로 다룬다.
+    # (순환 의존 방지: _notice_field_missing 은 타입 비지식 함수로 둔다.)
     for field in fields:
         raw = notice_body.get(field)
-        if _is_placeholder_value(raw):
+        ftype = _notice_field_type(field)
+        if ftype == "boolean":
+            # True/False 둘 다 제공. None/키부재만 미제공. 문자열 등 다른 타입은
+            # "제공된 것으로" 두고 naver_client 전송 단계에서 타입 검증·거부한다.
+            if raw is None:
+                missing.append(field)
+            # bool True/False 또는 그 외 타입은 제공된 것으로 간주.
+        elif ftype == "date":
+            # 비어있지 않은 값이면 제공. 형식 검증은 하지 않는다(형식 미확정).
+            if _is_placeholder_value(raw):
+                missing.append(field)
+        # string (기본/미기재) — 기존 동작 유지. 아래 elif 은 ftype 이
+        # "boolean" 도 "date" 도 아닌 경우(= 미기재 → 문자열 취급)의 분기다.
+        elif _is_placeholder_value(raw):
             missing.append(field)
     return missing
+
+
+def _notice_field_missing_with_relations(notice_body, fields, notice_type=None):
+    """``_notice_field_missing`` 의 XOR 인지 변형.
+
+    ``notice_type`` 이 주어지면 해당 타입의 XOR 그룹을 ``notice_field_relations.json``
+    에서 읽어 적용한다. XOR 그룹의 멤버 중 **하나라도 채워져 있으면** 그 그룹의
+    모든 멤버를 "충족" 으로 처리한다.
+
+    본 함수는 "누락" 만 다룬다. "둘 다 채워짐" 위반은 별도 규칙
+    (``_compliance_code_check`` 의 ``고시 필드 상호배제`` rule) 이 다룬다.
+
+    Args:
+        notice_body: 고시 본문 dict.
+        fields: 필수 필드명 리스트.
+        notice_type: 고시 타입명 (XOR 관계 조회용). ``None`` 이면 XOR 미적용
+            (``_notice_field_missing`` 과 동일).
+
+    Returns:
+        누락된 필수 필드명 리스트.
+    """
+    if notice_type is None:
+        return _notice_field_missing(notice_body, fields)
+    xor_groups = _notice_xor_groups(notice_type)
+    if not xor_groups:
+        # 기록된 XOR 관계가 없으면 기존 동작 유지.
+        return _notice_field_missing(notice_body, fields)
+    # XOR 그룹 멤버를 (member → group) 맵으로 인덱싱.
+    member_to_group: dict[str, tuple[str, ...]] = {}
+    for group in xor_groups:
+        group_tuple = tuple(group)
+        for member in group:
+            member_to_group[member] = group_tuple
+    missing: list[str] = []
+    if not isinstance(notice_body, dict):
+        return list(fields)
+    # 이미 "충족" 처리된 XOR 그룹을 추적 (중복 누락 보고 방지).
+    satisfied_groups: set[tuple[str, ...]] = set()
+    for field in fields:
+        group = member_to_group.get(field)
+        if group is not None and group in satisfied_groups:
+            # 이 그룹은 이미 하나가 채워져 충족됨 — 스킵.
+            continue
+        if group is not None:
+            # 그룹 멤버 중 하나라도 채워져 있는지 확인.
+            if any(_notice_field_filled(notice_body, m) for m in group):
+                satisfied_groups.add(group)
+                continue
+            # 그룹 전체가 비어있으면 — 각 멤버를 한 번만 누락으로 보고.
+            # 호출자가 그룹 전체 멤버를 fields 에 넣었더라도 중복을 피하기 위해
+            # 첫 멤버만 보고한다.
+            if field == group[0]:
+                missing.append(field)
+            continue
+        # XOR 그룹에 속하지 않는 필드 — 기존 판정.
+        raw = notice_body.get(field)
+        ftype = _notice_field_type(field)
+        if ftype == "boolean":
+            if raw is None:
+                missing.append(field)
+        elif ftype == "date":
+            if _is_placeholder_value(raw):
+                missing.append(field)
+        elif _is_placeholder_value(raw):
+            missing.append(field)
+    return missing
+
+
+def _notice_field_xor_violations(notice_body, notice_type) -> list[dict]:
+    """XOR 그룹에서 "둘 다 채워져 있는" 위반을 반환.
+
+    네이버 API 가 둘 다 있으면 거절하므로, 게이트에서 미리 막는다.
+    사유에 "둘 중 하나만" 임을 밝힌다.
+
+    Returns:
+        위반 dict 리스트. 각 원소는 ``{"group": [...], "detail": ...}`` 형태.
+        빈 리스트면 위반 없음.
+    """
+    xor_groups = _notice_xor_groups(notice_type)
+    if not xor_groups:
+        return []
+    violations: list[dict] = []
+    for group in xor_groups:
+        filled = [m for m in group if _notice_field_filled(notice_body, m)]
+        if len(filled) >= 2:
+            violations.append(
+                {
+                    "group": list(group),
+                    "detail": (
+                        f"고시 필드 {', '.join(group)} 중 둘 중 하나만 입력해야 합니다 "
+                        "(네이버 상호배제 — 둘 다 있으면 거절됨). "
+                        f"현재 채워진 필드: {', '.join(filled)}."
+                    ),
+                }
+            )
+    return violations
 
 
 def _compliance_code_check(name, context, api_payload=None):
@@ -607,7 +908,10 @@ def _compliance_code_check(name, context, api_payload=None):
                     break
     required_fields = (spec or {}).get("fields") or []
     if required_fields:
-        missing = _notice_field_missing(notice_body, required_fields)
+        # XOR 인지 누락 판정: 하나만 채워져도 그룹 전체가 충족으로 인정.
+        missing = _notice_field_missing_with_relations(
+            notice_body, required_fields, notice_type=notice_type
+        )
         if missing:
             violations.append(
                 {
@@ -616,6 +920,17 @@ def _compliance_code_check(name, context, api_payload=None):
                     "detail": (
                         f"고시 타입 {notice_type} 필수 필드 누락: " + ", ".join(missing[:10])
                     ),
+                }
+            )
+        # XOR "둘 다 채워짐" 위반 — 네이버가 거절하므로 게이트에서 미리 차단.
+        # 이 위반은 "누락" 과는 별개의 규칙이다 (분리된 관심).
+        xor_violations = _notice_field_xor_violations(notice_body, notice_type)
+        for xv in xor_violations:
+            violations.append(
+                {
+                    "rule": "고시 필드 상호배제",
+                    "severity": FAIL,
+                    "detail": str(xv.get("detail") or ""),
                 }
             )
 
@@ -1039,13 +1354,20 @@ __all__ = [
     "_copy_code_check",
     "_infer_notice_type",
     "_is_placeholder_value",
+    "_load_notice_field_relations",
+    "_load_notice_field_types",
     "_load_notice_types",
     "_merge_code_check",
     "_normalize_agent_result",
     "_normalize_placeholder_value",
     "_normalize_qa_result",
+    "_notice_field_filled",
     "_notice_field_missing",
+    "_notice_field_missing_with_relations",
+    "_notice_field_type",
+    "_notice_field_xor_violations",
     "_notice_type_spec",
+    "_notice_xor_groups",
     "_qa_agent_result",
     "_verdict_from_violations",
     "aggregate_qa_results",
