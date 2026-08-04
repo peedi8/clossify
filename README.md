@@ -11,7 +11,8 @@
 
 | 구분 | 항목 | 비고 |
 |------|------|------|
-| 되는 것 | MCP 도구 6개(`check_config`/`upload_images`/`register_product`/`get_product`/`prepare_listing`/`submit_reviews`) | 실제 커머스 API 등록 관통 |
+| 되는 것 | MCP 도구 6개(`check_config`/`upload_images`/`register_product`/`get_product`/`prepare_listing`/`submit_reviews`) | 도구 표면과 배선. 이미지 업로드는 실제 커머스 API 로 검증됨 |
+| **진행 중** | **상품 등록 관통(실제 커머스 API)** | 실호출 검증 중. 페이로드 구조 결함을 수정하는 단계이며, **아직 이 도구로 상품이 등록된 적은 없다** |
 | 되는 것 | 결정론 컴플라이언스 게이트(fail-closed) | 등록 직전 FAIL 위반 차단 |
 | 되는 것 | 카테고리 메타 데이터(리프 카테고리 약 4,999건)·고시 타입 35종 데이터 기반 검사 | `data/` |
 | 되는 것 | 이미지 입력 정규화(로컬 파일/외부 URL/이미 업로드된 CDN URL) | 매직바이트·확장자·크기·SSRF 가드 |

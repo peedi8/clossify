@@ -378,6 +378,78 @@ def _build_tentative_register_payload(d, name, category_id, listing_urls, detail
     return _nc.build_payload(product, detail_html, listing_urls, status=status)
 
 
+def _category_path_for(category_id):
+    """``category_id`` 의 카테고리 경로를 반환 (알 수 없으면 빈 문자열).
+
+    준비 단계와 등록 단계가 고시 타입 추론을 같은 입력으로 하게 한다.
+    등록 단계(``mcp_server._category_path_for``)와 *동일한* lookup 을 쓴다.
+    데이터 파일 부재·알 수 없는 ID 는 조용히 빈 문자열로 떨어진다 — 이 경우
+    양쪽 모두 ETC 기본값으로 합의하므로 불일치가 생기지 않는다(fail-closed
+    규칙을 위반하지 않는다: 알 수 없음을 알 수 없음으로 다룬다).
+    """
+    try:
+        from . import category_meta
+
+        return category_meta.category_path(category_id, raise_if_unknown=False)
+    except Exception:
+        return ""
+
+
+def _inject_notice_type(payload, inferred_type):
+    """``inferred_type`` 을 payload 의 notice 에 반영한다.
+
+    등록 단계(``mcp_server._build_compliance_context``)가 하는 보정을 그대로
+    적용한다: 카테고리 경로에서 추론한 고시 타입이 ETC 가 아니고, payload 의
+    notice 가 ETC(또는 미설정)로 되어 있으면 추론된 타입으로 덮어쓴다.
+    ``naver_client.build_payload`` 가 FURNITURE 외 카테고리에 대해 ETC 를
+    하드코딩하더라도, 실제 의류/신발/가구 등 카테고리는 다른 필수 필드를
+    요구하므로 올바른 타입으로 보정해야 한다.
+
+    payload 는 복사해서 반환한다(입력을 변이하지 않는다). 구조가 예상과 다르면
+    입력을 그대로 반환한다(조용한 승격 금지 — 구조가 깨졌으면 호출자의 예외
+    경로가 작동한다).
+    """
+    if not isinstance(payload, dict):
+        return payload
+    if inferred_type == "ETC":
+        return payload
+    origin_product = payload.get("originProduct")
+    if not isinstance(origin_product, dict):
+        return payload
+    detail_attr = origin_product.get("detailAttribute")
+    if not isinstance(detail_attr, dict):
+        return payload
+    notice = detail_attr.get("productInfoProvidedNotice")
+    if not isinstance(notice, dict):
+        return payload
+    current_type = str(notice.get("productInfoProvidedNoticeType") or "").strip().upper()
+    if current_type != "ETC" and current_type:
+        return payload
+    new_payload = dict(payload)
+    new_op = dict(origin_product)
+    new_da = dict(detail_attr)
+    new_notice = dict(notice)
+    new_notice["productInfoProvidedNoticeType"] = inferred_type
+    # 추론된 타입의 node 키가 없으면 빈 dict 를 추가한다(필수 필드 검사가
+    # 올바른 node 에서 이루어지게). 등록 단계(_build_compliance_context)와
+    # 동일한 동작.
+    spec = qa_agents._notice_type_spec(inferred_type)
+    expected_node = (spec or {}).get("node")
+    if expected_node and expected_node not in new_notice:
+        # 기존 etc/furniture 노드의 필드를 올바른 노드로 복사(최선 노력).
+        for fallback_key in ("etc", "furniture"):
+            fb = new_notice.get(fallback_key)
+            if isinstance(fb, dict):
+                new_notice[expected_node] = dict(fb)
+                break
+        else:
+            new_notice[expected_node] = {}
+    new_da["productInfoProvidedNotice"] = new_notice
+    new_op["detailAttribute"] = new_da
+    new_payload["originProduct"] = new_op
+    return new_payload
+
+
 def register_prepared_listing(d):
     """prepared payload 를 로드해 네이버 상품 등록을 수행.
 
@@ -981,9 +1053,30 @@ def prepare_listing(d, *, attach_fn=None):
         tentative_payload = _build_tentative_register_payload(
             d, name, category_id, listing_urls, detail_html
         )
+        # 컴플라이언스 컨텍스트에 카테고리 경로를 포함한다 — 고시 타입 추론이
+        # 등록 단계(mcp_server._build_compliance_context)와 *같은 입력* 으로
+        # 이루어지게 한다. 경로가 없으면 ETC 로 떨어지고, 등록 단계도 같은
+        # lookup 을 쓰므로 역시 ETC 로 떨어진다(두 단계 합의).
+        cat_path = _category_path_for(category_id)
+        # 등록 단계(mcp_server._build_compliance_context)와 *동일한* 보정:
+        # 카테고리 경로에서 추론한 고시 타입을 notice 의
+        # productInfoProvidedNoticeType 에 명시적으로 반영한다.
+        # ``_compliance_code_check`` 가 api_payload 의 notice 를 우선 읽으므로,
+        # 여기에 명시 타입이 없으면 ``_infer_notice_type`` 은 notice 만 보고
+        # 경로를 잃어 ETC 로 떨어진다 — 등록 단계가 FURNITURE 로 보는 같은
+        # 카테고리에서 불일치가 생긴다. 등록 단계가 하는 보정을 그대로 적용한다.
+        inferred_type = qa_agents._infer_notice_type(
+            {"category_path": cat_path, "category_name": cat_path}
+        )
+        tentative_payload = _inject_notice_type(tentative_payload, inferred_type)
+        compliance_context = {
+            "category_id": category_id,
+            "category_path": cat_path,
+            "category_name": cat_path,
+        }
         compliance_result = qa_agents._normalize_agent_result(
             qa_agents._compliance_code_check(
-                name, {"category_id": category_id}, api_payload=tentative_payload
+                name, compliance_context, api_payload=tentative_payload
             ),
             "compliance",
         )
@@ -1194,7 +1287,9 @@ __all__ = [
     "_build_product_dict",
     "_build_register_product_dict",
     "_build_tentative_register_payload",
+    "_category_path_for",
     "_fingerprint_sources",
+    "_inject_notice_type",
     "_prepared_dir",
     "_prepared_item_dir",
     "_prepared_payload_path",

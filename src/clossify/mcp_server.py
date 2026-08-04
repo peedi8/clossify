@@ -353,6 +353,77 @@ def _build_compliance_context(
     return context, effective_notice
 
 
+def _payload_notice_type(payload: dict[str, Any]) -> str:
+    """빌드된 페이로드에서 실제 신고되는 고시 타입을 추출한다.
+
+    페이로드의 ``originProduct.detailAttribute.productInfoProvidedNotice
+    .productInfoProvidedNoticeType`` 에서 읽는다. 이것이 네이버 API 로
+    실제 송신되는 값이다. 게이트의 판정 타입과 이 값이 다르면,
+    판매자가 게이트 질문에 답하고 통과했는데 실제 신고는 다른 타입으로
+    나가는 조용한 잘못 신고가 된다.
+    """
+    try:
+        notice = (
+            payload.get("originProduct", {})
+            .get("detailAttribute", {})
+            .get("productInfoProvidedNotice", {})
+        )
+        return str(notice.get("productInfoProvidedNoticeType") or "").strip().upper()
+    except (AttributeError, TypeError):
+        return ""
+
+
+def _gate_notice_type(category_id: str, product: dict[str, Any] | None = None) -> str:
+    """게이트(컴플라이언스 컨텍스트)가 판정하는 고시 타입을 반환한다.
+
+    ``_build_compliance_context`` 와 동일한 조회 경로(``_category_path_for``
+    → ``qa_agents._infer_notice_type``)를 쓴다. 명시 타입이 product 에 있으면
+    그것이 최우선이다(기존 규칙 회귀 방지).
+    """
+    ctx_product = product or {}
+    explicit = ""
+    user_notice = ctx_product.get("notice") if isinstance(ctx_product, dict) else None
+    if isinstance(user_notice, dict):
+        explicit = (
+            user_notice.get("productInfoProvidedNoticeType") or user_notice.get("notice_type") or ""
+        )
+    if not explicit and isinstance(ctx_product, dict):
+        explicit = (
+            ctx_product.get("notice_type") or ctx_product.get("productInfoProvidedNoticeType") or ""
+        )
+    if explicit:
+        return str(explicit).strip().upper()
+    category_path = _category_path_for(category_id)
+    return qa_agents._infer_notice_type(
+        {"category_path": category_path, "category_name": category_path}
+    )
+
+
+def _extract_status_type(body: Any) -> str:
+    """API 응답 본문에서 ``statusType`` 값을 추출한다 (대문자 정규화).
+
+    생성 응답과 조회 응답 모두에서 시도한다:
+      - ``body.originProduct.statusType``
+      - ``body.statusType``
+      - ``body.originProduct.originProduct.statusType`` (중첩 케이스)
+    """
+    if not isinstance(body, dict):
+        return ""
+    candidates = []
+    op = body.get("originProduct")
+    if isinstance(op, dict):
+        candidates.append(op.get("statusType"))
+        inner = op.get("originProduct")
+        if isinstance(inner, dict):
+            candidates.append(inner.get("statusType"))
+    candidates.append(body.get("statusType"))
+    for val in candidates:
+        text = str(val or "").strip().upper() if val else ""
+        if text:
+            return text
+    return ""
+
+
 def _run_compliance_gate(
     name: str,
     category_id: str,
@@ -905,6 +976,48 @@ def register_product(
     # (조용한 자동 채움 금지). 전송 페이로드에서는 naver_client 가 이미 제거했다.
     notice_filled = list(payload.get("notice_filled_from_config") or [])
 
+    # ------------------------------------------------------------------ #
+    # 불일치 트립와이어 (고시 타입 단일 진실).
+    #
+    # 게이트가 판정한 고시 타입과 빌드된 페이로드에 실린
+    # productInfoProvidedNoticeType 이 다르면 등록을 차단한다 (네이버 호출 0회).
+    # 이 클래스의 재발을 구조적으로 막는 장치다. 게이트가 FURNITURE 로 검사해
+    # 판매자에게 가구 필드를 물었는데, 페이로드는 ETC 로 신고되는 조용한 잘못
+    # 신고를 허용하지 않는다.
+    #
+    # 명시 타입이 product 에 주어진 경우 양쪽 모두 그것을 쓰므로 자동으로 일치한다.
+    # 명시 타입이 없으면 양쪽 모두 categoryId 에서 경로를 조회해 같은 휴리스틱을
+    # 돌리므로 일치해야 한다. 일치하지 않으면 구조 결함이고, 조용히 통과시키지
+    # 않고 트립와이어로 드러낸다.
+    # ------------------------------------------------------------------ #
+    payload_type = _payload_notice_type(payload)
+    gate_type = _gate_notice_type(category_id, product)
+    if payload_type and gate_type and payload_type != gate_type:
+        return {
+            "ok": False,
+            "status_code": None,
+            "origin_product_no": None,
+            "name_truncated": name_truncated,
+            "raw": None,
+            "seller_tags": None,
+            "blocked_by": "notice_type_tripwire",
+            "gate_notice_type": gate_type,
+            "payload_notice_type": payload_type,
+            "filled_from_prepared": filled_from_prepared,
+            "prepared_lookup": prepared_lookup,
+            "notice_filled_from_config": notice_filled,
+            "requested_status": status,
+            "applied_status": None,
+            "dry_run": _dry_run,
+            "message": (
+                f"고시 타입 불일치 — 게이트는 {gate_type!r} 로 검사했지만 "
+                f"페이로드는 {payload_type!r} 로 신고하려 한다. "
+                "판매자가 한쪽 질문에 답하고 통과했는데 다른 타입으로 신고되는 "
+                "조용한 잘못 신고를 차단한다."
+            ),
+            "error": None,
+        }
+
     # 결정론 컴플라이언스 게이트 (fail-closed).
     # 네이버 API 호출 직전에 고시 필수 필드/KC/원산지 검사를 실행한다.
     # FAIL 심각도 위반이 있으면 네이버를 호출하지 않고 거부한다.
@@ -1041,6 +1154,8 @@ def register_product(
             "filled_from_prepared": filled_from_prepared,
             "prepared_lookup": prepared_lookup,
             "notice_filled_from_config": notice_filled,
+            "requested_status": status,
+            "applied_status": outcome.get("statusType"),
             "dry_run": _dry_run,
             "error": None,
         }
@@ -1055,6 +1170,50 @@ def register_product(
     seller_tags_meta = (
         naver_client.seller_tag_autostrip_meta(body) if isinstance(body, dict) else None
     )
+
+    # ------------------------------------------------------------------ #
+    # 판매상태 보정 (Defect 3).
+    #
+    # 네이버 커머스 API 는 생성 시점의 originProduct.statusType 을 무시하고
+    # 기본값(SALE)로 저장하는 경우가 있다(실측 확인). 판매중지(SUSPENSION)로
+    # 올리려던 판매자가 판매중인 상품을 갖게 되는데 아무도 모르는 조용한 잘못된
+    # 상태다. 본 보정 경로는:
+    #   1. 생성 응답의 statusType 이 요청값과 다르면 update_product 로 맞춘다.
+    #   2. 보정 후 get_product 로 실제 상태를 재확인한다.
+    #   3. 그래도 다르면 ok=False 로 보고한다 (조용한 성공 금지).
+    # status="SALE" 이고 응답도 SALE 이면 추가 호출이 일어나지 않는다.
+    # ------------------------------------------------------------------ #
+    applied_status = _extract_status_type(body) if ok else ""
+    status_corrected = False
+    status_correction_attempted = False
+    if ok and applied_status and applied_status != status.upper() and origin_product_no:
+        status_correction_attempted = True
+        # 문서화된 상태 변경 경로로 맞춘다. update_product 는 채널 상품을
+        # 기준으로 하므로 originProductNo 가 아닌 채널 번호가 필요하다.
+        # 생성 응답에서 channelProductNo 를 함께 찾는다.
+        channel_no = None
+        if isinstance(body, dict):
+            channel_no = body.get("channelProductNo") or body.get("channelProduct", {}).get(
+                "channelProductNo"
+            )
+        if channel_no:
+            try:
+                correction_payload = {"statusType": status}
+                naver_client.update_product(channel_no, correction_payload)
+                # 보정 후 재확인.
+                _vsc, _vbody = naver_client.get_product(origin_product_no)
+                if isinstance(_vbody, dict):
+                    verified = _extract_status_type(_vbody)
+                    if verified:
+                        applied_status = verified
+                status_corrected = applied_status == status.upper()
+            except Exception:
+                # 보정 실패 — applied_status 는 보정 전 값으로 둔다.
+                # 조용한 성공 금지: 최종 ok 판정에서 이 차이가 반영된다.
+                pass
+        # ok 재판정: 보정 후에도 다르면 실패로 보고 (조용한 성공 금지).
+        if applied_status != status.upper():
+            ok = False
 
     # 에러 응답의 raw 본문은 화이트리스트 키만 남겨 노출.
     exposed_raw = _sanitize_body(body) if not ok else body
@@ -1071,6 +1230,10 @@ def register_product(
         "filled_from_prepared": filled_from_prepared,
         "prepared_lookup": prepared_lookup,
         "notice_filled_from_config": notice_filled,
+        "requested_status": status,
+        "applied_status": applied_status,
+        "status_corrected": status_corrected,
+        "status_correction_attempted": status_correction_attempted,
         "dry_run": _dry_run,
         "error": None if ok else _sanitize_text(f"API 반환 상태 {status_code}"),
     }

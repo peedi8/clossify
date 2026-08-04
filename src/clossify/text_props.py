@@ -141,6 +141,54 @@ EMPTY_MARKETING_COPY_RE = re.compile(
 
 SENSORY_COPY_NOISE_RE = EMPTY_MARKETING_COPY_RE
 
+# ---------------------------------------------------------------------------
+# Category-path -> notice-type heuristic table (canonical, single source).
+#
+# Both ``qa_agents._infer_notice_type`` (prepare step) and
+# ``naver_client._resolve_notice_type`` (register step) must infer the same
+# notice type from the same category path. Previously this table existed as
+# two literal copies with a comment admitting the duplication; the copies
+# inevitably diverged. It now lives once here, and both modules import this
+# symbol. This module is the upstream DAG node (no clossify imports), so it
+# is the safe shared home for both consumers.
+#
+# The single source of truth for notice *types/fields* remains
+# ``data/notice_types.json``; this tuple is only the path-keyword heuristic
+# that picks a candidate type before the data file is consulted.
+# ---------------------------------------------------------------------------
+CATEGORY_PATH_NOTICE_HINTS = (
+    ("가구", "FURNITURE"),
+    ("의류", "WEAR"),
+    ("신발", "SHOES"),
+    ("구두", "SHOES"),
+    ("가방", "BAG"),
+    ("침구", "SLEEPING_GEAR"),
+    ("커튼", "SLEEPING_GEAR"),
+    ("가전", "HOME_APPLIANCES"),
+    ("영상가전", "IMAGE_APPLIANCES"),
+    ("계절가전", "SEASON_APPLIANCES"),
+    ("사무용기기", "OFFICE_APPLIANCES"),
+    ("휴대폰", "CELLPHONE"),
+    ("광학기기", "OPTICS_APPLIANCES"),
+    ("귀금속", "JEWELLERY"),
+    ("보석", "JEWELLERY"),
+    ("시계", "JEWELLERY"),
+    ("서적", "BOOKS"),
+    ("어린이", "KIDS"),
+    ("생활화학", "BIOCHEMISTRY"),
+    ("살생물", "BIOCIDAL"),
+    ("패션잡화", "FASHION_ITEMS"),
+    ("주방", "KITCHEN_UTENSILS"),
+    ("식기", "KITCHEN_UTENSILS"),
+    ("화장품", "COSMETIC"),
+    ("식품", "FOOD"),
+    ("스포츠", "SPORTS_EQUIPMENT"),
+    ("악기", "MUSICAL_INSTRUMENT"),
+    ("자동차", "CAR_ARTICLES"),
+    ("의료기기", "MEDICAL_APPLIANCES"),
+    ("네비게이션", "NAVIGATION"),
+)
+
 # SEO-title specific banned patterns. These are a
 # superset of the marketing-claim regex aimed at title copy.
 SEO_TITLE_BANNED_RE = re.compile(
@@ -437,6 +485,7 @@ def _fallback_seo_title(title_ko, props, category_path):
 
 __all__ = [
     "BANNED_CLAIM_RE",
+    "CATEGORY_PATH_NOTICE_HINTS",
     "DESC_IMAGE_SCAN_LIMIT",
     "DETAIL_ASPECT_TALL",
     "DETAIL_CONTENT_TARGET",

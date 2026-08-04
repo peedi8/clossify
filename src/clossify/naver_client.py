@@ -19,6 +19,8 @@ import time
 import bcrypt
 import requests
 
+from .text_props import CATEGORY_PATH_NOTICE_HINTS
+
 BASE = "https://api.commerce.naver.com"
 # src/clossify/naver_client.py -> ../../. = project root
 _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -581,15 +583,38 @@ def _common_notice_defaults(defaults) -> dict:
     }
 
 
+def _category_path_for(category_id: str) -> str:
+    """``category_id`` 의 카테고리 경로를 반환 (알 수 없으면 빈 문자열).
+
+    판정 지점(build_payload)이 호출자가 경로를 넘겨주기를 기대하지 않고
+    ``categoryId`` 만으로 스스로 경로를 조회하도록 돕는다. 데이터 파일 부재·
+    알 수 없는 ID 는 조용히 빈 문자열로 떨어진다 — 이 경우 ETC 기본값을
+    쓰며(fail-closed 규칙 위반 없음: 알 수 없음을 알 수 없음으로 다룬다).
+    mcp_server._category_path_for / register._category_path_for 와 동일한
+    lookup(category_meta.category_path)을 쓴다.
+    """
+    try:
+        from . import category_meta
+
+        return category_meta.category_path(category_id, raise_if_unknown=False)
+    except Exception:
+        return ""
+
+
 def _resolve_notice_type(p) -> str:
     """상품 입력(p)에서 고시 타입을 결정한다.
 
     우선순위:
       1. ``p.notice.productInfoProvidedNoticeType`` / ``p.notice.notice_type``
       2. ``p.notice_type`` / ``p.productInfoProvidedNoticeType``
-      3. 카테고리 경로 휴리스틱 (``qa_agents._CATEGORY_PATH_NOTICE_HINTS`` 재사용)
+      3. 카테고리 경로 휴리스틱 (``text_props.CATEGORY_PATH_NOTICE_HINTS`` 재사용)
 
-    확정할 수 없으면 기존 동작(ETC 기본값)을 유지한다(회귀 없이 보존).
+    이 판정 지점은 호출자가 카테고리 경로를 넘겨주기를 기대하지 않는다.
+    ``categoryId`` 만 있으면 **스스로** ``_category_path_for`` 로 경로를
+    조회해 휴리스틱을 돌린다. 호출자가 ``category_name``/``category_path``
+    를 직접 준 경우 그것이 우선한다. 둘 다 없고 ``categoryId`` 도 조회되지
+    않으면 ETC 기본값(회귀 없이 보존).
+
     단, **명시적으로 알 수 없는 타입**이 주어지면 ``ValueError``
     (조용한 etc 폴백 금지 — 잘못된 고시 타입은 규제 위반).
 
@@ -606,15 +631,22 @@ def _resolve_notice_type(p) -> str:
         explicit = p.get("notice_type") or p.get("productInfoProvidedNoticeType") or ""
     notice_type = str(explicit or "").strip().upper()
     if not notice_type:
-        # 카테고리 경로 휴리스틱으로 추론 시도 (qa_agents 힌트 재사용).
-        category_text = (
-            " ".join(
+        # 카테고리 경로 휴리스틱으로 추론 시도.
+        # CATEGORY_PATH_NOTICE_HINTS 의 정본은 :mod:`text_props` 에 있으며,
+        # 본 모듈과 :mod:`qa_agents` 모두 거기서 import 한다 (단일 진실 공급원).
+        # 호출자가 경로를 직접 주지 않았으면 categoryId 로 스스로 조회한다 —
+        # 이 지점이 경로를 스스로 해석하지 않으면 게이트(mcp_server)와
+        # 페이로드(build_payload) 가 서로 다른 타입을 보는 불일치가 재발한다.
+        category_text = ""
+        if isinstance(p, dict):
+            category_text = " ".join(
                 str(p.get(k) or "") for k in ("category_name", "category_path", "categoryPath")
             )
-            if isinstance(p, dict)
-            else ""
-        )
-        for needle, inferred_type in _CATEGORY_PATH_NOTICE_HINTS:
+            if not category_text.strip():
+                category_id = str(p.get("categoryId") or p.get("category_id") or "").strip()
+                if category_id:
+                    category_text = _category_path_for(category_id)
+        for needle, inferred_type in CATEGORY_PATH_NOTICE_HINTS:
             if needle in category_text:
                 notice_type = inferred_type
                 break
@@ -622,8 +654,6 @@ def _resolve_notice_type(p) -> str:
         # 회귀 없이 보존: 타입이 주어지지 않고 카테고리 추론도 실패하면
         # 기존 동작(ETC 기본값)을 유지한다. 단, 명시적으로 알 수 없는 타입이
         # 주어진 경우는 아래에서 에러를 낸다(조용한 etc 폴백 금지).
-        # 고수준(MCP register_product)의 컴플라이언스 게이트가 카테고리 기반
-        # 추론으로 올바른 타입을 보정한다.
         notice_type = "ETC"
     spec = _notice_type_spec(notice_type)
     if spec is None:
@@ -632,43 +662,6 @@ def _resolve_notice_type(p) -> str:
             f"등록된 타입이 아닙니다. 조용한 etc 폴백 금지."
         )
     return notice_type
-
-
-# 카테고리 경로 휴리스틱 (qa_agents._CATEGORY_PATH_NOTICE_HINTS 와 동일).
-# naver_client 는 qa_agents 를 import 하지 않으므로 로컬 사본을 둔다.
-# 단일 진실 공급원은 data/notice_types.json 이며, 이 휴리스틱은 추론 보조일 뿐.
-_CATEGORY_PATH_NOTICE_HINTS = (
-    ("가구", "FURNITURE"),
-    ("의류", "WEAR"),
-    ("신발", "SHOES"),
-    ("구두", "SHOES"),
-    ("가방", "BAG"),
-    ("침구", "SLEEPING_GEAR"),
-    ("커튼", "SLEEPING_GEAR"),
-    ("가전", "HOME_APPLIANCES"),
-    ("영상가전", "IMAGE_APPLIANCES"),
-    ("계절가전", "SEASON_APPLIANCES"),
-    ("사무용기기", "OFFICE_APPLIANCES"),
-    ("휴대폰", "CELLPHONE"),
-    ("광학기기", "OPTICS_APPLIANCES"),
-    ("귀금속", "JEWELLERY"),
-    ("보석", "JEWELLERY"),
-    ("시계", "JEWELLERY"),
-    ("서적", "BOOKS"),
-    ("어린이", "KIDS"),
-    ("생활화학", "BIOCHEMISTRY"),
-    ("살생물", "BIOCIDAL"),
-    ("패션잡화", "FASHION_ITEMS"),
-    ("주방", "KITCHEN_UTENSILS"),
-    ("식기", "KITCHEN_UTENSILS"),
-    ("화장품", "COSMETIC"),
-    ("식품", "FOOD"),
-    ("스포츠", "SPORTS_EQUIPMENT"),
-    ("악기", "MUSICAL_INSTRUMENT"),
-    ("자동차", "CAR_ARTICLES"),
-    ("의료기기", "MEDICAL_APPLIANCES"),
-    ("네비게이션", "NAVIGATION"),
-)
 
 
 def _is_furniture_notice(p):
@@ -1400,7 +1393,11 @@ def build_payload(p, detail_html, images, status="SALE"):
     option_info = _build_option_info(p, opts)
     defaults = _notice_defaults(p)
     notice = _product_info_notice(p, defaults)
-    display_default = "OFF" if status == "SUSPENSION" else "ON"
+    # 실측 확인: status="SUSPENSION" 일 때 channelProductDisplayStatusType
+    # 으로 "OFF" 를 보내면 네이버 API 가 NotValidEnum 으로 거절한다. 살아있는
+    # API 로 등록 성공이 확인된 값은 "SUSPENSION" 이다. status="SALE" 일 때의
+    # "ON" 도 등록 성공이 확인된 값이므로 그대로 둔다.
+    display_default = "SUSPENSION" if status == "SUSPENSION" else "ON"
     # 상품명 정책 컷: 네이버 커머스 API 는 50자 초과 시 400 거절.
     # mcp_server.register_product 도 사전에 자르지만, build_payload 를
     # 직접 호출하는 경로까지 보호하기 위해 여기서도 컷한다.
@@ -1469,11 +1466,11 @@ def build_payload(p, detail_html, images, status="SALE"):
                 },
             },
             "detailAttribute": detail_attribute,
-            "smartstoreChannelProduct": {
-                "naverShoppingRegistration": True,
-                "channelProductDisplayStatusType": p.get("display", display_default),
-            },
-        }
+        },
+        "smartstoreChannelProduct": {
+            "naverShoppingRegistration": True,
+            "channelProductDisplayStatusType": p.get("display", display_default),
+        },
     }
     # KC 설정 부재 경고를 페이로드 메타에 포함(조용한 생략 금지).
     if kc_warning:

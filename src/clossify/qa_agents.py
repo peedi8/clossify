@@ -30,7 +30,7 @@ from __future__ import annotations
 import re
 
 from . import common
-from .text_props import BANNED_CLAIM_RE
+from .text_props import BANNED_CLAIM_RE, CATEGORY_PATH_NOTICE_HINTS
 
 # ---------------------------------------------------------------------------
 # Verdict 상수. PENDING 은 본 이식판이 새로 도입한 "위임 미회신" 상태다.
@@ -308,38 +308,11 @@ def _notice_type_spec(notice_type):
 
 # 고시 타입 결정: 입력에서 명시적으로 주어지거나, 카테고리 경로에서 휴리스틱.
 # (원본의 _is_furniture_notice 휴리스틱을 일반화한 데이터 기반 매핑)
-_CATEGORY_PATH_NOTICE_HINTS = (
-    ("가구", "FURNITURE"),
-    ("의류", "WEAR"),
-    ("신발", "SHOES"),
-    ("구두", "SHOES"),
-    ("가방", "BAG"),
-    ("침구", "SLEEPING_GEAR"),
-    ("커튼", "SLEEPING_GEAR"),
-    ("가전", "HOME_APPLIANCES"),
-    ("영상가전", "IMAGE_APPLIANCES"),
-    ("계절가전", "SEASON_APPLIANCES"),
-    ("사무용기기", "OFFICE_APPLIANCES"),
-    ("휴대폰", "CELLPHONE"),
-    ("광학기기", "OPTICS_APPLIANCES"),
-    ("귀금속", "JEWELLERY"),
-    ("보석", "JEWELLERY"),
-    ("시계", "JEWELLERY"),
-    ("서적", "BOOKS"),
-    ("어린이", "KIDS"),
-    ("생활화학", "BIOCHEMISTRY"),
-    ("살생물", "BIOCIDAL"),
-    ("패션잡화", "FASHION_ITEMS"),
-    ("주방", "KITCHEN_UTENSILS"),
-    ("식기", "KITCHEN_UTENSILS"),
-    ("화장품", "COSMETIC"),
-    ("식품", "FOOD"),
-    ("스포츠", "SPORTS_EQUIPMENT"),
-    ("악기", "MUSICAL_INSTRUMENT"),
-    ("자동차", "CAR_ARTICLES"),
-    ("의료기기", "MEDICAL_APPLIANCES"),
-    ("네비게이션", "NAVIGATION"),
-)
+#
+# ``CATEGORY_PATH_NOTICE_HINTS`` 테이블의 정본은 :mod:`text_props` 에 있다
+# (의존 없는 상위 DAG 노드). 본 모듈과 :mod:`naver_client` 모두 거기서
+# import 한다. 과거에 두 모듈에 사본이 있었고 주석으로 "동일" 이라고
+# 표시만 했으나, 사본은 inevitably 갈라진다 — 단일 진실 공급원으로 통합.
 
 
 def _infer_notice_type(context):
@@ -347,7 +320,7 @@ def _infer_notice_type(context):
 
     우선순위:
       1. ``context.notice.notice_type`` / ``context.notice_type`` / ``context.productInfoProvidedNoticeType``
-      2. 카테고리 경로 휴리스틱 (``_CATEGORY_PATH_NOTICE_HINTS``)
+      2. 카테고리 경로 휴리스틱 (``CATEGORY_PATH_NOTICE_HINTS``)
 
     알 수 없으면 ``"ETC"`` (원본 기본값).
     """
@@ -365,7 +338,7 @@ def _infer_notice_type(context):
         )
     else:
         cat_text = ""
-    for needle, notice_type in _CATEGORY_PATH_NOTICE_HINTS:
+    for needle, notice_type in CATEGORY_PATH_NOTICE_HINTS:
         if needle in cat_text:
             return notice_type
     return "ETC"

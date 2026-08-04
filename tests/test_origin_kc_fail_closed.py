@@ -233,9 +233,13 @@ class TestModelNameNoExternalPrefix:
         assert naver_client._model_name_default({"num_iid": "123", "item_id": "456"}) == ""
 
     def test_no_tb_prefix_in_payload(self):
+        # categoryId 는 ETC 로 폴백하는 미확정 ID 를 쓴다 — 본 검증의 대상은
+        # 모델명 접두사이지 고시 타입이 아니다. (build_payload 가 이제 categoryId
+        # 만으로 경로를 자체 조회하므로, 50002366 은 HOME_APPLIANCES 로 바뀌어
+        # etc 노드 키를 쓸 수 없다.)
         product = {
             "name": "테스트",
-            "categoryId": "50002366",
+            "categoryId": "99999999",
             "salePrice": 5000,
             "origin_code": "05",
             "made_in": "한국",
@@ -249,9 +253,10 @@ class TestModelNameNoExternalPrefix:
         assert "modelName" not in etc
 
     def test_model_name_from_config_propagated(self):
+        # 동일한 이유로 ETC 폴백 카테고리 사용 (위 주석 참조).
         product = {
             "name": "테스트",
-            "categoryId": "50002366",
+            "categoryId": "99999999",
             "salePrice": 5000,
             "origin_code": "05",
             "made_in": "한국",
