@@ -277,6 +277,76 @@ def _apply_qa_to_payload(payload, qa_result):
     return payload
 
 
+def _build_register_product_dict(d, name, category_id):
+    """register 단계가 naver_client.build_payload 에 넘길 상품 dict 와 동일한 형태를 구성.
+
+    준비 단계의 컴플라이언스 검사가 등록 단계와 *같은 해석* 을 보려면, 컴플라이언스에
+    넘기는 임시 페이로드를 register 단계가 만드는 것과 같은 빌더(``naver_client.
+    build_payload``)로 만들어야 한다. 본 함수는 그 빌더에 들어갈 상품 dict 를
+    ``mcp_server.register_product`` 와 동일한 키 셋으로 조립한다.
+
+    빌더 자체는 호출하지 않고 dict 만 반환한다(호출은 호출자의 책임). 상품명 50자
+    절단은 빌더 내부에서 이뤄지므로 여기서는 원본 이름을 그대로 둔다.
+    """
+    sale_price = d.get("salePrice")
+    if sale_price is None:
+        sale_price = d.get("sell_price") or d.get("price")
+    product = {
+        "name": name,
+        "categoryId": str(category_id or d.get("categoryId") or d.get("category_id") or ""),
+        "salePrice": int(sale_price),
+        "tags": list(d.get("tags") or []),
+        "stock": int(d.get("stock", 1)),
+        "delivery_fee": int(d.get("delivery_fee", 3000)),
+        "courier": d.get("courier") or "CJGLS",
+    }
+    if d.get("options"):
+        product["options"] = d.get("options")
+    notice = d.get("notice")
+    if notice is not None:
+        product["notice"] = notice
+    # 원산지/AS/제조사/수입자 등 규제값 — 빌더가 config 폴백으로 읽는 후보 키.
+    for key in (
+        "origin_code",
+        "as_tel",
+        "as_guide",
+        "manufacturer",
+        "importer",
+        "made_in",
+        "origin_content",
+        "cert_detail",
+        "quality_assurance_standard",
+        "return_cost_reason",
+        "no_refund_reason",
+        "compensation_procedure",
+        "trouble_shooting_contents",
+    ):
+        value = d.get(key)
+        if value:
+            product[key] = value
+    return product
+
+
+def _build_tentative_register_payload(d, name, category_id, listing_urls, detail_html):
+    """등록 단계가 만들 페이로드를 임시로 빌드한다 (컴플라이언스 검사용).
+
+    ``naver_client.build_payload`` 는 등록 단계와 *동일한* 규제값 해석(origin/AS/
+    고시 기본값/공통 5필드 포함)을 페이로드에 반영한다. 본 함수로 그 빌더를 한 번
+    호출해 임시 페이로드를 만들면, 준비 단계의 컴플라이언스 검사가 등록 시 실제로
+    만들어질 값과 동일한 문맥을 보게 된다 — 두 단계가 어긋날 수 없다.
+
+    Raises:
+        ValueError: 필수 설정(원산지 등)이 없어 빌더가 페이로드를 만들 수 없을 때.
+            호출자는 이것을 컴플라이언스 위반 + needs_user 로 번역해야 한다
+            (준비 단계에서 예외가 그대로 터지면 안 된다).
+    """
+    from . import naver_client as _nc
+
+    product = _build_register_product_dict(d, name, category_id)
+    status = d.get("status") or "SALE"
+    return _nc.build_payload(product, detail_html, listing_urls, status=status)
+
+
 def register_prepared_listing(d):
     """prepared payload 를 로드해 네이버 상품 등록을 수행.
 
@@ -836,28 +906,40 @@ def prepare_listing(d, *, attach_fn=None):
             },
             "copy",
         )
-    # 컴플라이언스: context 기반 최소 검사만. api_payload 가 없으므로 일부 검사는
-    # PENDING 으로 둘 수 있다(단, FAIL 로 만들지는 않는다 — 원본 정책).
+    # 컴플라이언스: 등록 단계가 만들 페이로드와 *동일한 해석* 으로 검사한다.
+    # 등록 단계가 쓰는 빌더(``naver_client.build_payload``)로 임시 페이로드를
+    # 만들어 컴플라이언스에 넘긴다 — 원산지/AS/고시 기본값/공통 5필드가 모두
+    # 반영된, 등록 시 실제로 만들어질 값으로 검사한다. 두 단계가 다른 것을
+    # 보는 근본 원인을 해결한다(컴플라이언스 문맥 불일치).
+    #
+    # 예외 처리: 빌더는 필수 설정(원산지 등)이 없으면 예외를 던진다. 준비 단계의
+    # 역할은 "무엇이 부족한지 알려주는 것" 이므로, 예외를 컴플라이언스 위반 +
+    # needs_user 요청으로 번역한다 (예외가 그대로 터지면 정상 흐름이 막힌다).
     try:
-        compliance_ctx = {
-            "category_id": category_id,
-            "notice": d.get("notice") or {},
-        }
-        compliance_result = qa_agents._normalize_agent_result(
-            qa_agents._compliance_code_check(name, compliance_ctx), "compliance"
+        tentative_payload = _build_tentative_register_payload(
+            d, name, category_id, listing_urls, detail_html
         )
-    except Exception:
+        compliance_result = qa_agents._normalize_agent_result(
+            qa_agents._compliance_code_check(
+                name, {"category_id": category_id}, api_payload=tentative_payload
+            ),
+            "compliance",
+        )
+    except Exception as exc:
         compliance_result = qa_agents._qa_agent_result(
             "compliance",
-            qa_agents.PENDING,
+            qa_agents.FAIL,
             [
                 {
-                    "rule": "컴플라이언스 검사 대기",
-                    "severity": qa_agents.PENDING,
-                    "detail": "컴플라이언스 검사 중 예외 — PENDING 등록.",
+                    "rule": "등록 페이로드 생성 불가",
+                    "severity": qa_agents.FAIL,
+                    "detail": (
+                        "등록 단계가 만들 페이로드를 조립하는 중 필수값 누락 등으로 "
+                        f"실패했습니다: {exc}. 해당 항목을 보완해야 등록할 수 있습니다."
+                    ),
                 }
             ],
-            "컴플라이언스 PENDING",
+            "컴플라이언스 FAIL — 등록 페이로드 생성 불가",
         )
     qa_result = qa_agents.aggregate_qa_results([image_result, copy_result, compliance_result])
 
@@ -931,6 +1013,8 @@ def prepare_listing(d, *, attach_fn=None):
 
 __all__ = [
     "_build_product_dict",
+    "_build_register_product_dict",
+    "_build_tentative_register_payload",
     "_prepared_dir",
     "_prepared_item_dir",
     "_prepared_payload_path",

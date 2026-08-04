@@ -711,6 +711,16 @@ def register_product(
     if status not in {"SALE", "SUSPENSION"}:
         return _fail("status 는 'SALE' 또는 'SUSPENSION' 이어야 합니다.")
 
+    # product_key 를 한 번만 유도한다 (이름 절단 *전* 의 원본 이름 기준).
+    # 자동 채움(prepared 조회)과 아래 prepared QA 게이트가 **같은 키** 를 써야
+    # 한다 — 이름이 50자로 잘린 뒤에 키를 다시 유도하면 다른 키가 나와,
+    # 게이트가 자동 채움이 찾은 prepared 를 못 찾고 FAIL 판정을 우회하게 된다.
+    # 정본은 원본 이름 기준 키 하나뿐이다.
+    try:
+        _product_key = _register_mod.make_product_key(name, int(price))
+    except Exception:
+        _product_key = None
+
     # ------------------------------------------------------------------ #
     # prepared payload 로부터 image_urls / detail_html 채우기.
     #
@@ -723,11 +733,8 @@ def register_product(
     filled_from_prepared: list[str] = []
 
     if _need_images or _need_detail:
-        # name+price 에서 product_key 를 유도해 prepared payload 조회.
-        try:
-            _fill_pkey = _register_mod.make_product_key(name, int(price))
-        except Exception:
-            _fill_pkey = None
+        # 위에서 한 번 유도한 product_key 를 그대로 쓴다 (재유도 금지).
+        _fill_pkey = _product_key
         _fill_prepared: dict[str, Any] | None = None
         if _fill_pkey:
             try:
@@ -867,12 +874,13 @@ def register_product(
     # 적용한다(PENDING/FAIL 차단 — 네이버 호출 0회). prepared 가 없으면 기존대로
     # 결정론 검사만 적용하고 응답에 gate:"deterministic_only" 를 표기한다.
     # 시그니처는 변경하지 않는다.
+    #
+    # product_key 는 위에서 *한 번* 유도한 것을 그대로 쓴다. 여기서 다시 유도하면
+    # 이름이 50자로 잘린 뒤라 다른 키가 나오고, 자동 채움이 찾은 prepared 와 게이트가
+    # 판정한 prepared 가 달라진다(FAIL 판정 우회). 같은 키 하나를 공유한다.
     gate_label = "deterministic_only"
     if not _dry_run:
-        try:
-            _pkey = _register_mod.make_product_key(name, int(price))
-        except Exception:
-            _pkey = None
+        _pkey = _product_key
         if _pkey:
             try:
                 _prepared = _register_mod.load_prepared_payload(product_key=_pkey)
