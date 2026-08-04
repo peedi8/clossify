@@ -1,0 +1,315 @@
+# SPDX-FileCopyrightText: 2026 3rdhand
+# SPDX-License-Identifier: LicenseRef-SustainableUse-1.0
+# Providing this software to others is permitted only free of charge and for
+# non-commercial purposes. See LICENSE.md.
+"""수확 데이터 정합 — 2026-08-04 야간 실호출로 확정된 계약 수확 검증.
+
+본 테스트 파일은 살아있는 네이버 커머스 API 의 400 응답 원문으로 실증된
+2026-08-04 야간 수확분이 데이터 파일에 정확히 반영되었는지 검증한다.
+핵심 계약 — **목록 밖 유추 추가 절대 금지**. 본 테스트는 실증분만 데이터에
+있는지 확인한다.
+
+검증 항목:
+  (a) 수확된 XOR 관계가 데이터에 실재하고, 대표 타입에서 게이트가 XOR 을
+      적용한다 (하나만=통과, 둘 다=위반, 둘 다 없음=미제공).
+  (b) geneticallyModified=False 가 제공으로 판정된다 (boolean).
+  (c) IMAGE_APPLIANCES 필수 필드 목록에 additionalCost 가 있다.
+  (d) 데이터 파일 스키마 정합 — 관계·타입에 등장하는 필드가 notice_types
+      의 어느 타입 fields 에 실재한다 (고아 필드 없음).
+
+COMMERCE_DRY_RUN 을 끈 상태에서 단위 판정 함수로 검증한다. HTTP 호출은
+없다(단위 판정 함수만 사용).
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+# src 레이아웃 지원.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_SRC = _PROJECT_ROOT / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+from clossify import naver_client, qa_agents
+
+# --------------------------------------------------------------------------- #
+# 수확 목록 — 2026-08-04 야간 실호출로 확정된 XOR 관계 (19개 타입, 22쌍).
+# KITCHEN_UTENSILS/ETC 는 기존 기록분이므로 여기서는 수확분만 나열한다.
+# 본 목록은 테스트 고정값이다 — 데이터 파일과 비교하는 기준.
+# --------------------------------------------------------------------------- #
+
+# 각 타입별로 확정된 XOR 쌍의 리스트.
+_HARVESTED_XOR: dict[str, list[tuple[str, str]]] = {
+    "COSMETIC": [("expirationDate", "expirationDateText")],
+    "HOME_APPLIANCES": [("releaseDate", "releaseDateText")],
+    "FOOD": [
+        ("packDate", "packDateText"),
+        ("consumptionDate", "consumptionDateText"),
+    ],
+    "SEASON_APPLIANCES": [("releaseDate", "releaseDateText")],
+    "OFFICE_APPLIANCES": [("releaseDate", "releaseDateText")],
+    "CELLPHONE": [("releaseDate", "releaseDateText")],
+    "OPTICS_APPLIANCES": [("releaseDate", "releaseDateText")],
+    "BOOKS": [("publishDate", "publishDateText")],
+    "KIDS": [("releaseDate", "releaseDateText")],
+    "BIOCHEMISTRY": [
+        ("expirationDate", "expirationDateText"),
+        ("packDate", "packDateText"),
+    ],
+    "MICROELECTRONICS": [("releaseDate", "releaseDateText")],
+    "NAVIGATION": [("releaseDate", "releaseDateText")],
+    "CAR_ARTICLES": [("releaseDate", "releaseDateText")],
+    "MEDICAL_APPLIANCES": [("releaseDate", "releaseDateText")],
+    "GENERAL_FOOD": [
+        ("packDate", "packDateText"),
+        ("consumptionDate", "consumptionDateText"),
+    ],
+    "DIET_FOOD": [("consumptionDate", "consumptionDateText")],
+    "MUSICAL_INSTRUMENT": [("releaseDate", "releaseDateText")],
+    "SPORTS_EQUIPMENT": [("releaseDate", "releaseDateText")],
+    "IMAGE_APPLIANCES": [("releaseDate", "releaseDateText")],
+}
+
+# 수확된 boolean 필드 — 2026-08-04 야간.
+_HARVESTED_BOOLEAN_FIELDS = {"geneticallyModified", "importDeclarationCheck"}
+
+# 수확된 date 필드 (형식이 확인된 것만).
+_HARVESTED_DATE_FIELDS = {"packDate", "consumptionDate"}
+
+
+def _flatten_pairs(pairs: list[tuple[str, str]]) -> set[tuple[str, str]]:
+    return set(pairs)
+
+
+def _xor_groups_as_set(notice_type: str) -> set[tuple[str, str]]:
+    """qa_agents._notice_xor_groups 결과를 frozenset-of-tuples 로 반환."""
+    groups = qa_agents._notice_xor_groups(notice_type)
+    return {tuple(sorted(g)) for g in groups}
+
+
+# =========================================================================== #
+# (a) 수확된 XOR 관계가 데이터에 실재 + 게이트 적용.
+# =========================================================================== #
+
+
+class TestHarvestedXorRelations:
+    """(a) 수확된 19개 타입/22쌍 의 XOR 관계가 데이터에 실재하며,
+    대표 타입에서 게이트가 XOR 을 올바르게 적용한다."""
+
+    def test_a_all_harvested_types_present_in_relations(self):
+        """수확된 19개 타입이 전부 notice_field_relations.json 에 있다."""
+        relations = qa_agents._load_notice_field_relations()
+        missing_types = [t for t in _HARVESTED_XOR if t not in relations]
+        assert not missing_types, f"수확된 타입 중 relations 데이터에 없는 것: {missing_types}"
+
+    def test_a_all_harvested_pairs_present(self):
+        """각 타입별 수확된 XOR 쌍이 전부 데이터에 있다."""
+        for notice_type, pairs in _HARVESTED_XOR.items():
+            actual = _xor_groups_as_set(notice_type)
+            for left, right in pairs:
+                key = tuple(sorted((left, right)))
+                assert key in actual, (
+                    f"{notice_type}: XOR 쌍 ({left}, {right}) 이 데이터에 없음. "
+                    f"실제 그룹: {actual}"
+                )
+
+    @pytest.mark.parametrize(
+        "notice_type,left,right",
+        [
+            ("COSMETIC", "expirationDate", "expirationDateText"),
+            ("FOOD", "packDate", "packDateText"),
+            ("BOOKS", "publishDate", "publishDateText"),
+        ],
+    )
+    def test_a_gate_one_only_passes(self, notice_type, left, right):
+        """대표 3개 타입 — 하나만 채우면 누락 0건 (통과 판정)."""
+        fields = [left, right]
+        # left 만 채운 경우.
+        body = {left: "2026-08-04"}
+        missing = qa_agents._notice_field_missing_with_relations(
+            body, fields, notice_type=notice_type
+        )
+        assert missing == [], f"{notice_type}: {left} 만 있는데 누락 보고됨: {missing}"
+        # right 만 채운 경우.
+        body = {right: "2026년 8월"}
+        missing = qa_agents._notice_field_missing_with_relations(
+            body, fields, notice_type=notice_type
+        )
+        assert missing == [], f"{notice_type}: {right} 만 있는데 누락 보고됨: {missing}"
+
+    @pytest.mark.parametrize(
+        "notice_type,left,right",
+        [
+            ("COSMETIC", "expirationDate", "expirationDateText"),
+            ("FOOD", "packDate", "packDateText"),
+            ("BOOKS", "publishDate", "publishDateText"),
+        ],
+    )
+    def test_a_gate_both_filled_is_xor_violation(self, notice_type, left, right):
+        """대표 3개 타입 — 둘 다 채우면 XOR 위반."""
+        body = {left: "2026-08-04", right: "2026년 8월"}
+        violations = qa_agents._notice_field_xor_violations(body, notice_type)
+        assert (
+            len(violations) == 1
+        ), f"{notice_type}: 둘 다 채웠을 때 위반이 1건이어야 함: {len(violations)}"
+        detail = str(violations[0].get("detail") or "")
+        assert (
+            "둘 중 하나만" in detail
+        ), f"{notice_type}: 위반 사유에 '둘 중 하나만' 없음: {detail!r}"
+
+    @pytest.mark.parametrize(
+        "notice_type,left,right",
+        [
+            ("COSMETIC", "expirationDate", "expirationDateText"),
+            ("FOOD", "packDate", "packDateText"),
+            ("BOOKS", "publishDate", "publishDateText"),
+        ],
+    )
+    def test_a_gate_neither_is_missing(self, notice_type, left, right):
+        """대표 3개 타입 — 둘 다 없으면 미제공 (누락 보고).
+
+        XOR 그룹 전체가 충족되지 않았으므로 첫 멤버가 누락으로 보고된다
+        (중복 방지 — 기존 계약).
+        """
+        fields = [left, right]
+        body: dict = {}
+        missing = qa_agents._notice_field_missing_with_relations(
+            body, fields, notice_type=notice_type
+        )
+        assert len(missing) == 1, f"{notice_type}: 둘 다 비었을 때 누락이 1건이어야 함: {missing}"
+
+
+# =========================================================================== #
+# (b) geneticallyModified=False 가 제공으로 판정.
+# =========================================================================== #
+
+
+class TestHarvestedBooleanFields:
+    """(b) 수확된 boolean 필드 판정 — False 도 제공."""
+
+    def test_b_genetically_modified_type_is_boolean(self):
+        """geneticallyModified 의 타입이 boolean 이다."""
+        assert qa_agents._notice_field_type("geneticallyModified") == "boolean"
+
+    def test_b_import_declaration_check_type_is_boolean(self):
+        """importDeclarationCheck 의 타입이 boolean 이다."""
+        assert qa_agents._notice_field_type("importDeclarationCheck") == "boolean"
+
+    def test_b_false_is_provided(self):
+        """geneticallyModified=False 는 제공으로 판정된다."""
+        fields = ["geneticallyModified"]
+        # False → 제공됨.
+        assert qa_agents._notice_field_missing({"geneticallyModified": False}, fields) == []
+        # True → 제공됨.
+        assert qa_agents._notice_field_missing({"geneticallyModified": True}, fields) == []
+        # None → 미제공.
+        assert qa_agents._notice_field_missing({"geneticallyModified": None}, fields) == [
+            "geneticallyModified"
+        ]
+        # 키 부재 → 미제공.
+        assert qa_agents._notice_field_missing({}, fields) == ["geneticallyModified"]
+
+    def test_b_string_refused_in_payload_validation(self):
+        """boolean 필드에 문자열을 주면 _validate_notice_field_type 이 거부."""
+        with pytest.raises(ValueError, match="예/아니오"):
+            naver_client._validate_notice_field_type("geneticallyModified", "아니오")
+        with pytest.raises(ValueError, match="예/아니오"):
+            naver_client._validate_notice_field_type("importDeclarationCheck", "true")
+
+    def test_b_bool_accepted_in_payload_validation(self):
+        """Python bool 은 검증을 통과한다."""
+        assert naver_client._validate_notice_field_type("geneticallyModified", False) is False
+        assert naver_client._validate_notice_field_type("importDeclarationCheck", True) is True
+
+
+# =========================================================================== #
+# (c) IMAGE_APPLIANCES 필드 목록에 additionalCost 가 있다.
+# =========================================================================== #
+
+
+class TestImageAppliancesAdditionalCost:
+    """(c) IMAGE_APPLIANCES 필수 필드에 additionalCost 가 있다 (NotNull 실증)."""
+
+    def test_c_additional_cost_in_image_appliances_fields(self):
+        """IMAGE_APPLIANCES 의 fields 배열에 additionalCost 가 있다."""
+        spec = naver_client._notice_type_spec("IMAGE_APPLIANCES")
+        assert spec is not None, "IMAGE_APPLIANCES 스펙이 없음"
+        fields = spec.get("fields") or []
+        assert (
+            "additionalCost" in fields
+        ), f"IMAGE_APPLIANCES 필드에 additionalCost 가 없음: {fields}"
+
+
+# =========================================================================== #
+# (d) 데이터 파일 스키마 정합 — 고아 필드 없음.
+# =========================================================================== #
+
+
+class TestSchemaConsistency:
+    """(d) 관계·타입 데이터에 등장하는 필드가 notice_types 의 어느 타입
+    fields 에 실재한다 (고아 필드 없음)."""
+
+    @staticmethod
+    def _all_notice_fields() -> set[str]:
+        """notice_types.json 의 모든 타입 fields 를 합친 집합."""
+        all_fields: set[str] = set()
+        for entry in naver_client._load_notice_type_specs():
+            for f in entry.get("fields") or []:
+                all_fields.add(f)
+        return all_fields
+
+    def test_d_relation_fields_exist_in_some_notice_type(self):
+        """relations 데이터에 등장하는 모든 필드가 notice_types 어딘가에 있다."""
+        relations = qa_agents._load_notice_field_relations()
+        all_fields = self._all_notice_fields()
+        orphans: list[str] = []
+        for notice_type, groups in relations.items():
+            xor_pairs = (groups or {}).get("xor", []) if isinstance(groups, dict) else []
+            for pair in xor_pairs:
+                for field in pair:
+                    if field not in all_fields:
+                        orphans.append(f"{notice_type}.{field}")
+        assert (
+            not orphans
+        ), f"relations 에 등장하지만 notice_types 어디에도 없는 필드 (고아): {orphans}"
+
+    def test_d_type_data_fields_exist_in_some_notice_type(self):
+        """notice_field_types.json 의 필드가 notice_types 어딘가에 있다."""
+        types = qa_agents._load_notice_field_types()
+        all_fields = self._all_notice_fields()
+        orphans = [f for f in types if f not in all_fields]
+        # 핵심 계약: 타입 파일은 실증된 타입 정보만 둔다. 그 필드가
+        # notice_types 의 어떤 타입에도 속하지 않으면 데이터가 갈라진 것이다.
+        assert (
+            not orphans
+        ), f"notice_field_types 에 있지만 notice_types 어디에도 없는 필드: {orphans}"
+
+    def test_d_harvested_fields_are_in_type_data(self):
+        """수확된 boolean/date 필드가 notice_field_types.json 에 기록되어 있다."""
+        types = qa_agents._load_notice_field_types()
+        for field in _HARVESTED_BOOLEAN_FIELDS:
+            assert field in types, f"수확된 boolean 필드 {field} 이 notice_field_types 에 없음"
+            assert (
+                types[field]["type"] == "boolean"
+            ), f"{field} 의 타입이 boolean 이 아님: {types[field].get('type')!r}"
+        for field in _HARVESTED_DATE_FIELDS:
+            assert field in types, f"수확된 date 필드 {field} 이 notice_field_types 에 없음"
+            assert (
+                types[field]["type"] == "date"
+            ), f"{field} 의 타입이 date 가 아님: {types[field].get('type')!r}"
+
+    def test_d_nutrition_facts_not_in_type_data(self):
+        """nutritionFacts 는 문자열로 통과 실증되어 타입 파일에 **없어야** 한다.
+
+        핵심 계약: 미기재=문자열이 기본이므로, 문자열로 실증된 필드는 타입
+        파일에 넣지 않는다. 넣으면 회귀다.
+        """
+        types = qa_agents._load_notice_field_types()
+        assert "nutritionFacts" not in types, (
+            "nutritionFacts 가 타입 파일에 있습니다 — 문자열로 실증되어 "
+            "들어가지 않아야 합니다 (미기재=문자열이 기본)."
+        )

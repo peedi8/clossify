@@ -65,8 +65,9 @@
       "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
       "node": "imageAppliances",
       "label_ko": "영상가전(TV류) 상품 요약 정보",
-      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "itemName", "modelName", "certificationType", "ratedVoltage", "powerConsumption", "energyEfficiencyRating", "releaseDateType", "releaseDate", "releaseDateText", "manufacturer", "size", "displaySpecification", "warrantyPolicy", "afterServiceDirector"],
-      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product"
+      "fields": ["returnCostReason", "noRefundReason", "qualityAssuranceStandard", "compensationProcedure", "troubleShootingContents", "itemName", "modelName", "certificationType", "ratedVoltage", "powerConsumption", "energyEfficiencyRating", "releaseDateType", "releaseDate", "releaseDateText", "manufacturer", "size", "displaySpecification", "additionalCost", "warrantyPolicy", "afterServiceDirector"],
+      "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "field_source_note": "additionalCost is NotNull per live Naver API (2026-08-04): with every listed field populated, 'additionalCost : 데이터를 입력해 주세요' was returned; injecting additionalCost proceeded to XOR validation. Source: live API 400 NotNull response, 2026-08-04."
     },
     {
       "type": "SEASON_APPLIANCES",

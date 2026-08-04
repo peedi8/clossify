@@ -9,6 +9,10 @@
     {
       "url": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
       "what": "Earlier audit finding for ETC: afterServiceDirector and customerServicePhoneNumber are mutually exclusive (A/S contact single-channel exposure policy). The live API refuses when both are present. This was previously handled as a code special-case in naver_client._enforce_notice_as_contact_exclusive for ETC alone; it is now recorded here as data so the same mechanism covers both confirmed cases."
+    },
+    {
+      "url": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+      "what": "Live API 400 XOR response, 2026-08-04. Probe payloads were sent to the create-product endpoint with both members of each pair populated; Naver refused with the message 'X, XText 둘 중 하나만 입력해 주세요' (or the equivalent date/Text pair). The probe sent only failing payloads and created no products. The types and pairs recorded under 'harvested' below are exactly the ones that returned this refusal — no others. Source: live API 400 XOR response, 2026-08-04."
     }
   ],
   "note": "확인된 것만 기록한다. 다른 타입의 필드를 보고 '이것도 XOR 같다' 로 채우지 않는다. 확인되지 않은 관계를 기록하면 규제 필드 오신고가 된다. XOR 그룹은 '이 필드들 중 정확히 하나' 를 뜻한다 — 둘 다 비면 미제공(차단), 하나만 있으면 충족, 둘 다 있으면 위반(네이버가 거절).",
@@ -22,6 +26,123 @@
       "xor": [
         ["afterServiceDirector", "customerServicePhoneNumber"]
       ]
+    },
+    "COSMETIC": {
+      "xor": [
+        ["expirationDate", "expirationDateText"]
+      ],
+      "source": "live API 400 XOR response, 2026-08-04"
+    },
+    "HOME_APPLIANCES": {
+      "xor": [
+        ["releaseDate", "releaseDateText"]
+      ],
+      "source": "live API 400 XOR response, 2026-08-04"
+    },
+    "FOOD": {
+      "xor": [
+        ["packDate", "packDateText"],
+        ["consumptionDate", "consumptionDateText"]
+      ],
+      "source": "live API 400 XOR response, 2026-08-04"
+    },
+    "SEASON_APPLIANCES": {
+      "xor": [
+        ["releaseDate", "releaseDateText"]
+      ],
+      "source": "live API 400 XOR response, 2026-08-04"
+    },
+    "OFFICE_APPLIANCES": {
+      "xor": [
+        ["releaseDate", "releaseDateText"]
+      ],
+      "source": "live API 400 XOR response, 2026-08-04"
+    },
+    "CELLPHONE": {
+      "xor": [
+        ["releaseDate", "releaseDateText"]
+      ],
+      "source": "live API 400 XOR response, 2026-08-04"
+    },
+    "OPTICS_APPLIANCES": {
+      "xor": [
+        ["releaseDate", "releaseDateText"]
+      ],
+      "source": "live API 400 XOR response, 2026-08-04"
+    },
+    "BOOKS": {
+      "xor": [
+        ["publishDate", "publishDateText"]
+      ],
+      "source": "live API 400 XOR response, 2026-08-04"
+    },
+    "KIDS": {
+      "xor": [
+        ["releaseDate", "releaseDateText"]
+      ],
+      "source": "live API 400 XOR response, 2026-08-04"
+    },
+    "BIOCHEMISTRY": {
+      "xor": [
+        ["expirationDate", "expirationDateText"],
+        ["packDate", "packDateText"]
+      ],
+      "source": "live API 400 XOR response, 2026-08-04"
+    },
+    "MICROELECTRONICS": {
+      "xor": [
+        ["releaseDate", "releaseDateText"]
+      ],
+      "source": "live API 400 XOR response, 2026-08-04"
+    },
+    "NAVIGATION": {
+      "xor": [
+        ["releaseDate", "releaseDateText"]
+      ],
+      "source": "live API 400 XOR response, 2026-08-04"
+    },
+    "CAR_ARTICLES": {
+      "xor": [
+        ["releaseDate", "releaseDateText"]
+      ],
+      "source": "live API 400 XOR response, 2026-08-04"
+    },
+    "MEDICAL_APPLIANCES": {
+      "xor": [
+        ["releaseDate", "releaseDateText"]
+      ],
+      "source": "live API 400 XOR response, 2026-08-04"
+    },
+    "GENERAL_FOOD": {
+      "xor": [
+        ["packDate", "packDateText"],
+        ["consumptionDate", "consumptionDateText"]
+      ],
+      "source": "live API 400 XOR response, 2026-08-04"
+    },
+    "DIET_FOOD": {
+      "xor": [
+        ["consumptionDate", "consumptionDateText"]
+      ],
+      "source": "live API 400 XOR response, 2026-08-04"
+    },
+    "MUSICAL_INSTRUMENT": {
+      "xor": [
+        ["releaseDate", "releaseDateText"]
+      ],
+      "source": "live API 400 XOR response, 2026-08-04"
+    },
+    "SPORTS_EQUIPMENT": {
+      "xor": [
+        ["releaseDate", "releaseDateText"]
+      ],
+      "source": "live API 400 XOR response, 2026-08-04"
+    },
+    "IMAGE_APPLIANCES": {
+      "xor": [
+        ["releaseDate", "releaseDateText"]
+      ],
+      "source": "live API 400 XOR response, 2026-08-04"
     }
   }
 }

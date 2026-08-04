@@ -239,17 +239,47 @@ class TestNoticeFieldRelationsDataIntegrity:
     """
 
     def test_only_confirmed_relations_in_data(self):
-        """데이터에는 확인된 2개 타입의 관계만 있다 (추측 금지).
+        """데이터에는 확인된 타입의 관계만 있다 (추측 금지).
 
-        확인된 것:
-          - KITCHEN_UTENSILS: releaseDate XOR releaseDateText
-          - ETC: afterServiceDirector XOR customerServicePhoneNumber
-        다른 타입이 우연히 들어가면 안 된다.
+        확인된 것 (2 sources):
+          - 기존: KITCHEN_UTENSILS (releaseDate XOR releaseDateText),
+            ETC (afterServiceDirector XOR customerServicePhoneNumber)
+          - 2026-08-04 야간 수확 (live API 400 XOR response):
+            COSMETIC, HOME_APPLIANCES, FOOD(2쌍), SEASON_APPLIANCES,
+            OFFICE_APPLIANCES, CELLPHONE, OPTICS_APPLIANCES, BOOKS, KIDS,
+            BIOCHEMISTRY(2쌍), MICROELECTRONICS, NAVIGATION, CAR_ARTICLES,
+            MEDICAL_APPLIANCES, GENERAL_FOOD(2쌍), DIET_FOOD,
+            MUSICAL_INSTRUMENT, SPORTS_EQUIPMENT, IMAGE_APPLIANCES.
+        다른 타입이 우연히 들어가면 안 된다 (추측 금지).
         """
         relations = qa_agents._load_notice_field_relations()
         assert isinstance(relations, dict)
-        # 허용된 타입 집합 — 확인된 2개만.
-        allowed_types = {"KITCHEN_UTENSILS", "ETC"}
+        # 허용된 타입 집합 — 확인된 것만. 기존 2개 + 2026-08-04 수확 19개.
+        allowed_types = {
+            # 기존 기록분.
+            "KITCHEN_UTENSILS",
+            "ETC",
+            # 2026-08-04 야간 수확 (live API 400 XOR response).
+            "COSMETIC",
+            "HOME_APPLIANCES",
+            "FOOD",
+            "SEASON_APPLIANCES",
+            "OFFICE_APPLIANCES",
+            "CELLPHONE",
+            "OPTICS_APPLIANCES",
+            "BOOKS",
+            "KIDS",
+            "BIOCHEMISTRY",
+            "MICROELECTRONICS",
+            "NAVIGATION",
+            "CAR_ARTICLES",
+            "MEDICAL_APPLIANCES",
+            "GENERAL_FOOD",
+            "DIET_FOOD",
+            "MUSICAL_INSTRUMENT",
+            "SPORTS_EQUIPMENT",
+            "IMAGE_APPLIANCES",
+        }
         extra = set(relations.keys()) - allowed_types
         assert not extra, f"확인되지 않은 타입의 관계가 데이터에 있습니다 (추측 금지 위반): {extra}"
 
