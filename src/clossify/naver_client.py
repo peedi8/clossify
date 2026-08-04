@@ -1,8 +1,7 @@
-# Clossify — Naver SmartStore listing automation.
-# Copyright (c) 2026 3rdhand. Licensed under the Sustainable Use License v1.0.
-# You may use and modify this software for your own internal business or personal
-# purposes. Providing it to others — including as a hosted or paid service — is
-# permitted only free of charge and for non-commercial purposes. See LICENSE.md.
+# SPDX-FileCopyrightText: 2026 3rdhand
+# SPDX-License-Identifier: LicenseRef-SustainableUse-1.0
+# Providing this software to others is permitted only free of charge and for
+# non-commercial purposes. See LICENSE.md.
 """검증된 네이버 커머스API 클라이언트 — 인증/이미지업로드/등록/조회/수정.
 2026-06-23 풀루프 실증된 흐름을 함수로 정리.
 

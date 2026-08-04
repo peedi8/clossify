@@ -1,8 +1,7 @@
-# Clossify — Naver SmartStore listing automation.
-# Copyright (c) 2026 3rdhand. Licensed under the Sustainable Use License v1.0.
-# You may use and modify this software for your own internal business or personal
-# purposes. Providing it to others — including as a hosted or paid service — is
-# permitted only free of charge and for non-commercial purposes. See LICENSE.md.
+# SPDX-FileCopyrightText: 2026 3rdhand
+# SPDX-License-Identifier: LicenseRef-SustainableUse-1.0
+# Providing this software to others is permitted only free of charge and for
+# non-commercial purposes. See LICENSE.md.
 """이미지 입력 정규화 + 업로드 가드 정본화.
 
 이 모듈은 이미지 입력(로컬 파일 경로 + 외부 URL)의 단일 정규화 진입점을

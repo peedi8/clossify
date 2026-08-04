@@ -1,8 +1,7 @@
-# Clossify — Naver SmartStore listing automation.
-# Copyright (c) 2026 3rdhand. Licensed under the Sustainable Use License v1.0.
-# You may use and modify this software for your own internal business or personal
-# purposes. Providing it to others — including as a hosted or paid service — is
-# permitted only free of charge and for non-commercial purposes. See LICENSE.md.
+# SPDX-FileCopyrightText: 2026 3rdhand
+# SPDX-License-Identifier: LicenseRef-SustainableUse-1.0
+# Providing this software to others is permitted only free of charge and for
+# non-commercial purposes. See LICENSE.md.
 """Shared constants and JSON IO helpers.
 
 Ported from the original sourcing pipeline as the DAG root module.

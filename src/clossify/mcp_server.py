@@ -1,8 +1,7 @@
-# Clossify — Naver SmartStore listing automation.
-# Copyright (c) 2026 3rdhand. Licensed under the Sustainable Use License v1.0.
-# You may use and modify this software for your own internal business or personal
-# purposes. Providing it to others — including as a hosted or paid service — is
-# permitted only free of charge and for non-commercial purposes. See LICENSE.md.
+# SPDX-FileCopyrightText: 2026 3rdhand
+# SPDX-License-Identifier: LicenseRef-SustainableUse-1.0
+# Providing this software to others is permitted only free of charge and for
+# non-commercial purposes. See LICENSE.md.
 """Clossify MCP 서버 — 네이버 스마트스토어 등록 능력을 MCP 클라이언트 LLM에 부여.
 
 이 모듈은 MCP Python SDK(v2, PyPI `mcp`)의 `MCPServer`(FastMCP 후속)를 사용해
