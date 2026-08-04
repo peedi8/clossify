@@ -1,3 +1,8 @@
+# Clossify — Naver SmartStore listing automation.
+# Copyright (c) 2026 3rdhand. Licensed under the Sustainable Use License v1.0.
+# You may use and modify this software for your own internal business or personal
+# purposes. Providing it to others — including as a hosted or paid service — is
+# permitted only free of charge and for non-commercial purposes. See LICENSE.md.
 """판단 위임 계약 구성.
 
 원본 ``sourcing.py`` 의 에이전트 프롬프트 조립 로직을 이식한다. 단,

@@ -2,7 +2,7 @@
 
 This software is licensed under the "Sustainable Use License" as defined below.
 
-Copyright (c) 2026 peedi8 (repository owner)
+Copyright (c) 2026 3rdhand (써드핸드)
 
 ## Sustainable Use License
 

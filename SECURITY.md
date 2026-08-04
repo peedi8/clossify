@@ -6,7 +6,7 @@
 비공개 채널로 제보해 주세요.
 
 - GitHub Security Advisory 의 "Report a vulnerability" 사용 (권장)
-- 또는 저장소 owner 에게 직접 이메일
+- 또는 `3rdhand.global@gmail.com` 으로 직접 이메일
 
 제보 내용은 72시간 이내에 확인하고, 영향도 평가 후 패치 일정을 안내합니다.
 책임있는 공개(responsible disclosure) 를 존중합니다 — 패치 전 공개는 자제해 주세요.
