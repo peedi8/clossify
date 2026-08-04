@@ -340,6 +340,12 @@ def _notice_defaults(p):
         cfg_notice.get("troubleShootingContents"),
         default="",
     )
+    # 공통 5필드 중 어떤 것이 "설정에서 채워졌는지" 보고.
+    # 상품 입력에 값이 없고(빈 문자열/공백/누락) config 에 비어있지 않은 값이
+    # 있으면 해당 필드명(camelCase 고시 필드명 그대로)을 목록에 넣는다.
+    # 이 목록은 페이로드 빌드 결과 메타(notice_filled_from_config)에 실려
+    # 사용자에게 전달된다 — 묻지 않고 채워진 값이 조용히 딸려가면 잘못 신고된다.
+    notice_filled_from_config = _notice_common_filled_from_config(p, cfg_notice)
     return {
         "item_name": product_name[:50],
         "model_name": _first_value(
@@ -385,6 +391,11 @@ def _notice_defaults(p):
             p.get("exchange_delivery_fee", cfg_notice.get("exchange_delivery_fee")),
             6000,
         ),
+        # 어떤 공통 5필드가 상품 입력이 아닌 config 에서 채워졌는지.
+        # build_payload 가 이 값을 페이로드 루트의 notice_filled_from_config
+        # 메타에 싣는다(비어있지 않을 때만). 묻지 않고 채워진 값이 조용히
+        # 딸려가면 잘못 신고된다.
+        "notice_filled_from_config": notice_filled_from_config,
     }
 
 
@@ -446,6 +457,107 @@ _NOTICE_COMMON_FIELDS = (
     "compensationProcedure",
     "troubleShootingContents",
 )
+
+# 공통 5필드 "설정에서 채워졌는지" 보고용 후보.
+# 각 항목: (고시 camelCase 필드명, 상품 입력 후보 튜플, config 후보 튜플).
+# 별칭 만들지 말 것 — 매핑이 하나 더 생기면 갈라진다(티켓 T-127).
+_NOTICE_COMMON_FIELD_CANDIDATES = (
+    (
+        "returnCostReason",
+        ("return_cost_reason", "returnCostReason"),
+        ("return_cost_reason", "returnCostReason"),
+    ),
+    (
+        "noRefundReason",
+        ("no_refund_reason", "noRefundReason"),
+        ("no_refund_reason", "noRefundReason"),
+    ),
+    (
+        "qualityAssuranceStandard",
+        ("quality_assurance_standard", "qualityAssuranceStandard"),
+        ("quality_assurance_standard", "qualityAssuranceStandard"),
+    ),
+    (
+        "compensationProcedure",
+        ("compensation_procedure", "compensationProcedure"),
+        ("compensation_procedure", "compensationProcedure"),
+    ),
+    (
+        "troubleShootingContents",
+        ("trouble_shooting_contents", "troubleShootingContents"),
+        ("trouble_shooting_contents", "troubleShootingContents"),
+    ),
+)
+
+
+def _has_text(value) -> bool:
+    """None/빈 문자열/공백만 을 "값 없음" 으로 본다 (placeholder 판정과 동일 기준)."""
+    if value is None:
+        return False
+    return bool(str(value).strip())
+
+
+def _notice_common_filled_from_config(p, cfg_notice) -> list:
+    """공통 5필드 중 "상품 입력이 아닌 config 에서만 채워진" 필드명 목록.
+
+    우선순위: **상품 입력 > config > 미설정(묻기)**.
+
+    - 상품 입력에 비어있지 않은 값이 있으면 → config 가 채운 게 아니므로 제외.
+      상품 입력의 "명시값"은 두 자리에서 찾는다:
+        (1) top-level common 키(``p.returnCostReason`` 등)
+        (2) ``p.notice.<node_key>.<field>`` — 사용자가 고시 본문 노드에 직접
+            넣은 값. ``_merge_notice`` 가 이 값을 config 채운 본문 위에 덮어쓰므로,
+            이 자리에서 주어진 값도 "명시값 우선" 대상이다. 이 경로를 빼면
+            사용자가 준 값이 실제 본문에 들어갔는데도 "config 에서 왔다"고
+            잘못 보고하게 된다.
+    - 상품 입력이 비고 config 에 비어있지 않은 값이 있으면 → "config 에서 채워진"
+      것으로 보고 해당 고시 camelCase 필드명을 목록에 넣는다.
+    - config 값이 "" / 공백뿐이면 미설정 취급 — 채워지지 않은 것으로 본다
+      (빈 값이 유효 입력으로 둔갑하면 안 된다).
+
+    반환값은 페이로드 빌드 결과 메타(notice_filled_from_config)에 실려
+    사용자에게 전달된다 — 묻지 않고 채워진 값이 조용히 딸려가면 잘못 신고된다.
+    """
+    # 사용자 고시 본문 노드(etc/wear/...) 의 모든 후보 본문을 모은다.
+    # _merge_notice 의 node_key 선택 규칙을 따라 같은 node 를 찾는다.
+    user_bodies: list = []
+    user_notice = p.get("notice") if isinstance(p, dict) else None
+    if isinstance(user_notice, dict):
+        # 같은 node_key 우선, 없으면 etc/furniture 폴백 — _merge_notice 규칙.
+        notice_type = (
+            str(
+                user_notice.get("productInfoProvidedNoticeType")
+                or user_notice.get("notice_type")
+                or p.get("notice_type")
+                or p.get("productInfoProvidedNoticeType")
+                or ""
+            )
+            .strip()
+            .upper()
+        )
+        if not notice_type:
+            notice_type = "ETC"
+        spec = _notice_type_spec(notice_type)
+        node_key = (spec or {}).get("node") or "etc"
+        body = user_notice.get(node_key)
+        if isinstance(body, dict):
+            user_bodies.append(body)
+        for fallback in ("etc", "furniture"):
+            fb = user_notice.get(fallback)
+            if isinstance(fb, dict):
+                user_bodies.append(fb)
+
+    filled: list = []
+    for notice_field, p_keys, cfg_keys in _NOTICE_COMMON_FIELD_CANDIDATES:
+        # (1) top-level common 키 우선.
+        if any(_has_text(p.get(k)) for k in p_keys):
+            continue
+        # (2) 사용자 고시 본문 노드에 같은 camelCase 필드가 있으면 명시값.
+        if any(_has_text(b.get(notice_field)) for b in user_bodies):
+            continue
+        if any(_has_text(cfg_notice.get(k)) for k in cfg_keys):
+            filled.append(notice_field)
+    return filled
 
 
 def _common_notice_defaults(defaults) -> dict:
@@ -1320,4 +1432,10 @@ def build_payload(p, detail_html, images, status="SALE"):
     # KC 설정 부재 경고를 페이로드 메타에 포함(조용한 생략 금지).
     if kc_warning:
         payload["_kcWarning"] = kc_warning
+    # 공통 5필드 중 config 에서 채워진 항목이 있으면 페이로드 메타에 알린다.
+    # 빈 목록(아무것도 config 에서 채워지지 않았을 때)은 메타 키 자체를 싣지
+    # 않는다 — 비어있지 않은데 표시되지 않는 경로가 있으면 안 된다(티켓 T-127).
+    filled_from_config = defaults.get("notice_filled_from_config") or []
+    if filled_from_config:
+        payload["notice_filled_from_config"] = list(filled_from_config)
     return payload
