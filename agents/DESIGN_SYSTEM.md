@@ -46,15 +46,15 @@ shadow(1단만): 0 0 0 1px rgba(0,0,0,.02), 0 2px 8px rgba(0,0,0,.05), 0 6px 16p
 
 ## 4. 컴포넌트
 - **상단/하단 배너**: `assets/brand/detail_header.png` / `detail_footer.png` 고정(불변, [[COMPLIANCE_RULES]] §6). 디자인시스템은 그 사이 **중간 컨텐츠**만 관할.
-- **photo-block**: 본문 사진 1장=풀폭, radius 18px, shadow 1단. **단일컬럼**(§2). 원본 합성이미지는 통째 1장으로.
+- **photo-block**: 본문 사진 1장=풀폭, radius 18px, shadow 1단. **단일컬럼**([[COMPLIANCE_RULES]] §2). 원본 합성이미지는 통째 1장으로.
 - **detail-section**: `DETAIL 0N`(eyebrow, accent) → 소제목(section) → 본문(body). 사진과 교차, section 간 56–64px.
-- **option-card**: radius 16px, surface 흰, shadow 1단. 상단 썸네일(1:1, object-fit cover) + 좌상단 **번호배지**(rounded-full, accent 또는 ink 92%, 흰글자) + 하단 옵션명(`1. 샴페인색 MDYZ49` 충실). **데이터는 파이프라인 실옵션**(§5 준수). 이미지 없으면 설명+톤 카드(3단폴백).
+- **option-card**: radius 16px, surface 흰, shadow 1단. 상단 썸네일(1:1, object-fit cover) + 좌상단 **번호배지**(rounded-full, accent 또는 ink 92%, 흰글자) + 하단 옵션명(`1. 샴페인색 MDYZ49` 충실). **데이터는 파이프라인 실옵션**([[COMPLIANCE_RULES]] §5 준수). 이미지 없으면 설명+톤 카드(3단폴백).
 - **info-row**: 라벨(muted, 120px) + 값(ink), 행마다 hairline 디바이더. 정의형 리스트.
 
 ## 5. Do / Don't
 - **Do**: 흰 캔버스 90% + 사진이 주인공 + 액센트 한두 곳 + 한글 lh 1.55 + 소프트 라운드.
-- **Don't**: 감성 미사여구(§4 카피규칙), 액센트 남발, 하드코너, 그림자 떡칠, 진한 색배경, **옵션 임의생성/이미지재사용**(규칙위반), 본문 멀티컬럼.
+- **Don't**: 감성 미사여구([[COMPLIANCE_RULES]] §4 카피규칙), 액센트 남발, 하드코너, 그림자 떡칠, 진한 색배경, **옵션 임의생성/이미지재사용**(규칙위반), 본문 멀티컬럼.
 
 ## 6. 적용
-- 렌더 템플릿(중간 컨텐츠)을 이 토큰으로 작성 → 파이프라인 실데이터(상품명·사진·옵션·정보) 주입 → V19 고화질 렌더(2x·LANCZOS) → [고정헤더]+[이 중간]+[고정푸터].
+- 렌더 템플릿(중간 컨텐츠)을 이 토큰으로 작성 → 파이프라인 실데이터(상품명·사진·옵션·정보) 주입 → 고화질 렌더(2x·LANCZOS) → [고정헤더]+[이 중간]+[고정푸터].
 - 추후 Figma `figma-generate-library`로 이 토큰을 Primitive/Semantic/Component 변수화 가능(동기화).
