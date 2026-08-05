@@ -614,8 +614,15 @@ def _run_compliance_gate(
     name: str,
     category_id: str,
     payload: dict[str, Any],
+    deferred_notice_fields: list[str] | None = None,
 ) -> dict[str, Any]:
     """결정론 컴플라이언스 검사를 실행하고 정형화된 결과를 반환.
+
+    ``deferred_notice_fields`` 는 판매자가 명시적으로 "상세페이지 참조" 로 미루기로
+    선택한 고시 필드명 리스트다. 게이트는 이 필드들을 "누락" 위반에서 제외한다 —
+    판매자가 빈 칸으로 남겨서 자동 실패하는 일은 막되, 실값 검사는 그대로 둔다.
+    원산지 필드는 ``qa_agents._reject_origin_deferred`` 로 걸러져 여기 오기 전에
+    이미 거부되었으므로 이 함수에서는 받은 리스트를 그대로 믿는다.
 
     Returns:
         ``{"blocked": bool, "violations": [...], "needs_user": [...],
@@ -642,7 +649,12 @@ def _run_compliance_gate(
         effective_payload["originProduct"] = op
     context["notice"] = effective_notice
 
-    check_result = qa_agents._compliance_code_check(name, context, api_payload=effective_payload)
+    check_result = qa_agents._compliance_code_check(
+        name,
+        context,
+        api_payload=effective_payload,
+        deferred_notice_fields=deferred_notice_fields,
+    )
 
     fail_violations = []
     for row in check_result.get("violations") or []:
@@ -1296,6 +1308,7 @@ def register_product(
     notice: dict[str, Any] | None = None,
     preview_confirmed: bool = False,
     option_groups: list[str] | None = None,
+    deferred_notice_fields: list[str] | None = None,
 ) -> dict[str, Any]:
     """상품 정보를 받아 등록 페이로드를 빌드하고 네이버 커머스 API 로 등록한다.
 
@@ -1351,6 +1364,15 @@ def register_product(
             생략 시 기존 폴백(``"옵션1"``/``"옵션2"``/``"사이즈"``)을 유지한다.
             비문자열/빈 문자열 항목, 리스트 길이 1~3 범위 밖은 거부한다
             (네이버 호출 0회). 옵션이 없는 단일 품목에는 의미 없다.
+        deferred_notice_fields: 판매자가 "상세페이지 참조" 로 미루기로 명시적으로
+            선택한 고시 필드명 리스트(예: ``["material", "color"]``). 이 필드들은
+            컴플라이언스 게이트의 "고시 필수필드 누락" 위반에서 제외되며, 빈 값인
+            자리에는 ``qa_agents.DEFERRED_NOTICE_PLACEHOLDER`` (``"상세페이지 참조"``)
+            가 채워져 전송된다. **명시적 선택**이지 기본값이 아니다 — 이름이
+            없으면 빈 칸은 여전히 차단된다. **원산지 필드**(``originAreaInfo.*``,
+            ``made_in`` 등)는 법적 선언이라 어떤 요청이든 거부된다 (네이버 호출 0회,
+            거부 사유 명시). 실값이 채워진 필드를 미루기로 표시해도 실값이 우선하며,
+            반환의 ``deferred_notice_fields`` 에서 제외된다.
 
     Returns:
         ``{"ok": bool, "status_code": int | None, "origin_product_no": str | None,
@@ -1366,6 +1388,10 @@ def register_product(
         - ``notice_filled_from_config``: 설정에서 자동으로 채워진 규제값 필드
           이름 리스트. 성공·차단·실패 모든 경로에서 나타난다 (조용한 자동
           채움 금지). 비었으면 빈 리스트.
+        - ``deferred_notice_fields``: 판매자가 미루기로 선택한(그리고 원산지
+          필터를 거친) 고시 필드명 리스트. 미루기 선택이 없으면 빈 리스트.
+          실값이 있어 미루기가 적용되지 않은 필드는 여기서 빠진다 (조용한
+          적용 금지).
 
     Note:
         환경변수 ``COMMERCE_DRY_RUN=1`` 시 실제 등록 없이 페이로드를
@@ -1404,6 +1430,60 @@ def register_product(
                     dry_run=_dry_run,
                 )
 
+    # deferred_notice_fields 검증 + 원산지 필터.
+    #
+    # 판매자가 명시적으로 "상세페이지 참조" 로 미루기로 선택한 고시 필드명 리스트다.
+    # 입력 형태는 문자열 리스트. 비문자열/빈 문자열 항목이 섞이면 거부한다 (네이버
+    # 호출 0회) — 조용히 걸러내면 판매자가 "미뤘다" 고 믿은 필드가 게이트에서
+    # 여전히 차단되는 조용한 실패가 된다.
+    #
+    # 원산지 필드(made_in, originAreaInfo.content 등)는 법적 선언이므로 어떤 요청이든
+    # 거부한다. ``qa_agents._reject_origin_deferred`` 가 원산지를 걸러낸 리스트를
+    # 반환하며, 원산지가 하나라도 있으면 전체 요청을 거부한다 (부분 적용 금지 —
+    # 판매자가 "이 필드들만 미뤘다" 고 믿도록, 거부 사유에 어떤 필드가 문제인지
+    # 명시한다).
+    _deferred_clean: list[str] = []
+    if deferred_notice_fields is not None:
+        if not isinstance(deferred_notice_fields, list):
+            return _fail(
+                "deferred_notice_fields 는 문자열 리스트여야 합니다.",
+                dry_run=_dry_run,
+            )
+        normalized: list[str] = []
+        for item in deferred_notice_fields:
+            if not isinstance(item, str) or not item.strip():
+                return _fail(
+                    "deferred_notice_fields 의 각 원소는 비어있지 않은 문자열이어야 합니다.",
+                    dry_run=_dry_run,
+                )
+            normalized.append(item.strip())
+        # 원산지 필드가 섞여 있으면 거부 — 사유에 어느 필드가 문제인지 명시.
+        rejected = qa_agents._reject_origin_deferred(normalized)
+        origin_hits = [f for f in normalized if f not in rejected]
+        if origin_hits:
+            return {
+                "ok": False,
+                "status_code": None,
+                "origin_product_no": None,
+                "channel_product_no": None,
+                "missing_channel_no": True,
+                "name_truncated": False,
+                "raw": None,
+                "seller_tags": None,
+                "blocked_by": "origin_field_not_deferrable",
+                "filled_from_prepared": [],
+                "prepared_lookup": {},
+                "notice_filled_from_config": [],
+                "deferred_notice_fields": [],
+                "dry_run": _dry_run,
+                "message": (
+                    "원산지 필드는 법적 선언이므로 '상세페이지 참조' 로 미룰 수 없다: "
+                    + ", ".join(origin_hits)
+                ),
+                "error": None,
+            }
+        _deferred_clean = rejected
+
     # product_key 결정 — 명시 인자가 있으면 그것을, 없으면 이름+가격으로
     # 후보를 찾는다. 같은 이름·가격의 SKU 가 여러 개일 때(색상만 다른 옵션
     # 상품 등) 조용히 하나를 고르면 다른 상품이 전송되는 조용한 오등록이
@@ -1429,6 +1509,7 @@ def register_product(
             "filled_from_prepared": [],
             "prepared_lookup": {},
             "notice_filled_from_config": [],
+            "deferred_notice_fields": list(_deferred_clean),
             "dry_run": _dry_run,
             "message": (
                 f"{_amb_exc}. name+price 로는 어느 prepared 가 이 등록의 것인지 " "결정할 수 없다."
@@ -1505,6 +1586,7 @@ def register_product(
                 "filled_from_prepared": [],
                 "prepared_lookup": prepared_lookup,
                 "notice_filled_from_config": [],
+                "deferred_notice_fields": list(_deferred_clean),
                 "dry_run": _dry_run,
                 "message": " ".join(_msg_parts),
                 "error": None,
@@ -1529,6 +1611,7 @@ def register_product(
                 "filled_from_prepared": [],
                 "prepared_lookup": prepared_lookup,
                 "notice_filled_from_config": [],
+                "deferred_notice_fields": list(_deferred_clean),
                 "dry_run": _dry_run,
                 "message": (
                     "로컬 승인 다리가 켜져 있지만 prepared payload 또는 미리보기 파일이 없어 "
@@ -1580,6 +1663,7 @@ def register_product(
                 "filled_from_prepared": [],
                 "prepared_lookup": prepared_lookup,
                 "notice_filled_from_config": [],
+                "deferred_notice_fields": list(_deferred_clean),
                 "dry_run": _dry_run,
                 "message": (
                     "로컬 승인 서버를 띄웠지만 미리보기 파일 갱신에 실패했습니다. "
@@ -1613,6 +1697,7 @@ def register_product(
                 "filled_from_prepared": [],
                 "prepared_lookup": prepared_lookup,
                 "notice_filled_from_config": [],
+                "deferred_notice_fields": list(_deferred_clean),
                 "dry_run": _dry_run,
                 "message": _msg,
                 "error": None,
@@ -1754,7 +1839,13 @@ def register_product(
         product["option_groups"] = list(option_groups)
 
     try:
-        payload = naver_client.build_payload(product, detail_html, image_urls, status=status)
+        payload = naver_client.build_payload(
+            product,
+            detail_html,
+            image_urls,
+            status=status,
+            deferred_notice_fields=_deferred_clean or None,
+        )
     except Exception as exc:  # Fix 7 — sanitized
         return _fail(
             f"등록 중 오류(페이로드 빌드): {_sanitize_error(exc)}",
@@ -1767,6 +1858,44 @@ def register_product(
     # 추출한다. 이 값은 모든 이후 반환 경로에 실려 사용자에게 보고되어야 한다
     # (조용한 자동 채움 금지). 전송 페이로드에서는 naver_client 가 이미 제거했다.
     notice_filled = list(payload.get("notice_filled_from_config") or [])
+
+    # 미루기 적용 결과를 계산한다. ``_deferred_clean`` 은 판매자가 미루기로
+    # 선택한(원산지 필터 통과) 필드명 리스트다. 그 중 실값이 있어 미루기가
+    # 적용되지 않은 필드는 반환에서 제외한다 (조용한 적용 금지 — 판매자가
+    # "이 필드를 미뤘다" 고 믿는데 실제로는 실값이 전송되면 잘못 신고다).
+    # 적용 여부는 페이로드의 notice 본문에서 해당 필드값이
+    # ``DEFERRED_NOTICE_PLACEHOLDER`` 인지로 판정한다.
+    _deferred_report: list[str] = []
+    if _deferred_clean:
+        try:
+            _pi_notice = (
+                payload.get("originProduct", {})
+                .get("detailAttribute", {})
+                .get("productInfoProvidedNotice")
+            )
+            _body_node = None
+            if isinstance(_pi_notice, dict):
+                _ntype = str(_pi_notice.get("productInfoProvidedNoticeType") or "").strip().upper()
+                _spec = qa_agents._notice_type_spec(_ntype) if _ntype else None
+                _node_key = (_spec or {}).get("node") if _spec else None
+                if _node_key and isinstance(_pi_notice.get(_node_key), dict):
+                    _body_node = _pi_notice[_node_key]
+                else:
+                    for _fb in ("etc", "furniture"):
+                        if isinstance(_pi_notice.get(_fb), dict):
+                            _body_node = _pi_notice[_fb]
+                            break
+        except (AttributeError, TypeError):
+            _body_node = None
+        if isinstance(_body_node, dict):
+            _placeholder = qa_agents.DEFERRED_NOTICE_PLACEHOLDER
+            for _f in _deferred_clean:
+                if _body_node.get(_f) == _placeholder:
+                    _deferred_report.append(_f)
+        else:
+            # notice 본문을 못 읽었면 미루기가 적용되었을 리 없다 — 빈 리스트로
+            # 보고한다. 잘못 신고보다 과소 보고가 안전하다.
+            _deferred_report = []
 
     # ------------------------------------------------------------------ #
     # 불일치 트립와이어 (고시 타입 단일 진실).
@@ -1800,6 +1929,7 @@ def register_product(
             "filled_from_prepared": filled_from_prepared,
             "prepared_lookup": prepared_lookup,
             "notice_filled_from_config": notice_filled,
+            "deferred_notice_fields": list(_deferred_report),
             "requested_status": status,
             "applied_status": None,
             "dry_run": _dry_run,
@@ -1822,7 +1952,9 @@ def register_product(
     # 보고해야 하므로, 게이트는 항상 실행된다. 스킵하면 비컴플라이언스 상품이
     # DRY_RUN 에서는 성공으로 보고되고, 실제 경로에서는 거부되는 모순이 생긴다.
     try:
-        gate = _run_compliance_gate(name, category_id, payload)
+        gate = _run_compliance_gate(
+            name, category_id, payload, deferred_notice_fields=_deferred_clean or None
+        )
     except Exception as exc:
         # 검사 자체가 예외로 실패하면 fail-closed: 등록을 차단한다.
         return _fail(
@@ -1860,6 +1992,7 @@ def register_product(
             "filled_from_prepared": filled_from_prepared,
             "prepared_lookup": prepared_lookup,
             "notice_filled_from_config": notice_filled,
+            "deferred_notice_fields": list(_deferred_report),
             "dry_run": _dry_run,
             "message": "\n".join(message_lines),
             "error": None,
@@ -1915,6 +2048,7 @@ def register_product(
                     "filled_from_prepared": filled_from_prepared,
                     "prepared_lookup": prepared_lookup,
                     "notice_filled_from_config": notice_filled,
+                    "deferred_notice_fields": list(_deferred_report),
                     "dry_run": _dry_run,
                     "message": (
                         "prepared payload 의 QA 게이트가 등록을 차단했다 "
@@ -1954,6 +2088,7 @@ def register_product(
             "filled_from_prepared": filled_from_prepared,
             "prepared_lookup": prepared_lookup,
             "notice_filled_from_config": notice_filled,
+            "deferred_notice_fields": list(_deferred_report),
             "requested_status": status,
             "applied_status": outcome.get("statusType"),
             "dry_run": _dry_run,
@@ -2086,6 +2221,7 @@ def register_product(
         "filled_from_prepared": filled_from_prepared,
         "prepared_lookup": prepared_lookup,
         "notice_filled_from_config": notice_filled,
+        "deferred_notice_fields": list(_deferred_report),
         "requested_status": status,
         "applied_status": applied_status,
         "status_corrected": status_corrected,
@@ -2289,6 +2425,7 @@ def _fail(
     filled_from_prepared: list[str] | None = None,
     prepared_lookup: dict[str, Any] | None = None,
     notice_filled_from_config: list[str] | None = None,
+    deferred_notice_fields: list[str] | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     # prepared_lookup 는 register_product 의 모든 반환 경로에서 무엇을 어느
@@ -2296,6 +2433,9 @@ def _fail(
     # 이미 결정된 lookup 이 있으면 그대로 실어 보낸다.
     # notice_filled_from_config 는 설정에서 자동으로 채워진 규제값 필드 목록이다.
     # 모든 반환 경로에서 이 키가 나와야 한다 (조용한 자동 채움 금지). 비었으면 빈 리스트.
+    # deferred_notice_fields 는 판매자가 미루기로 선택한 고시 필드명 리스트다.
+    # 조용한 적용 금지 — 미루기가 적용되었으면 반드시 보고한다. _fail 경로에서는
+    # 대개 검증 실패로 미루기가 적용되지 않았으므로 빈 리스트가 된다.
     # dry_run 은 COMMERCE_DRY_RUN=1 모드에서의 실패임을 표시한다. 실제 등록과
     # 리허설 실패를 구분하기 위해 모든 반환 경로에 존재한다.
     return {
@@ -2312,6 +2452,9 @@ def _fail(
         "notice_filled_from_config": (
             notice_filled_from_config if notice_filled_from_config is not None else []
         ),
+        "deferred_notice_fields": deferred_notice_fields
+        if deferred_notice_fields is not None
+        else [],
         "dry_run": dry_run,
         "error": message,
     }

@@ -675,6 +675,178 @@ def _is_placeholder_value(raw):
     return False
 
 
+# ---------------------------------------------------------------------------
+# 판매자가 명시적으로 고시 필드를 "상세페이지 참조" 로 미루기(defer) 선택했을 때
+# 게이트가 그 필드를 "채워진" 것으로 인정하게 하는 표준 문구.
+#
+# 과거 이 코드는 안내문구 값을 지어내어 조용히 채웠다. 그 실패 모드(허위 신고)는
+# 영구 금지다 — 본 상수는 게이트가 판정할 때 쓰는 *토큰* 이 아니라, 판매자가 선택한
+# 필드에 한해 naver_client 가 전송값으로 채우는 *표준 문구* 다. 게이트의 placeholder
+# 판정(_is_placeholder_value) 은 이 값도 여전히 "미제공" 으로 본다 — 차이점은
+# 호출자가 deferred 집합을 넘겨 그 판정을 건너뛰는 것이다.
+#
+# 한국 커머스에서 "see the detail page" 의 표준 한국어 표기. _PLACEHOLDER_TOKENS
+# 가 이 토큰을 이미 인식하므로 별도의 인식 로직이 필요하지 않다.
+# ---------------------------------------------------------------------------
+DEFERRED_NOTICE_PLACEHOLDER = "상세페이지 참조"
+
+# 원산지(origin) 필드는 법적 선언이므로 판매자가 미루기를 선택해도 거부한다.
+# originAreaInfo.content / made_in / countryOfOrigin 등 고시 본문의 원산지 자리는
+# 게이트가 *항상* 실값을 요구한다. 이름이 바뀌어도 이 집합에 등록된 필드명은
+# 미루기 대상에서 제외된다.
+ORIGIN_FIELDS_NOT_DEFERRABLE = frozenset(
+    {
+        "originAreaCode",
+        "originAreaInfo.content",
+        "originAreaInfo",
+        "countryOfOrigin",
+        "madeIn",
+        "made_in",
+        "origin_content",
+    }
+)
+
+
+def _field_is_deferred(field: str, deferred: list[str] | tuple[str, ...] | set[str] | None) -> bool:
+    """``field`` 가 판매자가 명시적으로 미루기로 선택한 필드인지 판정.
+
+    판매자가 ``deferred_notice_fields`` 로 넘긴 이름 집합에 ``field`` 가 포함되면
+    True. 원산지 필드는 호출자가 넘겼더라도 여기서 False 로 내려보낸 뒤 호출자가
+    다시 거부하도록 만들 수 있다 — 단 본 함수는 순수 집합 조회만 한다(정책 적용은
+    ``_reject_origin_deferred`` / mcp_server 게이트가 담당).
+
+    Args:
+        field: 고시 필드명(camelCase).
+        deferred: 판매자가 선택한 미루기 필드명 집합/리스트. ``None`` 이면 빈 것으로
+            간주해 False 를 반환(미루기 선택이 없는 일반 경로).
+
+    Returns:
+        ``True`` = 판매자가 이 필드를 미루기로 선택함.
+    """
+    if not deferred:
+        return False
+    target = str(field or "").strip()
+    if not target:
+        return False
+    return any(str(name or "").strip() == target for name in deferred)
+
+
+def _reject_origin_deferred(
+    deferred: list[str] | tuple[str, ...] | set[str] | None,
+) -> list[str]:
+    """판매자가 미루기로 선택한 필드 중 원산지 필드를 거르고 남긴다.
+
+    원산지는 법적 선언이므로 "상세페이지 참조" 로 미루는 것을 허용하지 않는다.
+    판매자가 origin 필드를 미루기로 선택한 경우, 본 함수는 그것을 가차 없이
+    제거한 뒤 남은 필드명 리스트를 반환한다 — 호출자는 이 반환값을 쓴다.
+    원산지를 거른 사실은 별도로 mcp_server 단에서 거부 응답으로 알린다
+    (origin 은 미루기 불가). 본 함수 자체는 정책의 *필터* 다.
+
+    Args:
+        deferred: 판매자가 넘긴 미루기 후보 필드명 컬렉션.
+
+    Returns:
+        원산지 필드를 제외한 미루기 필드명 리스트(순서 보존). 입력이 ``None``
+        이거나 비어있으면 빈 리스트.
+    """
+    if not deferred:
+        return []
+    kept: list[str] = []
+    for name in deferred:
+        text = str(name or "").strip()
+        if not text:
+            continue
+        if text in ORIGIN_FIELDS_NOT_DEFERRABLE:
+            continue
+        kept.append(text)
+    return kept
+
+
+def _field_missing_with_deferred(
+    notice_body,
+    fields,
+    deferred: list[str] | tuple[str, ...] | set[str] | None,
+    notice_type=None,
+) -> list[str]:
+    """``_notice_field_missing_with_relations`` 의 deferred 인지 변형.
+
+    판매자가 명시적으로 미루기로 선택(``deferred``) 한 필드는 "누락" 에서
+    제외한다. 이것이 본 기능의 핵심 — 미루기 선택이 없으면 빈 것과 같아
+    기존 동작(``_notice_field_missing_with_relations``)이 그대로 적용된다.
+    원산지 필드는 호출자가 선택해도 미루기에서 제외된다
+    (``_field_is_deferred`` 가 ORIGIN 필드를 인지하지만, ``_reject_origin_deferred``
+    가 mcp_server 단에서 미리 걸러낸다 — 본 함수에서도 방어적으로 한 번 더 거른다).
+
+    ``notice_type`` 이 주어지면 XOR 그룹을 함께 고려한다(XOR 그룹의 멤버 중
+    하나가 미루기 대상이거나 채워져 있으면 그룹 전체를 충족으로 본다).
+    """
+    deferred_set = _reject_origin_deferred(deferred)
+    if not deferred_set:
+        return _notice_field_missing_with_relations(notice_body, fields, notice_type=notice_type)
+    # XOR 인지가 필요할 때만 본 경로로 들어온다 — 같은 헬퍼를 재사용.
+    xor_groups = _notice_xor_groups(notice_type) if notice_type else []
+    if not xor_groups:
+        # 단순 경로: deferred 가 아닌 필드만 누락 판정.
+        missing: list[str] = []
+        if not isinstance(notice_body, dict):
+            return list(fields)
+        for field in fields:
+            if _field_is_deferred(field, deferred_set):
+                continue
+            raw = notice_body.get(field)
+            ftype = _notice_field_type(field)
+            if ftype == "boolean":
+                if raw is None:
+                    missing.append(field)
+            elif ftype == "date":
+                if _is_placeholder_value(raw):
+                    missing.append(field)
+            elif _is_placeholder_value(raw):
+                missing.append(field)
+        return missing
+    # XOR 그룹이 있을 때: _notice_field_missing_with_relations 의 충족 판정을
+    # 재사용하되, deferred 멤버를 "채워진" 것으로 취급해 그룹 전체를 충족시킨다.
+    # 허위 신고가 되지 않도록 — deferred 필드의 값은 naver_client 가 표준 문구로
+    # 채워 전송하므로, "filled" 로 보는 것은 전송 사실과 일치한다.
+    member_to_group: dict[str, tuple[str, ...]] = {}
+    for group in xor_groups:
+        group_tuple = tuple(group)
+        for member in group:
+            member_to_group[member] = group_tuple
+    satisfied: set[tuple[str, ...]] = set()
+    missing_x: list[str] = []
+    if not isinstance(notice_body, dict):
+        return list(fields)
+    for field in fields:
+        group = member_to_group.get(field)
+        if group is not None and group in satisfied:
+            continue
+        if group is not None:
+            # 그룹 멤버 중 하나라도 채워져 있거나 deferred 멤버면 충족.
+            if any(
+                _notice_field_filled(notice_body, m) or _field_is_deferred(m, deferred_set)
+                for m in group
+            ):
+                satisfied.add(group)
+                continue
+            if field == group[0]:
+                missing_x.append(field)
+            continue
+        if _field_is_deferred(field, deferred_set):
+            continue
+        raw = notice_body.get(field)
+        ftype = _notice_field_type(field)
+        if ftype == "boolean":
+            if raw is None:
+                missing_x.append(field)
+        elif ftype == "date":
+            if _is_placeholder_value(raw):
+                missing_x.append(field)
+        elif _is_placeholder_value(raw):
+            missing_x.append(field)
+    return missing_x
+
+
 def _notice_field_missing(notice_body, fields):
     """``notice_body`` 에서 누락된 필수 필드 이름 리스트 반환.
 
@@ -832,18 +1004,27 @@ def _notice_field_xor_violations(notice_body, notice_type) -> list[dict]:
     return violations
 
 
-def _compliance_code_check(name, context, api_payload=None):
+def _compliance_code_check(name, context, api_payload=None, deferred_notice_fields=None):
     """컴플라이언스 코드검사 (데이터 기반 재작성).
 
     ``api_payload`` 가 주어지면 그 안의 ``originProduct.detailAttribute`` 를
     검사한다. ``context`` 만 주어지면 ``context`` 에서 notice/origin/kc 값을
     읽는다.
 
+    ``deferred_notice_fields`` 는 판매자가 명시적으로 "상세페이지 참조" 로
+    미루기로 선택한 고시 필드명 리스트다. 원산지 필드는 여기 들어와도
+    거부된다(``_reject_origin_deferred``). 미루기로 선택된 필드는 "필수 필드
+    누락" 판정에서 제외된다 — 허위 신고가 되지 않는 이유는 naver_client 가 그
+    자리에 표준 문구(``DEFERRED_NOTICE_PLACEHOLDER``)를 채워 전송하기 때문이다.
+    미루기 선택이 ``None`` 이거나 비어있으면 기존 동작(fail-closed)을 유지한다.
+
     Args:
         name: 상품명.
         context: 컨텍스트 dict (``category_id``, ``notice``, ``origin_code``,
             ``origin_content``, ``kc_declaration`` 등).
         api_payload: 등록 payload (선택).
+        deferred_notice_fields: 판매자가 선택한 미루기 필드명 리스트(선택).
+            원산지 필드는 무시된다.
 
     Returns:
         ``{agent, verdict, violations, summary}`` dict.
@@ -924,8 +1105,12 @@ def _compliance_code_check(name, context, api_payload=None):
     required_fields = (spec or {}).get("fields") or []
     if required_fields:
         # XOR 인지 누락 판정: 하나만 채워져도 그룹 전체가 충족으로 인정.
-        missing = _notice_field_missing_with_relations(
-            notice_body, required_fields, notice_type=notice_type
+        # deferred_notice_fields 로 넘겨진 필드는 누락에서 제외한다(원산지는 제외).
+        missing = _field_missing_with_deferred(
+            notice_body,
+            required_fields,
+            deferred_notice_fields,
+            notice_type=notice_type,
         )
         if missing:
             violations.append(
@@ -1208,12 +1393,27 @@ def qa_copy(detail_jpeg_path, name, context=None):
     return result
 
 
-def qa_compliance(detail_jpeg_path=None, name="", context=None, api_payload=None):
+def qa_compliance(
+    detail_jpeg_path=None,
+    name="",
+    context=None,
+    api_payload=None,
+    deferred_notice_fields=None,
+):
     """컴플라이언스 QA.
 
     ``_compliance_code_check`` 로 위임. LLM 위임이 필요 없는 결정론적 검사다.
+
+    ``deferred_notice_fields`` 는 판매자가 명시적으로 "상세페이지 참조" 로
+    미루기로 선택한 고시 필드명 리스트다. 원산지 필드는 여기 들어와도
+    게이트에서 거부된다. ``None`` 이면 기존 동작(fail-closed)을 유지한다.
     """
-    check = _compliance_code_check(name, context, api_payload=api_payload)
+    check = _compliance_code_check(
+        name,
+        context,
+        api_payload=api_payload,
+        deferred_notice_fields=deferred_notice_fields,
+    )
     return _normalize_agent_result(check, "compliance")
 
 
@@ -1360,13 +1560,17 @@ def qa_gate(payload):
 
 
 __all__ = [
+    "DEFERRED_NOTICE_PLACEHOLDER",
     "FAIL",
+    "ORIGIN_FIELDS_NOT_DEFERRABLE",
     "PASS",
     "PENDING",
     "WARN",
     "_clamp_verdict",
     "_compliance_code_check",
     "_copy_code_check",
+    "_field_is_deferred",
+    "_field_missing_with_deferred",
     "_infer_notice_type",
     "_is_placeholder_value",
     "_load_notice_field_relations",
@@ -1384,6 +1588,7 @@ __all__ = [
     "_notice_type_spec",
     "_notice_xor_groups",
     "_qa_agent_result",
+    "_reject_origin_deferred",
     "_verdict_from_violations",
     "aggregate_qa_results",
     "qa_compliance",

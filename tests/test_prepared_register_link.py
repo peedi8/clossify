@@ -254,7 +254,7 @@ class TestFillDetailHtmlFromPrepared:
         # build_payload 를 가로채서 detail_html 인자를 캡처.
         captured: list[dict] = []
 
-        def fake_build(product, detail_html_arg, image_urls_arg, status="SALE"):
+        def fake_build(product, detail_html_arg, image_urls_arg, status="SALE", **kwargs):
             captured.append(
                 {
                     "detail_html": detail_html_arg,
@@ -314,7 +314,7 @@ class TestFillImageUrlsFromPrepared:
 
         captured: list[dict] = []
 
-        def fake_build(product, detail_html_arg, image_urls_arg, status="SALE"):
+        def fake_build(product, detail_html_arg, image_urls_arg, status="SALE", **kwargs):
             captured.append(
                 {
                     "detail_html": detail_html_arg,
@@ -373,7 +373,7 @@ class TestExplicitValueWins:
 
         captured: list[dict] = []
 
-        def fake_build(product, detail_html_arg, image_urls_arg, status="SALE"):
+        def fake_build(product, detail_html_arg, image_urls_arg, status="SALE", **kwargs):
             captured.append({"detail_html": detail_html_arg})
             return _make_compliant_payload()
 
@@ -415,7 +415,7 @@ class TestExplicitValueWins:
 
         captured: list[dict] = []
 
-        def fake_build(product, detail_html_arg, image_urls_arg, status="SALE"):
+        def fake_build(product, detail_html_arg, image_urls_arg, status="SALE", **kwargs):
             captured.append({"image_urls": list(image_urls_arg)})
             return _make_compliant_payload()
 

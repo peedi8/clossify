@@ -173,8 +173,8 @@ class TestNoticeTypeTripwire:
         # 페이로드의 noticeType 을 ETC 로 강제 변조해 불일치를 만든다.
         original_build = naver_client.build_payload
 
-        def _tampered_build(product, html, images, status="SALE"):
-            payload = original_build(product, html, images, status=status)
+        def _tampered_build(product, html, images, status="SALE", **kwargs):
+            payload = original_build(product, html, images, status=status, **kwargs)
             # 페이로드의 타입을 강제로 ETC 로 바꿔 트립와이어를 격발시킨다.
             notice = payload["originProduct"]["detailAttribute"]["productInfoProvidedNotice"]
             notice["productInfoProvidedNoticeType"] = "ETC"

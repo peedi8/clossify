@@ -1483,9 +1483,76 @@ def _build_option_info(p, opts):
     }
 
 
-def build_payload(p, detail_html, images, status="SALE"):
+def _fill_deferred_notice_fields(notice, deferred_notice_fields):
+    """판매자가 미루기로 선택한 고시 필드 중 빈 자리를 표준 문구로 채운다.
+
+    본 함수가 하는 일은 **빈 자리 채우기** 한 가지다:
+      - 판매자가 ``deferred_notice_fields`` 로 넘긴 필드명 중,
+      - notice 본문에 **값이 없거나(키 부재/None) 공백류/placeholder** 인 자리에
+        한해 ``DEFERRED_NOTICE_PLACEHOLDER`` ("상세페이지 참조") 를 채운다.
+
+    하지 않는 일 (명시적 계약):
+      - **실값이 있는 필드는 덮어쓰지 않는다.** 판매자가 진짜 값을 준 필드는 그
+        값이 그대로 전송된다. 미루기로 이름만 올렸더라도 실값이 우선한다.
+      - **원산지 필드는 건드리지 않는다.** 원산지는 법적 선언이므로 미루기를
+        허용하지 않는다(``ORIGIN_FIELDS_NOT_DEFERRABLE``). mcp_server 게이트가
+        사전에 원산지 미루기 선택을 거부하지만, 본 함수도 방어적으로 한 번 더
+        거른다 — 게이트를 우회하는 직접 호출 경로까지 보호하기 위함.
+      - **미루기 선택이 없으면 아무 것도 하지 않는다.** ``None``/빈 리스트면
+        그대로 반환한다. 조용한 자동 채움은 영구 금지다.
+
+    본 함수는 게이트(``_field_missing_with_deferred``)가 "미루기 필드는 채워진
+    것으로 본다" 는 판정과 **전송 사실을 일치시킨다** — 게이트가 빈 자리를
+    누락에서 제외하므로, 그 자리에 실제로 값이 가야 허위 신고가 되지 않는다.
+
+    Args:
+        notice: ``_product_info_notice`` 반환값 (dict). ``productInfoProvidedNoticeType``
+            키와 노드 키(예: ``etc``/``wear``)를 가진다. 본문은 노드 키 아래 dict.
+        deferred_notice_fields: 판매자가 선택한 미루기 필드명 컬렉션.
+
+    Returns:
+        ``notice`` 자체(in-place 변경). 호출자가 같은 객체를 계속 쓴다.
+    """
+    from . import qa_agents
+
+    if not isinstance(notice, dict):
+        return notice
+    # 원산지 필드는 미루기에서 제외(방어적 2차 필터).
+    deferred = qa_agents._reject_origin_deferred(deferred_notice_fields)
+    if not deferred:
+        return notice
+    # notice 본문 노드를 찾는다: 타입에서 node 를 조회하고, 없으면 etc/furniture 폴백.
+    notice_type = str(notice.get("productInfoProvidedNoticeType") or "ETC").strip().upper()
+    spec = _notice_type_spec(notice_type)
+    node_key = (spec or {}).get("node") or "etc"
+    body = notice.get(node_key)
+    if not isinstance(body, dict):
+        for fallback in ("etc", "furniture"):
+            fb = notice.get(fallback)
+            if isinstance(fb, dict):
+                body = fb
+                node_key = fallback
+                break
+    if not isinstance(body, dict):
+        return notice
+    placeholder = qa_agents.DEFERRED_NOTICE_PLACEHOLDER
+    for field in deferred:
+        raw = body.get(field)
+        # 빈 값/placeholder 인 자리만 채운다. 실값이 있으면 건드리지 않는다.
+        if qa_agents._is_placeholder_value(raw):
+            body[field] = placeholder
+    return notice
+
+
+def build_payload(p, detail_html, images, status="SALE", deferred_notice_fields=None):
     """상품 dict(p) + 상세HTML + 이미지URL들 → 등록 payload.
-    p keys: name, categoryId, salePrice, options[{name,stock}], tags[], notice{...}, as_tel, as_guide, origin_code, display"""
+    p keys: name, categoryId, salePrice, options[{name,stock}], tags[], notice{...}, as_tel, as_guide, origin_code, display
+
+    ``deferred_notice_fields`` 는 판매자가 명시적으로 "상세페이지 참조" 로 미루기로
+    선택한 고시 필드명 리스트다. 빈 자리에 한해 표준 문구(``DEFERRED_NOTICE_PLACEHOLDER``)
+    를 채워 전송한다 — 실값이 있는 필드는 덮어쓰지 않는다. 원산지 필드는 미루기에서
+    제외된다. ``None``/빈 리스트면 아무 것도 채우지 않는다(기존 동작).
+    """
     if status not in {"SALE", "SUSPENSION"}:
         raise ValueError("status must be one of {'SALE', 'SUSPENSION'}")
     # 진입 게이트: 유효 원본 이미지 1장 이상을 본 함수에서 가장 먼저 강제한다.
@@ -1496,6 +1563,9 @@ def build_payload(p, detail_html, images, status="SALE"):
     option_info = _build_option_info(p, opts)
     defaults = _notice_defaults(p)
     notice = _product_info_notice(p, defaults)
+    # 판매자가 명시적으로 미루기로 선택한 고시 필드의 빈 자리를 표준 문구로 채운다.
+    # 실값이 있는 필드는 건드리지 않으며, 원산지 필드는 미루기에서 제외된다.
+    _fill_deferred_notice_fields(notice, deferred_notice_fields)
     # 실측 확인: status="SUSPENSION" 일 때 channelProductDisplayStatusType
     # 으로 "OFF" 를 보내면 네이버 API 가 NotValidEnum 으로 거절한다. 살아있는
     # API 로 등록 성공이 확인된 값은 "SUSPENSION" 이다. status="SALE" 일 때의

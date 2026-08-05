@@ -590,6 +590,8 @@ class TestToolRegistrationPreserved:
         ``["색상","사이즈"]``) 을 ``naver_client._build_option_info`` 로
         전달하기 위해 끝에 추가된 키워드 전용 인자다. 이 키가 없으면
         그룹 이름이 "옵션1"/"옵션2" 등의 번호 폴백으로 떨어진다.
+        ``deferred_notice_fields`` 는 판매자가 "상세페이지 참조" 로 미루기로
+        선택한 고시 필드명 리스트로, 끝에 추가된 키워드 전용 인자다.
         """
         import inspect
 
@@ -611,5 +613,6 @@ class TestToolRegistrationPreserved:
             "notice",
             "preview_confirmed",
             "option_groups",
+            "deferred_notice_fields",
         ]
         assert param_names == expected, f"시그니처 변경 감지: {param_names}"
