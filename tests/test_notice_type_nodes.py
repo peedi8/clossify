@@ -8,7 +8,7 @@
   5. 공통 5필드가 config 기본값으로 채워지고, 상품별 입력이 우선.
   6. MCP 통합 반례: 의류 카테고리 + WEAR 필수 필드 완비 + config 원산지 일치 →
      ``register_product`` 가 차단하지 않고 등록 경로 진입.
-  7. 기존 테스트 102개 무회귀, 도구 6개.
+  7. 기존 테스트 102개 무회귀, 도구 7개.
 
 모든 테스트는 실제 네이버 API 를 호출하지 않는다 — monkeypatch 로 네트워크 차단.
 """
@@ -564,10 +564,13 @@ class TestNoNoOp:
 
 
 # --------------------------------------------------------------------------- #
-# 9. 도구 6개 등록 유지 (무회귀).
+# 9. 도구 7개 등록 유지 (무회귀).
 # --------------------------------------------------------------------------- #
 class TestToolRegistrationPreserved:
-    """변경 후에도 6개 도구가 등록되어 있는가."""
+    """변경 후에도 7개 도구가 등록되어 있는가.
+
+    delete_product 가 추가되면서 도구 수가 6 → 7 로 늘었다.
+    """
 
     def test_tool_count_registered(self):
         import asyncio
@@ -578,7 +581,9 @@ class TestToolRegistrationPreserved:
                 tools = asyncio.run(tools)
             except RuntimeError:
                 tools = asyncio.get_event_loop().run_until_complete(tools)
-        assert len(tools) == 6, f"도구가 6개여야 함: {len(tools)}"
+        # check_config, upload_images, register_product, get_product,
+        # delete_product, prepare_listing, submit_reviews
+        assert len(tools) == 7, f"도구가 7개여야 함: {len(tools)}"
 
     def test_register_product_signature_unchanged(self):
         """register_product 파라미터가 유지되는가.

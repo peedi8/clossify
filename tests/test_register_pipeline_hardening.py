@@ -413,10 +413,13 @@ class TestFix8Packaging:
 
 
 # ============================================================================ #
-# 검증 — 6 MCP tools registered
+# 검증 — 7 MCP tools registered
 # ============================================================================ #
 class TestToolRegistration:
-    """MCP 서버가 정확히 6개의 도구를 등록했는가."""
+    """MCP 서버가 정확히 7개의 도구를 등록했는가.
+
+    delete_product 가 추가되면서 도구 수가 6 → 7 로 늘었다.
+    """
 
     def test_six_tools_registered(self):
         tools = mcp_server.mcp.list_tools()
@@ -436,9 +439,9 @@ class TestToolRegistration:
             name = getattr(t, "name", None) or getattr(t, "name", None)
             if name:
                 names.append(name)
-        # 6개 도구: check_config, upload_images, register_product, get_product,
-        # prepare_listing, submit_reviews
-        assert len(tools) == 6, f"Expected 6 tools, got {len(tools)}: {names}"
+        # 7개 도구: check_config, upload_images, register_product, get_product,
+        # delete_product, prepare_listing, submit_reviews
+        assert len(tools) == 7, f"Expected 7 tools, got {len(tools)}: {names}"
 
 
 # ============================================================================ #

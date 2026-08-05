@@ -471,10 +471,13 @@ class TestOptionGroupsValidationRefuses:
 
 
 # --------------------------------------------------------------------------- #
-# 4. 도구 6개 / 시그니처 — 회귀 방어 (option_groups 추가에도 도구 수 불변).
+# 4. 도구 7개 / 시그니처 — 회귀 방어 (option_groups 추가에도 도구 수 불변).
 # --------------------------------------------------------------------------- #
 class TestToolCountPreserved:
-    """``option_groups`` 추가에도 MCP 도구가 6개로 유지되는가."""
+    """``option_groups`` 추가에도 MCP 도구가 7개로 유지되는가.
+
+    delete_product 가 추가되면서 도구 수가 6 → 7 로 늘었다.
+    """
 
     def test_six_tools_registered(self):
         import asyncio
@@ -485,7 +488,10 @@ class TestToolCountPreserved:
                 tools = asyncio.run(tools)
             except RuntimeError:
                 tools = asyncio.get_event_loop().run_until_complete(tools)
-        assert len(tools) == 6, f"도구가 6개여야 함: {len(tools)}"
+        # 7개 도구: check_config, upload_images, register_product, get_product,
+        # prepare_listing, submit_reviews, delete_product. delete_product 는
+        # 파괴적 능력이라 별도 도구로 분리했다.
+        assert len(tools) == 7, f"도구가 7개여야 함: {len(tools)}"
 
 
 # --------------------------------------------------------------------------- #

@@ -11,7 +11,7 @@
 
 | 구분 | 항목 | 비고 |
 |------|------|------|
-| 되는 것 | MCP 도구 6개(`check_config`/`upload_images`/`register_product`/`get_product`/`prepare_listing`/`submit_reviews`) | 도구 표면과 배선. 이미지 업로드는 실제 커머스 API 로 검증됨 |
+| 되는 것 | MCP 도구 7개(`check_config`/`upload_images`/`register_product`/`get_product`/`delete_product`/`prepare_listing`/`submit_reviews`) | 도구 표면과 배선. 이미지 업로드는 실제 커머스 API 로 검증됨 |
 | **진행 중** | **상품 등록 관통(실제 커머스 API)** | 실호출 검증 중. 페이로드 구조 결함을 수정하는 단계이며, **아직 이 도구로 상품이 등록된 적은 없다** |
 | 되는 것 | 결정론 컴플라이언스 게이트(fail-closed) | 등록 직전 FAIL 위반 차단 |
 | 되는 것 | 카테고리 메타 데이터(리프 카테고리 약 4,999건)·고시 타입 35종 데이터 기반 검사 | `data/` |
@@ -58,6 +58,7 @@ MCP의 UI는 자연어다. 사용자가 "이 사진들로 등록해줘"라고 �
 | `upload_images` | 로컬 이미지 경로 리스트를 검증 후 네이버 이미지서버에 업로드 → CDN URL 반환 | 네이버 이미지서버(쓰기) |
 | `register_product` | 상품 정보를 받아 페이로드 빌드 → 컴플라이언스 게이트 → 네이버 커머스 API 등록 | 네이버 커머스(쓰기) |
 | `get_product` | 등록된 상품(origin product)을 조회(재검증용) | 네이버 커머스(읽기) |
+| `delete_product` | 등록된 상품(origin product) 단건을 영구 삭제. `confirm=True` 가 명시적으로 전달된 경우에만 수행한다(되돌릴 수 없는 파괴 동작). 숫자가 아닌 상품번호나 누락은 네이버 호출 없이 거부한다. 삭제 성공 시 로컬 등록 기록(registration_record.json)도 함께 정리한다 | 네이버 커머스(쓰기/삭제) |
 | `prepare_listing` | 상품 정보 + 이미지 소스로 등록 전 준비: 이미지 정규화, 상세페이지 렌더, JPEG 비의존 QA 집계 후 prepared payload 저장. LLM 판단이 필요한 항목(needs_llm)과 사용자 입력이 필요한 항목(needs_user)을 알려준다 | 네이버 이미지서버(쓰기) — 로컬 파일을 받으면 업로드한다. 커머스 API 는 호출하지 않는다 |
 | `submit_reviews` | 클라이언트 LLM 의 카피/이미지 QA 판단을 prepared payload 의 QA 기록에 병합. 회신은 서버 판정과 최악값 병합(PENDING→PASS 만 허용, 서버 FAIL 불가)이며 compliance 제출은 거부된다 | 없음(prepared payload 갱신만) |
 

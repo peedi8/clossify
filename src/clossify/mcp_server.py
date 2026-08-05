@@ -5,7 +5,7 @@
 """Clossify MCP 서버 — 네이버 스마트스토어 등록 능력을 MCP 클라이언트 LLM에 부여.
 
 이 모듈은 MCP Python SDK(v2, PyPI `mcp`)의 `MCPServer`(FastMCP 후속)를 사용해
-로컬 stdio MCP 서버를 노출한다. 서버는 6개의 도구를 제공한다:
+로컬 stdio MCP 서버를 노출한다. 서버는 7개의 도구를 제공한다:
 
 - ``check_config``: 자격증명/설정 파일 존재 및 형식 검사. 기본은 외부 API 호출
   없음. ``read_existing=True`` 면 기존 상품에서 정책값을 읽어 제안(온보딩).
@@ -14,6 +14,8 @@
 - ``get_product``: 등록된 상품(origin product)을 조회.
 - ``prepare_listing``: 상품 정보 + 이미지 소스로 prepared payload 를 만든다.
 - ``submit_reviews``: 클라이언트 LLM 의 검수 회신을 prepared payload 에 병합.
+- ``delete_product``: 등록된 상품(origin product) 단건을 영구 삭제. 확인 인자가
+  명시적으로 참일 때만 동작하며, 성공 시 로컬 등록 기록도 함께 지운다.
 
 모든 자격증명은 프로젝트 루트의 ``.local/config.json`` 에만 존재한다
 (ADR-0002 로컬 MCP + BYO-key). 이 서버 자체는 자격증명을 수탁/저장하지 않는다.
@@ -2272,6 +2274,126 @@ def get_product(origin_product_no: str) -> dict[str, Any]:
         "status_code": status_code,
         "product": exposed_body if ok else None,
         "error": None if ok else _sanitize_text(f"API 반환 상태 {status_code}: {body}"),
+    }
+
+
+@mcp.tool()
+def delete_product(
+    origin_product_no: str,
+    confirm: bool = False,
+) -> dict[str, Any]:
+    """등록된 상품(origin product) 단건을 영구 삭제한다.
+
+    삭제는 되돌릴 수 없다. 이 도구는 **오직 하나의** origin product 만 지운다
+    — 일괄 삭제·와일드카드를 지원하지 않는다.
+
+    안전장치(타협 불가):
+      - ``origin_product_no`` 가 없거나 숫자가 아니면 기존 실패 규약으로 거부한다
+        (네이버 API 호출 0회).
+      - ``confirm`` 이 명시적으로 ``True`` 일 때만 호출한다. 기본값 ``False`` 이며,
+        거부 사유는 삭제가 영구적임을 분명히 밝힌다 — 모델이 의도를 추론해
+        삭제하는 것을 막기 위함이다.
+      - 성공 시, 이 상품의 로컬 등록 기록(``registration_record.json``)이 있으면
+        함께 지운다. 저장된 기록이 삭제된 listing 보다 오래 남으면 안 된다.
+        기록이 애초에 없어도 오류가 아니다 — 로컬에 기록이 없는 상품을 지울 수 있다.
+
+    Args:
+        origin_product_no: 네이버 커머스 API 의 origin product 번호(숫자).
+            ``register_product`` 반환의 ``origin_product_no`` 와 동일.
+        confirm: 삭제 확인. ``True`` 일 때만 삭제를 수행한다. 기본값 ``False``.
+
+    Returns:
+        ``{"ok": bool, "status_code": int | None, "origin_product_no": str,
+        "registration_record_removed": bool, "error": str | None}``
+        ``ok`` 는 HTTP 2xx 일 때만 ``True``. ``ok=False`` 면 ``status_code`` 가
+        ``None``(API 호출 전 거부) 이거나 실제 HTTP 상태(비 2xx)다.
+    """
+    # 1) 입력 검증 — 숫자만 허용. 빈 값/비숫자/문자 접두사 모두 거부.
+    #    네이버 origin product 번호는 정수(문자열로 받을 수 있음)다. 숫자가
+    #    아니면 API 를 부르지 않고 기존 실패 규약으로 거부한다.
+    raw_no = str(origin_product_no or "").strip()
+    if not raw_no or not raw_no.lstrip("+").isdigit():
+        return {
+            "ok": False,
+            "status_code": None,
+            "origin_product_no": raw_no,
+            "registration_record_removed": False,
+            "error": (
+                "origin_product_no 는 비어있지 않은 숫자여야 합니다. "
+                f"받은 값: {origin_product_no!r}"
+            ),
+        }
+    # 부호 접두사를 떼고 정규화된 문자열을 이후 경로에 일관되게 쓴다.
+    normalized_no = raw_no.lstrip("+")
+
+    # 2) 확인 게이트 — 명시적 True 만 허용. 모델이 의도를 추론해 삭제하는 것을
+    #    막는다. 거부 사유는 삭제가 영구적임을 명시한다. ``is True`` 비교로
+    #    truthy 값(비어있지 않은 문자열 등)이 우연히 승인되는 것을 막는다.
+    if confirm is not True:
+        return {
+            "ok": False,
+            "status_code": None,
+            "origin_product_no": normalized_no,
+            "registration_record_removed": False,
+            "error": (
+                "삭제는 되돌릴 수 없다(permanent). confirm=True 를 명시적으로 "
+                "전달했을 때만 수행한다."
+            ),
+        }
+
+    # 3) 네이버 API 호출. 예외는 sanitized 에러로 변환(get_product 규약).
+    try:
+        status_code, body = naver_client.delete_origin_product(normalized_no)
+    except Exception as exc:  # _sanitize_error 로 민감 정보 마스킹.
+        return {
+            "ok": False,
+            "status_code": None,
+            "origin_product_no": normalized_no,
+            "registration_record_removed": False,
+            "error": f"삭제 중 오류: {_sanitize_error(exc)}",
+        }
+
+    ok = isinstance(status_code, int) and 200 <= status_code < 300
+    if not ok:
+        # 비 2xx — 조용히 삼키지 않고 실패로 보고.
+        return {
+            "ok": False,
+            "status_code": status_code,
+            "origin_product_no": normalized_no,
+            "registration_record_removed": False,
+            "error": _sanitize_text(f"삭제 실패: API 반환 상태 {status_code}: {body}"),
+        }
+
+    # 4) 로컬 등록 기록 정리 — 성공한 삭제에 한해. 기록이 애초에 없으면
+    #    registration_record_removed=False (오류 아님). 기록이 있으면 파일을
+    #    지우고 removed=True. 파일 삭제 실패가 API 삭제 성공을 뒤집지 않는다 —
+    #    listing 은 이미 사라졌으므로, 다만 그 사실을 보고한다.
+    record_removed = False
+    record_error: str | None = None
+    try:
+        record = _register_mod.read_registration_record(origin_product_no=normalized_no)
+        if isinstance(record, dict):
+            pkey = record.get("product_key")
+            if isinstance(pkey, str) and pkey.strip():
+                record_path = _register_mod._registration_record_path(pkey)
+                try:
+                    record_path.unlink()
+                    record_removed = True
+                except FileNotFoundError:
+                    # 이미 없다 — 오류 아님.
+                    record_removed = False
+                except OSError as exc:
+                    record_error = f"기록 파일 삭제 실패: {exc}"
+    except Exception as exc:
+        # read_registration_record 자체가 실패해도 삭제 성공을 뒤집지 않는다.
+        record_error = f"로컬 등록 기록 조회 실패: {exc}"
+
+    return {
+        "ok": True,
+        "status_code": status_code,
+        "origin_product_no": normalized_no,
+        "registration_record_removed": record_removed,
+        "error": record_error,
     }
 
 

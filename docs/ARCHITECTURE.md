@@ -51,8 +51,8 @@ text_props         순수 리터럴/정규식 (의존 없음)
 
 | 모듈 | 역할 |
 |------|------|
-| `mcp_server` | stdio MCP 서버. 6개 도구 노출(`check_config`, `upload_images`, `register_product`, `get_product`, `prepare_listing`, `submit_reviews`). 검증 sanitization, 컴플라이언스 게이트 회선 |
-| `naver_client` | 네이버 커머스 API 인증·페이로드 빌드·등록·조회·이미지 업로드 |
+| `mcp_server` | stdio MCP 서버. 7개 도구 노출(`check_config`, `upload_images`, `register_product`, `get_product`, `delete_product`, `prepare_listing`, `submit_reviews`). 검증 sanitization, 컴플라이언스 게이트 회선 |
+| `naver_client` | 네이버 커머스 API 인증·페이로드 빌드·등록·조회·삭제·이미지 업로드 |
 | `images` | 이미지 입력 정규화. 로컬 가드(`validate_local_image`), SSRF 방어 외부 URL fetch(`fetch_external_image`), 통합 진입점(`attach_images`) |
 | `qa_agents` | 3분할 QA(이미지/카피/컴플라이언스) 결정론 검사 + 집계 + 등록 게이트(`qa_gate`) |
 | `register` | prepared payload 저장/로드, 등록 오케스트레이션. `prepare_listing`이 `detail_render.render_detail_html` 로 상세 HTML 을 조립한다. 이미지 입력은 `images.attach_images` 로 외부 URL fetch( SSRF 가드 적용) 와 로컬 파일 업로드를 수행한다 |

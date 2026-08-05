@@ -474,10 +474,13 @@ class TestNeverWritesConfig:
 
 
 # --------------------------------------------------------------------------- #
-# 도구 6개 유지 — 새 도구 추가 없음.
+# 도구 7개 유지 — 새 도구 추가 없음.
 # --------------------------------------------------------------------------- #
 class TestToolCountPreserved:
-    """정책 온보딩 추가에도 MCP 도구가 6개로 유지된다."""
+    """정책 온보딩 추가에도 MCP 도구가 7개로 유지된다.
+
+    delete_product 가 추가되면서 도구 수가 6 → 7 로 늘었다.
+    """
 
     def test_six_tools_registered(self):
         import asyncio
@@ -488,7 +491,10 @@ class TestToolCountPreserved:
                 tools = asyncio.run(tools)
             except RuntimeError:
                 tools = asyncio.get_event_loop().run_until_complete(tools)
-        assert len(tools) == 6, f"도구가 6개여야 함: {len(tools)}"
+        # 7개 도구: check_config, upload_images, register_product, get_product,
+        # prepare_listing, submit_reviews, delete_product. delete_product 는
+        # 파괴적 능력이라 별도 도구로 분리했다.
+        assert len(tools) == 7, f"도구가 7개여야 함: {len(tools)}"
 
     def test_check_config_takes_read_existing(self):
         """check_config 가 read_existing 키워드 인자를 받는다."""

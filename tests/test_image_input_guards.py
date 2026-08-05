@@ -628,7 +628,7 @@ class TestMcpUploadUsesGuard:
 
 
 # --------------------------------------------------------------------------- #
-# MCP 도구 등록 — 4개 유지
+# MCP 도구 등록 — 7개 유지
 # --------------------------------------------------------------------------- #
 class TestToolRegistrationPreserved:
     """MCP 도구가 등록돼 있는지 (무회귀)."""
@@ -642,7 +642,11 @@ class TestToolRegistrationPreserved:
                 tools = asyncio.run(tools)
             except RuntimeError:
                 tools = asyncio.get_event_loop().run_until_complete(tools)
-        assert len(tools) == 6
+        # 7개 도구: check_config, upload_images, register_product, get_product,
+        # prepare_listing, submit_reviews, delete_product.
+        # delete_product 는 파괴적 능력이므로 별도 도구로 노출한다 (다른 도구에
+        # 접으면 의도가 숨겨진다).
+        assert len(tools) == 7
 
 
 # --------------------------------------------------------------------------- #

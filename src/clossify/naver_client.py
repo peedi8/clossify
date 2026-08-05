@@ -1340,6 +1340,26 @@ def get_product(origin_no, tk=None):
     return r.status_code, (r.json() if r.status_code == 200 else r.text)
 
 
+def delete_origin_product(origin_product_no, tk=None):
+    """DELETE /external/v2/products/origin-products/{originProductNo}.
+
+    2026-08-05 실측 확인: HTTP 200, 본문 ``{"data": true}``. 라이브 스토어에서
+    테스트 listing 10건을 이 엔드포인트로 삭제했다.
+
+    인증·타임아웃·반환형(``(status_code, body)``)·에러 처리는 이웃 호출
+    (``get_product``/``update_product``) 규약을 그대로 따른다 — 일관성을 해치는
+    변형을 만들지 않는다. 본 함수는 순수 API 래퍼다: 단일 대상만 지우고,
+    호출자(mcp_server)가 입력 검증·확인·로컬 기록 정리를 담당한다.
+    """
+    tk = tk or get_token()
+    r = requests.delete(
+        BASE + f"/external/v2/products/origin-products/{origin_product_no}",
+        headers=_h(tk, False),
+        timeout=20,
+    )
+    return r.status_code, _json_or_text_response(r)
+
+
 def search_products(page: int = 1, size: int = 10, tk=None):
     """기존 등록 상품 목록을 조회한다 (POST /external/v1/products/search).
 
