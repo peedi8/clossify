@@ -224,6 +224,21 @@ body{margin:0;padding:24px;background:#f5f5f5;font-family:-apple-system,
   box-sizing:border-box}
 .edit-fallback-note{color:#a50e0e;font-size:12px;margin-top:6px}
 .edit-status{flex:1 1 100%;font-size:13px;color:#555;min-height:1.2em}
+/* 로컬 승인 다리: enable_local_approval 켜짐 + 포트 확정 후에만 노출.
+   기본 OFF 이므로 token/port 가 없으면 이 바는 렌더되지 않는다. */
+.approval-bar{background:#eef6ff;border:1px solid #1a73e8;border-radius:8px;
+  padding:14px 18px;margin-top:16px;display:flex;flex-wrap:wrap;gap:10px;
+  align-items:center}
+.approval-bar-note{flex:1 1 320px;color:#1a4d8f;font-size:12px;line-height:1.5}
+.approval-bar-note strong{color:#0b3d7a}
+.approval-btn{border:0;border-radius:6px;padding:10px 18px;font-size:14px;
+  font-weight:600;cursor:pointer}
+.approval-btn-approve{background:#137333;color:#fff}
+.approval-btn-approve:hover{background:#0f5c2b}
+.approval-btn-approve-edit{background:#1a73e8;color:#fff}
+.approval-btn-approve-edit:hover{background:#1557b0}
+.approval-btn:disabled{background:#bbb;cursor:default}
+.approval-status{flex:1 1 100%;font-size:13px;color:#1a4d8f;min-height:1.2em}
 """
 
 
@@ -479,11 +494,108 @@ _PREVIEW_EDIT_SCRIPT = r"""<script>
 </script>"""
 
 
+# ---------------------------------------------------------------------------
+# 로컬 승인 다리 스크립트.
+#
+# [승인] / [수정 후 승인] 버튼이 ``http://127.0.0.1:<port>/`` 로 POST 요청을
+# 보낸다. 토큰은 ``X-Approval-Token`` 헤더로 전달 — URL 에 넣으면 브라우저
+# 기록·서버 로그에 남을 수 있다. 헤더가 더 안전하다.
+#
+# [수정 후 승인] 은 _PREVIEW_EDIT_SCRIPT 의 collectChanges() 와 같은 로직으로
+# 바뀐 필드만 수집해 body.edits 로 보낸다. 명시값 우선 원칙은 서버 쪽에서
+# 처리한다 — 이 스크립트는 "바뀐 필드"만 보낼 뿐 덮어쓰기 판단은 하지 않는다.
+#
+# POST 이기 때문에 CORS preflight 가 발생할 수 있으나, 서버가 CORS 헤더를
+# 내보내지 않으므로 브라우저가 응답을 읽을 수 없다(nopaque response). 이것은
+# 의도된 동작이다 — 서버는 요청을 *처리* 하되 응답을 *숨긴다*. 성공/실패는
+# 응답 본문이 아니라 네트워크 오류 여부(reject)로만 대략 알 수 있다.
+# 토큰 검증 실패 등은 서버가 4xx 를 주지만 CORS 차단으로 페이지가 본문을 읽지
+# 못한다 — 이것도 의도된 것이다. 사용자는 "승인 요청을 보냈습니다" 라는
+# 안내만 보고, 실제 등록 결과는 채팅에서 확인한다.
+_PREVIEW_APPROVAL_SCRIPT = r"""<script>
+(function(){
+  "use strict";
+  function normalizeText(s){return String(s==null?"":s).replace(/\s+/g," ").trim();}
+  function fieldText(el){
+    var em=el.querySelector("em");
+    if(em && !el.getAttribute("data-original")){return "";}
+    return normalizeText(el.textContent);
+  }
+  function collectChanges(){
+    var changed={};
+    var nodes=document.querySelectorAll(".edit-field[data-field]");
+    for(var i=0;i<nodes.length;i++){
+      var el=nodes[i];
+      var field=el.getAttribute("data-field")||"";
+      var original=normalizeText(el.getAttribute("data-original")||"");
+      var current=fieldText(el);
+      if(current!==original){changed[field]=current;}
+    }
+    return changed;
+  }
+  function showStatus(msg){
+    var st=document.getElementById("approval-status");
+    if(st){st.textContent=msg;}
+  }
+  function disableButtons(){
+    var b1=document.getElementById("approval-btn");
+    var b2=document.getElementById("approval-btn-edit");
+    if(b1){b1.disabled=true;}
+    if(b2){b2.disabled=true;}
+  }
+  function sendApproval(includeEdits){
+    var btn=document.getElementById("approval-btn");
+    if(!btn){return;}
+    var token=btn.getAttribute("data-token")||"";
+    var port=parseInt(btn.getAttribute("data-port")||"0",10);
+    var productKey=btn.getAttribute("data-product-key")||"";
+    if(!token||!port){
+      showStatus("승인 정보가 없습니다. 미리보기를 다시 여세요.");
+      return;
+    }
+    var body={"token":token,"product_key":productKey};
+    if(includeEdits){
+      var edits=collectChanges();
+      body["edits"]=edits;
+    }
+    showStatus("승인 요청을 보내는 중...");
+    disableButtons();
+    // fetch 는 no-cors 모드를 쓰지 않는다 — 서버가 CORS 헤더를 주지 않으므로
+    // 브라우저가 응답을 차단한다(reject). 이것은 의도된 동작이다: 서버는
+    // 요청을 처리하되 응답을 숨긴다.
+    fetch("http://127.0.0.1:"+port+"/",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","X-Approval-Token":token},
+      body:JSON.stringify(body)
+    }).then(function(){
+      showStatus("승인 요청을 보냈습니다. 등록 결과는 채팅에서 확인하세요.");
+    },function(){
+      // CORS 차단으로 reject 되더라도 서버는 요청을 처리했을 수 있다.
+      // 에러를 "실패" 로 단정하지 않는다 — 사용자에게 "요청을 보냄" 으로
+      // 안내하고 결과는 채팅에서 확인하라고 한다.
+      showStatus("승인 요청을 보냈습니다. 등록 결과는 채팅에서 확인하세요.");
+    });
+  }
+  function init(){
+    var b1=document.getElementById("approval-btn");
+    var b2=document.getElementById("approval-btn-edit");
+    if(b1){b1.addEventListener("click",function(){sendApproval(false);});}
+    if(b2){b2.addEventListener("click",function(){sendApproval(true);});}
+  }
+  if(document.readyState==="loading"){
+    document.addEventListener("DOMContentLoaded",init);
+  }else{init();}
+})();
+</script>"""
+
+
 def render_preview_html(
     payload: dict[str, Any],
     *,
     api_payload: dict[str, Any] | None = None,
     product_key: str | None = None,
+    approval_token: str | None = None,
+    approval_port: int | None = None,
 ) -> str:
     """prepared payload 로부터 미리보기 HTML 문자열을 만든다.
 
@@ -499,6 +611,12 @@ def render_preview_html(
         ``product_key`` 가 주어지면 클립보드 페이로드에 포함되어 모델이 어느
         상품인지 정확히 식별할 수 있다.
 
+        ``approval_token`` 과 ``approval_port`` 가 모두 주어지면(설정
+        ``enable_local_approval`` 켜짐 + 포트 확정 후), [승인] / [수정 후 승인]
+        버튼이 페이지에 포함된다. 이 버튼은 ``http://127.0.0.1:<port>/`` 로
+        POST 요청을 보내 승인을 전달한다. 둘 중 하나라도 없으면 승인 바는
+        렌더되지 않는다(기본 OFF).
+
         Args:
             payload: prepared payload dict.
             api_payload: 등록 단계가 만들 페이로드(``naver_client.build_payload``
@@ -506,6 +624,10 @@ def render_preview_html(
                 최소 정보만 읽는다.
             product_key: prepared payload 의 product_key. 클립보드 수정사항 페이
                 로드에 포함된다(모델이 어느 상품인지 확실히 알도록).
+            approval_token: 로컬 승인 다리의 일회용 토큰. ``approval_port`` 와
+                함께 주어져야 승인 바가 렌더된다.
+            approval_port: 로컬 승인 서버의 포트. ``approval_token`` 과 함께
+                주어져야 승인 바가 렌더된다.
 
         Returns:
             완전한 HTML 문서 문자열.
@@ -687,8 +809,39 @@ def render_preview_html(
         "</div>"
     )
 
+    # 로컬 승인 바: approval_token 과 approval_port 가 모두 있을 때만 렌더.
+    # 기본 OFF — 설정이 꺼져 있으면 token/port 가 None 이므로 이 바는 나오지
+    # 않는다. 기존 클립보드 경로(수정사항 복사)는 그대로 동작한다.
+    if approval_token and approval_port:
+        safe_token = html.escape(str(approval_token), quote=True)
+        # data-* 속성으로 token/port/product_key 를 페이지에 심는다.
+        # 스크립트는 이 값들을 읽어 POST / 로 승인을 보낸다.
+        parts.append(
+            '<div class="approval-bar">'
+            '<span class="approval-bar-note">'
+            "<strong>[승인] 버튼을 누르면 이 상품이 등록됩니다.</strong><br />"
+            "[수정 후 승인] 은 페이지에서 바꾼 값을 함께 보냅니다. "
+            "10분 안에 누르지 않으면 자동 만료됩니다."
+            "</span>"
+            '<button type="button" id="approval-btn" '
+            f'class="approval-btn approval-btn-approve" '
+            f'data-token="{safe_token}" data-port="{int(approval_port)}" '
+            f'data-product-key="{safe_pkey}">'
+            "승인</button>"
+            '<button type="button" id="approval-btn-edit" '
+            f'class="approval-btn approval-btn-approve-edit" '
+            f'data-token="{safe_token}" data-port="{int(approval_port)}" '
+            f'data-product-key="{safe_pkey}">'
+            "수정 후 승인</button>"
+            '<span id="approval-status" class="approval-status"></span>'
+            "</div>"
+        )
+
     parts.append("</div>")  # preview-wrap
     parts.append(_PREVIEW_EDIT_SCRIPT)
+    # 승인 바가 있을 때만 승인 스크립트를 포함한다(불필요한 코드 노출 금지).
+    if approval_token and approval_port:
+        parts.append(_PREVIEW_APPROVAL_SCRIPT)
     parts.append("</body>")
     parts.append("</html>")
     return "\n".join(parts)
@@ -699,6 +852,8 @@ def write_preview_html(
     payload: dict[str, Any],
     *,
     api_payload: dict[str, Any] | None = None,
+    approval_token: str | None = None,
+    approval_port: int | None = None,
 ) -> Path:
     """미리보기 HTML 을 디스크에 쓰고 경로를 반환한다.
 
@@ -706,16 +861,29 @@ def write_preview_html(
     ``product_key`` 는 클립보드 수정사항 페이로드에 포함되도록 페이지에
     싣는다(모델이 어느 상품인지 정확히 식별).
 
+    ``approval_token`` 과 ``approval_port`` 가 모두 주어지면 승인 바가
+    페이지에 포함된다. 등록 도구가 포트를 확정한 뒤 이 함수로 미리보기를
+    갱신할 때 쓴다(포트를 모르는 상태에서는 토큰만 발급하고 서버는 띄우지
+    않는다 — 불필요한 포트 개방 금지).
+
     Args:
         product_key: prepared payload 의 product_key.
         payload: prepared payload dict.
         api_payload: 등록 단계 페이로드(선택). 고시 출처 표시에 쓴다.
+        approval_token: 로컬 승인 다리 토큰(선택).
+        approval_port: 로컬 승인 서버 포트(선택).
 
     Returns:
         쓴 파일의 경로.
     """
     path = _preview_path(product_key)
-    html_doc = render_preview_html(payload, api_payload=api_payload, product_key=product_key)
+    html_doc = render_preview_html(
+        payload,
+        api_payload=api_payload,
+        product_key=product_key,
+        approval_token=approval_token,
+        approval_port=approval_port,
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(html_doc, encoding="utf-8")
     return path

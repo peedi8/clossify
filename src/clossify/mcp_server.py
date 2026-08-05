@@ -220,6 +220,86 @@ def _config_require_preview_confirmation() -> bool:
     return True
 
 
+def _config_enable_local_approval() -> bool:
+    """config 의 ``enable_local_approval`` 설정을 읽는다.
+
+    기본값은 ``False`` (끔). 이 기능은 로컬 포트를 여는 편의 기능이므로
+    명시적으로 켜야 동작한다. config 에 키가 없거나 값이 bool 이 아니면
+    기본값(False) 을 반환한다 — 조용히 켜지지 않는다. 이것은 방어 8(기본 OFF)
+    의 핵심이다.
+    """
+    cfg_path = naver_client.config_path()
+    try:
+        with open(cfg_path, encoding="utf-8-sig") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        return False
+    value = cfg.get("enable_local_approval")
+    if isinstance(value, bool):
+        return value
+    return False
+
+
+# --------------------------------------------------------------------------- #
+# 로컬 승인 다리: 승인된 수정 필드 반영.
+#
+# 브라우저의 [수정 후 승인] 버튼이 보낸 edits dict 를 register_product 의
+# 명시 인자로 번역한다. 필드명은 미리보기 페이지의 data-field 규약을 따른다:
+#   - "상품명" → name
+#   - "판매가" → price (int 로 변환)
+#   - "태그" → tags (쉼표 분리 → 리스트)
+#   - "고시.<field>" → notice[field] = value
+#
+# 명시값 우선 원칙: register_product 의 명시 인자가 항상 우선하므로, 여기서
+# 반환된 값을 명시 인자에 대입하면 prepared 의 자동 채움보다 우선하게 된다.
+def _apply_approval_edits(
+    edits: dict[str, Any],
+) -> dict[str, Any]:
+    """승인된 수정 필드를 register_product 의 인자 형태로 번역한다.
+
+    Args:
+        edits: ``{field: value}`` — 필드명은 미리보기 페이지의 data-field 규약.
+
+    Returns:
+        ``{"name": str|None, "price": int|None, "tags": list|None,
+        "notice": dict|None}`` — 해당하지 않는 키는 None.
+    """
+    result: dict[str, Any] = {
+        "name": None,
+        "price": None,
+        "tags": None,
+        "notice": None,
+    }
+    if not isinstance(edits, dict):
+        return result
+    for field, value in edits.items():
+        f = str(field or "").strip()
+        v = str(value).strip() if value is not None else ""
+        if not f:
+            continue
+        if f == "상품명":
+            if v:
+                result["name"] = v
+        elif f == "판매가":
+            # 쉼표 제거 후 int 변환. 실패하면 무시(조용한 치환 금지).
+            cleaned = v.replace(",", "").replace("원", "").strip()
+            try:
+                result["price"] = int(cleaned)
+            except ValueError:
+                pass
+        elif f == "태그":
+            # 쉼표 분리 → 리스트. 빈 항목 제거.
+            parts = [p.strip() for p in v.split(",") if p.strip()]
+            result["tags"] = parts if parts else None
+        elif f.startswith("고시."):
+            notice_field = f[3:]  # "고시." 이후.
+            if notice_field:
+                if result["notice"] is None:
+                    result["notice"] = {}
+                result["notice"][notice_field] = v
+    return result
+
+
 # --------------------------------------------------------------------------- #
 # 결정론 컴플라이언스 게이트 (fail-closed).
 #
@@ -1393,36 +1473,167 @@ def register_product(
     if isinstance(_resolved_payload, dict):
         _preview_path_for_gate = _resolved_payload.get("preview_path") or None
     _require_preview = _config_require_preview_confirmation()
+    _enable_local_approval = _config_enable_local_approval()
     if _require_preview and not preview_confirmed:
-        _msg_parts = [
-            "미리보기 승인 없이 등록을 거부했습니다 (require_preview_confirmation 켜짐).",
-            "브라우저로 미리보기 파일을 열어 내용을 확인한 뒤 preview_confirmed=True 로 다시 호출하세요.",
-        ]
-        if _preview_path_for_gate:
-            _msg_parts.append(f"미리보기 파일: {_preview_path_for_gate}")
-        else:
-            _msg_parts.append(
-                "미리보기 파일 경로를 찾을 수 없습니다 — prepare_listing 을 먼저 호출했는지 확인하세요."
+        # 로컬 승인 다리가 켜져 있으면 "승인 대기 모드" 로 진입한다 —
+        # 사용자가 브라우저에서 [승인] 버튼을 누를 때까지 대기한다.
+        # 설정이 꺼져 있으면 기존 흐름(거부 + 안내) 그대로.
+        if not _enable_local_approval:
+            _msg_parts = [
+                "미리보기 승인 없이 등록을 거부했습니다 (require_preview_confirmation 켜짐).",
+                "브라우저로 미리보기 파일을 열어 내용을 확인한 뒤 preview_confirmed=True 로 다시 호출하세요.",
+            ]
+            if _preview_path_for_gate:
+                _msg_parts.append(f"미리보기 파일: {_preview_path_for_gate}")
+            else:
+                _msg_parts.append(
+                    "미리보기 파일 경로를 찾을 수 없습니다 — prepare_listing 을 먼저 호출했는지 확인하세요."
+                )
+            return {
+                "ok": False,
+                "status_code": None,
+                "origin_product_no": None,
+                "channel_product_no": None,
+                "missing_channel_no": True,
+                "name_truncated": False,
+                "raw": None,
+                "seller_tags": None,
+                "blocked_by": "preview_confirmation",
+                "preview_path": _preview_path_for_gate,
+                "require_preview_confirmation": True,
+                "enable_local_approval": False,
+                "filled_from_prepared": [],
+                "prepared_lookup": prepared_lookup,
+                "notice_filled_from_config": [],
+                "dry_run": _dry_run,
+                "message": " ".join(_msg_parts),
+                "error": None,
+            }
+
+        # 승인 대기 모드: 로컬 서버를 띄워 브라우저의 [승인] 을 기다린다.
+        # prepared payload 가 없으면 승인 대기 불가 — 안내하고 거부.
+        if _resolved_payload is None or not _preview_path_for_gate:
+            return {
+                "ok": False,
+                "status_code": None,
+                "origin_product_no": None,
+                "channel_product_no": None,
+                "missing_channel_no": True,
+                "name_truncated": False,
+                "raw": None,
+                "seller_tags": None,
+                "blocked_by": "preview_confirmation",
+                "preview_path": _preview_path_for_gate,
+                "require_preview_confirmation": True,
+                "enable_local_approval": True,
+                "filled_from_prepared": [],
+                "prepared_lookup": prepared_lookup,
+                "notice_filled_from_config": [],
+                "dry_run": _dry_run,
+                "message": (
+                    "로컬 승인 다리가 켜져 있지만 prepared payload 또는 미리보기 파일이 없어 "
+                    "승인 대기 모드로 진입할 수 없습니다. prepare_listing 을 먼저 호출하세요."
+                ),
+                "error": None,
+            }
+
+        # 승인 서버를 띄워 포트를 확정하고, 미리보기 파일을 갱신한다.
+        from . import approval_server as _approval_mod
+        from . import preview as _preview_mod
+
+        _approval_token = _approval_mod.new_token()
+        _srv = _approval_mod.ApprovalServer(
+            product_key=_product_key,
+            token=_approval_token,
+        )
+        _approval_port = _srv.start()
+        try:
+            # 포트가 확정되었으므로 미리보기 파일을 갱신한다.
+            # 기존 클립보드 편집 기능도 그대로 포함된다.
+            # api_payload(등록 단계 페이로드)는 prepared payload 에 저장되지
+            # 않으므로 여기서는 전달하지 않는다 — 고시 타입/출처 표시 없이
+            # 렌더되지만, 승인 버튼 동작에는 영향이 없다.
+            _preview_mod.write_preview_html(
+                _product_key,
+                _resolved_payload,
+                approval_token=_approval_token,
+                approval_port=_approval_port,
             )
-        return {
-            "ok": False,
-            "status_code": None,
-            "origin_product_no": None,
-            "channel_product_no": None,
-            "missing_channel_no": True,
-            "name_truncated": False,
-            "raw": None,
-            "seller_tags": None,
-            "blocked_by": "preview_confirmation",
-            "preview_path": _preview_path_for_gate,
-            "require_preview_confirmation": True,
-            "filled_from_prepared": [],
-            "prepared_lookup": prepared_lookup,
-            "notice_filled_from_config": [],
-            "dry_run": _dry_run,
-            "message": " ".join(_msg_parts),
-            "error": None,
-        }
+        except Exception:
+            # 미리보기 갱신 실패는 승인 자체를 막지 않는다 — 사용자가
+            # 브라우저를 이미 새로고침하지 않았을 수도 있다. 다만 페이지에
+            # 포트가 없으면 버튼이 동작하지 않는다. 서버는 종료한다.
+            _srv.close()
+            return {
+                "ok": False,
+                "status_code": None,
+                "origin_product_no": None,
+                "channel_product_no": None,
+                "missing_channel_no": True,
+                "name_truncated": False,
+                "raw": None,
+                "seller_tags": None,
+                "blocked_by": "preview_file_error",
+                "preview_path": _preview_path_for_gate,
+                "require_preview_confirmation": True,
+                "enable_local_approval": True,
+                "filled_from_prepared": [],
+                "prepared_lookup": prepared_lookup,
+                "notice_filled_from_config": [],
+                "dry_run": _dry_run,
+                "message": (
+                    "로컬 승인 서버를 띄웠지만 미리보기 파일 갱신에 실패했습니다. "
+                    "미리보기 파일을 브라우저에서 새로고침한 뒤 다시 시도하세요."
+                ),
+                "error": None,
+            }
+
+        # 승인 대기. 최대 10분(TTL). 결과가 올 때까지 블록한다.
+        _outcome = _srv.wait()
+        _srv.close()
+
+        if not _outcome.approved:
+            # 만료·거부. 등록하지 않는다(조용한 성공 금지).
+            _msg = f"로컬 승인이 거부되었습니다: {_outcome.reason}"
+            if _outcome.reason == "timeout":
+                _msg = "로컬 승인 대기 시간(10분)이 만료되었습니다. 다시 시도하세요."
+            return {
+                "ok": False,
+                "status_code": None,
+                "origin_product_no": None,
+                "channel_product_no": None,
+                "missing_channel_no": True,
+                "name_truncated": False,
+                "raw": None,
+                "seller_tags": None,
+                "blocked_by": "local_approval_" + (_outcome.reason or "rejected"),
+                "preview_path": _preview_path_for_gate,
+                "require_preview_confirmation": True,
+                "enable_local_approval": True,
+                "filled_from_prepared": [],
+                "prepared_lookup": prepared_lookup,
+                "notice_filled_from_config": [],
+                "dry_run": _dry_run,
+                "message": _msg,
+                "error": None,
+            }
+
+        # 승인됨. 수정 필드가 있으면 명시 인자로 반영(명시값 우선 원칙).
+        # edits 는 {field: value} 형태. 필드명은 한국어(상품명, 판매가, 태그, 고시.*).
+        _edits = _outcome.decisions.get("edits") if isinstance(_outcome.decisions, dict) else None
+        if isinstance(_edits, dict) and _edits:
+            _applied = _apply_approval_edits(_edits)
+            if _applied.get("name"):
+                name = _applied["name"]
+            if _applied.get("price") is not None:
+                price = _applied["price"]
+            if _applied.get("tags") is not None:
+                tags = _applied["tags"]
+            if _applied.get("notice") is not None:
+                notice = _applied["notice"]
+
+        # 승인이 확인되었으므로 preview_confirmed 를 True 로 취급하고 진행.
+        preview_confirmed = True
 
     # ------------------------------------------------------------------ #
     # prepared payload 로부터 image_urls / detail_html 채우기.

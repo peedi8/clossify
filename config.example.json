@@ -1,5 +1,5 @@
 {
-  "_comment": "Example configuration for clossify. Copy to .local/config.json and fill real values. Never commit real credentials. All values below are placeholders. Keys: naver (Commerce API), naver_searchad (Search Ads keyword API), image_providers (image generation), smartstore_notice_defaults (product information notice / origin), kc_declaration (KC certification reporting), require_preview_confirmation (gate: require preview HTML confirmation before registration, default true). The agent documents use placeholders {AS_TEL}, {STORE_SLUG}, {STORE_NAME}, {VISION_MODEL} which are resolved from this config at runtime.",
+  "_comment": "Example configuration for clossify. Copy to .local/config.json and fill real values. Never commit real credentials. All values below are placeholders. Keys: naver (Commerce API), naver_searchad (Search Ads keyword API), image_providers (image generation), smartstore_notice_defaults (product information notice / origin), kc_declaration (KC certification reporting), require_preview_confirmation (gate: require preview HTML confirmation before registration, default true), enable_local_approval (localhost approval bridge: opens a local port so the preview [승인] button can directly trigger registration, default false — convenience feature, keeping it off does not break anything). The agent documents use placeholders {AS_TEL}, {STORE_SLUG}, {STORE_NAME}, {VISION_MODEL} which are resolved from this config at runtime.",
   "naver": {
     "_comment": "Naver Commerce API OAuth2 client_credentials. client_secret is used as the bcrypt signing key in naver_client.get_token.",
     "client_id": "REPLACE_WITH_NAVER_CLIENT_ID",
@@ -51,6 +51,7 @@
     "kcCertifiedProductExclusionYn": "REPLACE_WITH_KC_EXCLUSION_YN",
     "kcExemptionType": "REPLACE_WITH_KC_EXEMPTION_TYPE"
   },
-  "require_preview_confirmation": true
+  "require_preview_confirmation": true,
+  "enable_local_approval": false
 }
 
