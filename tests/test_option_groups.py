@@ -563,3 +563,135 @@ class TestPrepareListingPreservesOptionGroups:
             f"{reloaded_product.get('option_groups')} "
             "(register_prepared_listing 경로가 그룹 이름을 잃게 됨)"
         )
+
+
+# --------------------------------------------------------------------------- #
+# 6. 축 수 불일치 / 중복 이름 → 네이버 호출 0회로 거부 (FIX-P3).
+#
+# 과거 게이트는 option_groups 개수만 1~3 이면 통과시켰다. 1축 옵션에 3개 이름을
+# 주면 초과 2개가 조용히 잘리고, 2축 옵션에 1개 이름을 주면 "옵션2" 가 조용히
+# 채워졌다. 본 절은 (a) 축 수≠이름 수 (b) 중복 이름 을 거부하는지 검증한다.
+# --------------------------------------------------------------------------- #
+class TestOptionGroupsAxisCountMismatch:
+    """``option_groups`` 축 수 불일치·중복 이름 거부 (FIX-P3)."""
+
+    def test_over_supply_refused(self):
+        """1축 옵션 + 3개 그룹 이름 → 거부 (조용한 절삭 금지)."""
+        naver_calls: list = []
+
+        def recorder(*args, **kwargs):
+            naver_calls.append({"args": args, "kwargs": kwargs})
+            return (200, {"originProductNo": "should-not-happen"})
+
+        notice_override = _wear_notice_override()
+        # 1축 옵션.
+        options = [
+            {"optionName1": "블랙", "stock": 2, "price": 0},
+            {"optionName1": "아이보리", "stock": 3, "price": 0},
+        ]
+        ctx1, ctx2, ctx3 = _ctx_mocks()
+        with ctx1, ctx2, ctx3:
+            with mock.patch.object(naver_client, "register_product", side_effect=recorder):
+                result = mcp_server.register_product(
+                    name="테스트티",
+                    price=20000,
+                    image_urls=["http://cdn/x.png"],
+                    category_id=_CLOTHING_CATEGORY,
+                    detail_html="<html><body>상세</body></html>",
+                    notice=notice_override,
+                    options=options,
+                    preview_confirmed=True,
+                    # 1축인데 3개 이름 — 2개가 조용히 잘려야 함.
+                    option_groups=["색상", "사이즈", "소재"],
+                )
+
+        assert result["ok"] is False, "축 수(1) ≠ 이름 수(3) 는 거부되어야 함"
+        assert len(naver_calls) == 0, "거부 시 네이버 호출 0회"
+        msg = result.get("error") or ""
+        assert "1" in msg and "3" in msg, f"사유에 축 수/이름 수 가 명시되어야 함: {msg}"
+
+    def test_under_supply_refused(self):
+        """2축 옵션 + 1개 그룹 이름 → 거부 (조용한 보충 금지)."""
+        naver_calls: list = []
+
+        def recorder(*args, **kwargs):
+            naver_calls.append({"args": args, "kwargs": kwargs})
+            return (200, {"originProductNo": "should-not-happen"})
+
+        notice_override = _wear_notice_override()
+        ctx1, ctx2, ctx3 = _ctx_mocks()
+        with ctx1, ctx2, ctx3:
+            with mock.patch.object(naver_client, "register_product", side_effect=recorder):
+                result = mcp_server.register_product(
+                    name="테스트니트",
+                    price=30000,
+                    image_urls=["http://cdn/x.png"],
+                    category_id=_CLOTHING_CATEGORY,
+                    detail_html="<html><body>상세</body></html>",
+                    notice=notice_override,
+                    options=_two_axis_options(),
+                    preview_confirmed=True,
+                    # 2축인데 1개 이름 — "옵션2" 가 조용히 채워져야 함.
+                    option_groups=["색상"],
+                )
+
+        assert result["ok"] is False, "축 수(2) ≠ 이름 수(1) 는 거부되어야 함"
+        assert len(naver_calls) == 0
+        msg = result.get("error") or ""
+        assert "2" in msg and "1" in msg, f"사유에 축 수/이름 수 가 명시되어야 함: {msg}"
+
+    def test_duplicate_names_refused(self):
+        """중복 그룹 이름 → 거부 (네이버에서 축 구분 불가)."""
+        naver_calls: list = []
+
+        def recorder(*args, **kwargs):
+            naver_calls.append({"args": args, "kwargs": kwargs})
+            return (200, {"originProductNo": "should-not-happen"})
+
+        notice_override = _wear_notice_override()
+        ctx1, ctx2, ctx3 = _ctx_mocks()
+        with ctx1, ctx2, ctx3:
+            with mock.patch.object(naver_client, "register_product", side_effect=recorder):
+                result = mcp_server.register_product(
+                    name="테스트니트",
+                    price=30000,
+                    image_urls=["http://cdn/x.png"],
+                    category_id=_CLOTHING_CATEGORY,
+                    detail_html="<html><body>상세</body></html>",
+                    notice=notice_override,
+                    options=_two_axis_options(),
+                    preview_confirmed=True,
+                    # 중복 이름 — 네이버에서 축 구분이 안 됨.
+                    option_groups=["색상", "색상"],
+                )
+
+        assert result["ok"] is False, "중복 이름은 거부되어야 함"
+        assert len(naver_calls) == 0
+        msg = result.get("error") or ""
+        assert "중복" in msg, f"사유에 '중복' 언급이 있어야 함: {msg}"
+
+    def test_two_axis_with_two_groups_still_works(self):
+        """2축 옵션 + 2개 그룹 이름 → 통과 (회귀 방지)."""
+        captured_payload: dict = {}
+
+        def capture(payload, tk=None):
+            captured_payload.update(payload)
+            return (200, {"originProductNo": "test-origin-2axis-ok"})
+
+        notice_override = _wear_notice_override()
+        ctx1, ctx2, ctx3 = _ctx_mocks()
+        with ctx1, ctx2, ctx3:
+            with mock.patch.object(naver_client, "register_product", side_effect=capture):
+                result = mcp_server.register_product(
+                    name="테스트니트",
+                    price=30000,
+                    image_urls=["http://cdn/x.png"],
+                    category_id=_CLOTHING_CATEGORY,
+                    detail_html="<html><body>상세</body></html>",
+                    notice=notice_override,
+                    options=_two_axis_options(),
+                    preview_confirmed=True,
+                    option_groups=["색상", "사이즈"],
+                )
+
+        assert result["ok"] is True, f"축 수 일치 시 통과해야 함: {result}"

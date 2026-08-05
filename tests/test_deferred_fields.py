@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 # src 레이아웃 지원.
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _SRC = _PROJECT_ROOT / "src"
@@ -582,3 +584,112 @@ class TestDeferredInputValidation:
 
         assert result["ok"] is False
         assert len(naver_calls) == 0
+
+
+# --------------------------------------------------------------------------- #
+# 6. allowlist 검증 — 고시 정의에 없는 키는 거부 (대소문자 변형·별칭·오타 포함).
+# 과거 이 게이트는 어떤 키든 받아 "미뤄졌다" 고 믿게 두고 네이버에 임의 키로
+# "상세페이지 참조" 를 전송했다. 본 절은 allowlist 밖 키가 거부되는지 검증한다.
+# --------------------------------------------------------------------------- #
+class TestDeferredAllowlistRejection:
+    """``deferred_notice_fields`` 의 allowlist 검증 (FIX-P3)."""
+
+    @pytest.mark.parametrize(
+        "bad_field",
+        [
+            "madein",  # 오타(camelCase 아님)
+            "country_of_origin",  # 별칭(snake_case)
+            "OriginAreaCode",  # 대소문자 변형
+            "originAreaInfo.content.value",  # 과잉 경로
+            "totally_unknown_field",  # 완전 허구
+        ],
+    )
+    def test_off_allowlist_key_rejected(self, bad_field):
+        """allowlist 밖 키가 하나라도 섞이면 전체 요청 거부 (네이버 호출 0회)."""
+        naver_calls: list[dict] = []
+        notice_override = _wear_notice_without_material(extra={"material": "면 100%"})
+        with mock.patch.object(
+            naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
+        ):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                with mock.patch.object(
+                    naver_client,
+                    "register_product",
+                    side_effect=_mock_naver_register_called_recorder(naver_calls),
+                ):
+                    result = mcp_server.register_product(
+                        name="테스트니트",
+                        price=30000,
+                        image_urls=["http://cdn/x.png"],
+                        category_id=_CLOTHING_CATEGORY,
+                        detail_html="<html><body>상세</body></html>",
+                        notice=notice_override,
+                        preview_confirmed=True,
+                        deferred_notice_fields=["material", bad_field],
+                    )
+
+        assert result["ok"] is False, f"allowlist 밖 키({bad_field}) 가 통과하면 안 됨"
+        assert (
+            result.get("blocked_by") == "deferred_field_not_in_allowlist"
+        ), f"blocked_by 사유가 다름: {result.get('blocked_by')}"
+        assert len(naver_calls) == 0, "allowlist 거부 시 네이버 호출 0회"
+        # 사유에 어느 키가 문제인지 명시.
+        msg = result.get("message") or ""
+        assert bad_field in msg, f"사유에 문제 필드명({bad_field}) 이 없음: {msg}"
+
+    def test_mixed_off_and_on_list_still_rejected(self):
+        """allowlist 내 키와 밖 키가 섞여도 전체 거부 (부분 적용 금지)."""
+        naver_calls: list[dict] = []
+        notice_override = _wear_notice_without_material()
+        with mock.patch.object(
+            naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
+        ):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                with mock.patch.object(
+                    naver_client,
+                    "register_product",
+                    side_effect=_mock_naver_register_called_recorder(naver_calls),
+                ):
+                    result = mcp_server.register_product(
+                        name="테스트니트",
+                        price=30000,
+                        image_urls=["http://cdn/x.png"],
+                        category_id=_CLOTHING_CATEGORY,
+                        detail_html="<html><body>상세</body></html>",
+                        notice=notice_override,
+                        preview_confirmed=True,
+                        # material 은 allowlist 안, OriginAreaCode 는 밖.
+                        deferred_notice_fields=["material", "OriginAreaCode"],
+                    )
+
+        assert result["ok"] is False, "부분 적용 금지 — 섞여 있으면 거부"
+        assert result.get("blocked_by") == "deferred_field_not_in_allowlist"
+        assert len(naver_calls) == 0
+
+    def test_valid_deferred_still_works(self):
+        """allowlist 안의 키만 주면 기존대로 동작 (회귀 방지)."""
+        naver_calls: list[dict] = []
+        notice_override = _wear_notice_without_material()
+        with mock.patch.object(
+            naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
+        ):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                with mock.patch.object(common, "cfg", return_value=_common_cfg_origin()):
+                    with mock.patch.object(
+                        naver_client,
+                        "register_product",
+                        side_effect=_mock_naver_register_called_recorder(naver_calls),
+                    ):
+                        result = mcp_server.register_product(
+                            name="테스트니트",
+                            price=30000,
+                            image_urls=["http://cdn/x.png"],
+                            category_id=_CLOTHING_CATEGORY,
+                            detail_html="<html><body>상세</body></html>",
+                            notice=notice_override,
+                            preview_confirmed=True,
+                            deferred_notice_fields=["material", "color"],
+                        )
+
+        assert result["ok"] is True, f"allowlist 내 키는 통과해야 함: {result}"
+        assert len(naver_calls) == 1

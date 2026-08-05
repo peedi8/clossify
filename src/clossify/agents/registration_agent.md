@@ -36,9 +36,29 @@ description: 상품등록(네이버 커머스 API) 담당 에이전트 — 상�
    반환: `{ok, image_urls, count, error}`. `image_urls` 는 `register_product` 로
    그대로 전달된다.
 5. `register_product(name, price, *, category_id, image_urls, detail_html, ...,
-   product_key, preview_confirmed)` → 페이로드 빌드 + 컴플라이언스 게이트 +
-   네이버 API 등록. 반환: `{ok, origin_product_no, channel_product_no,
-   blocked_by, ...}`. `preview_confirmed=True` 선언이 없으면 게이트가 거부한다.
+   product_key, preview_confirmed, option_groups, deferred_notice_fields)` →
+   페이로드 빌드 + 컴플라이언스 게이트 + 네이버 API 등록. 반환: `{ok,
+   origin_product_no, channel_product_no, blocked_by, ...}`.
+   `preview_confirmed=True` 선언이 없으면 게이트가 거부한다.
+   - **`option_groups`**: 다축 옵션의 축 이름 리스트(예: `["색상","사이즈"]`).
+     주의: `options` 의 축 수와 **정확히** 같아야 한다. 1축+`["색상","사이즈","소재"]`
+     처럼 주면 게이트가 거부한다(조용한 절삭 금지). 중복 이름도 거부. `options`
+     가 단일 축이고 기본 이름(`option_group` 또는 "사이즈")으로 졌으면 생략한다.
+   - **`deferred_notice_fields`**: 판매자가 "상세페이지 참조" 로 미루려는
+     고시 필드명 리스트(예: `["material","color"]`). 허용 목록은
+     `data/notice_types.json` 35종 `fields` 의 합집합에서 자동 도출된다 —
+     대소문자 변형·별칭·오타(`madein`·`countryOfOrigin`)는 거부된다(임의 키로
+     네이버에 전송되는 것을 막는다). **원산지(origin_content·origin_area_code)는
+     법적 선언 필드이므로 미루기 불가** — 이 키를 `deferred_notice_fields` 에
+     넣으면 게이트가 거부한다. 부분 적용 금지: 하나라도 허용 목록 밖이면 전체
+     요청을 거부한다.
+   - **`enable_local_approval` (config flag, 도구 인자 아님)**: `.local/config.json`
+     의 키. 기본 `false`. `true` 여야 미리보기 HTML 의 [승인] 버튼이
+     `127.0.0.1:<포트>` 로 승인 신호를 보낼 수 있다. 로컬 포트를 여는 것 자체가
+     위험하므로(같은 컴퓨터의 악성 페이지가 승인을 보낼 수 있다) 10중 방어
+     (127.0.0.1 바인드·일회용 토큰·10분 만료·Origin 검사·CORS 금지·product_key
+     필수·1회 소진 등)가 따른다. 이 스위치 없이는 `preview_confirmed=True` 를
+     별도로 선언해야 한다(사용자가 미리보기를 확인한 뒤 수동으로).
 6. `get_product(origin_product_no)` → 등록된 상품 조회. 반환:
    `{ok, status_code, product, error}`.
 7. `delete_product(origin_product_no, confirm=True)` → 등록된 상품 단건 영구 삭제.

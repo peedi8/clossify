@@ -141,13 +141,28 @@ def _origin_ok(header_value: str) -> bool:
 
 
 def origin_referer_ok(headers: http.client.HTTPMessage) -> bool:
-    """요청의 Origin/Referer 가 모두 허용되는지."""
-    origin = headers.get("Origin")
-    if origin is not None and not _origin_ok(origin):
-        return False
-    referer = headers.get("Referer")
-    if referer is not None and not _origin_ok(referer):
-        return False
+    """요청의 Origin/Referer 가 모두 허용되는지.
+
+    **FIX-P3**: 과거 ``headers.get("Origin")`` 을 써서 **첫 번째 값만** 검사했다.
+    중복 Origin 헤더(``Origin: null`` + ``Origin: https://evil``)가 오면 첫 번째
+    값만 보고 통과시켰다. 본 함수는 ``get_all`` 로 **모든 값**을 검사한다 —
+    하나라도 허용 목록 밖이면 거부. ``Referer`` 도 같은 방식.
+    """
+    # get_all 이 지원되지 않는 환경을 대비해 안전하게 폴백. http.client.HTTPMessage
+    # (email.message.Message 서브클래스) 는 Python 3.x 전체에서 get_all 을 지원한다.
+    get_all = getattr(headers, "get_all", None)
+    if callable(get_all):
+        origins = [v for v in get_all("Origin") or [] if v is not None]
+        referers = [v for v in get_all("Referer") or [] if v is not None]
+    else:  # 폴백 — get 이 첫 값만 반환하지만 거라도 검사한다.
+        origins = [headers.get("Origin")] if headers.get("Origin") is not None else []
+        referers = [headers.get("Referer")] if headers.get("Referer") is not None else []
+    for v in origins:
+        if not _origin_ok(v):
+            return False
+    for v in referers:
+        if not _origin_ok(v):
+            return False
     return True
 
 
@@ -255,10 +270,16 @@ class _ApprovalHandler(http.server.BaseHTTPRequestHandler):
             self._reject(403, "bad_token", "승인 토큰이 일치하지 않습니다.")
             return
 
-        # 5. product_key 일치 검사 (방어 7: 범위 제한). 본문의 product_key 가
-        #    서버가 대기 중인 product_key 와 다르면 거부.
+        # 5. product_key 일치 검사 (방어 7: 범위 제한). 본문의 product_key 는
+        #    **필수**며 서버가 대기 중인 product_key 와 정확히 같아야 한다.
+        #    **FIX-P3**: 과거 ``if body_pkey and ...`` 였다 — product_key 가
+        #    *없으면* 조용히 통과했다. 올바른 토큰만 있으면 어떤 상품의 승인
+        #    이든 덮어쓸 수 있었다. 이제 product_key 누락 자체를 거부한다.
         body_pkey = str(body.get("product_key") or "").strip()
-        if body_pkey and body_pkey != srv.product_key:
+        if not body_pkey:
+            self._reject(400, "missing_product_key", "product_key 는 필수입니다.")
+            return
+        if body_pkey != srv.product_key:
             self._reject(403, "wrong_product", "다른 상품의 승인은 처리할 수 없습니다.")
             return
 

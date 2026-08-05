@@ -645,3 +645,106 @@ class TestLiveSearchShapeRegression:
         assert mcp_server._normalize_search_listing(None) == {}
         assert mcp_server._normalize_search_listing([]) == {}
         assert mcp_server._normalize_search_listing("not-a-dict") == {}
+
+
+# --------------------------------------------------------------------------- #
+# (h) FIX-P3: 스키마 이상과 "진짜 신규 셀러" 구분.
+#
+# 과거에는 ``contents``/``products`` 키가 아예 없거나 값이 list 가 아닌
+# 응답을 "신규 셀러"로 둔갑시켰다 (existing_read_error=None, 제안={}). 이제
+# 스키마 이상으로 판정되면 error 에 사유를 담아 반환한다. 빈 리스트는
+# 여전히 진짜 신규 셀러로 취급한다 (회귀 금지).
+# --------------------------------------------------------------------------- #
+class TestFixP3SchemaAnomalyDistinguished:
+    """FIX-P3: ``contents``/``products`` 키 부재 = 스키마 이상 (신규 셀러 아님)."""
+
+    def test_unknown_response_keys_flagged_as_error(self, tmp_path, monkeypatch):
+        """``{"unexpected": [...]}`` 처럼 키가 아예 없으면 error.
+
+        과거: ``existing_read_error=None``, ``suggested={}`` (신규 셀러로 둔갑).
+        FIX-P3: ``existing_read_error`` 에 사유, ``suggested={}``.
+        """
+        cfg_file = _write_cfg(tmp_path, _BASE_CFG)
+        monkeypatch.setenv("CLOSSIFY_CONFIG", str(cfg_file))
+
+        def _mock_search_unknown_schema(*args, **kwargs):
+            return 200, {"unexpected": [{"id": 1}], "meta": {"page": 1}}
+
+        with mock.patch.object(
+            naver_client, "search_products", side_effect=_mock_search_unknown_schema
+        ):
+            result = mcp_server.check_config(read_existing=True)
+
+        assert result["suggested_from_existing"] == {}
+        # 핵심: 에러 사유가 명시되어, "제안 없음 = 신규 셀러" 오해 방지.
+        assert result["existing_read_error"] is not None
+        assert "스키마" in result["existing_read_error"] or "키" in result["existing_read_error"]
+
+    def test_contents_not_a_list_flagged_as_error(self, tmp_path, monkeypatch):
+        """``contents`` 가 dict 등 list 가 아니면 error (스키마 이상)."""
+        cfg_file = _write_cfg(tmp_path, _BASE_CFG)
+        monkeypatch.setenv("CLOSSIFY_CONFIG", str(cfg_file))
+
+        def _mock_search_contents_not_list(*args, **kwargs):
+            return 200, {"contents": {"wrong": "shape"}, "totalElements": 1}
+
+        with mock.patch.object(
+            naver_client, "search_products", side_effect=_mock_search_contents_not_list
+        ):
+            result = mcp_server.check_config(read_existing=True)
+
+        assert result["suggested_from_existing"] == {}
+        assert result["existing_read_error"] is not None
+        assert "list" in result["existing_read_error"]
+
+    def test_empty_list_still_new_seller_no_error(self, tmp_path, monkeypatch):
+        """회귀: 빈 ``contents``/``products`` 리스트는 여전히 신규 셀러 (에러 아님)."""
+        cfg_file = _write_cfg(tmp_path, _BASE_CFG)
+        monkeypatch.setenv("CLOSSIFY_CONFIG", str(cfg_file))
+
+        with mock.patch.object(
+            naver_client, "search_products", side_effect=_mock_search_no_products
+        ):
+            result = mcp_server.check_config(read_existing=True)
+
+        assert result["suggested_from_existing"] == {}
+        # 진짜 신규 셀러 — 부재는 실패가 아니다.
+        assert result["existing_read_error"] is None
+
+    def test_empty_contents_live_shape_still_new_seller(self, tmp_path, monkeypatch):
+        """회귀: 실측 형태의 빈 contents 도 여전히 신규 셀러."""
+        cfg_file = _write_cfg(tmp_path, _BASE_CFG)
+        monkeypatch.setenv("CLOSSIFY_CONFIG", str(cfg_file))
+
+        with mock.patch.object(
+            naver_client, "search_products", side_effect=_mock_search_live_shape_empty_contents
+        ):
+            result = mcp_server.check_config(read_existing=True)
+
+        assert result["suggested_from_existing"] == {}
+        assert result["existing_read_error"] is None
+
+    def test_first_listing_missing_origin_product_no_flagged(self, tmp_path, monkeypatch):
+        """첫 listing 엔트리에 originProductNo 가 없으면 스키마 이상.
+
+        과거: ``existing_read_error=None`` (조용한 신규 셀러 둔갑).
+        FIX-P3: error 에 사유 명시.
+        """
+        cfg_file = _write_cfg(tmp_path, _BASE_CFG)
+        monkeypatch.setenv("CLOSSIFY_CONFIG", str(cfg_file))
+
+        def _mock_search_no_origin_no(*args, **kwargs):
+            # contents 키는 있고 원소도 있지만 originProductNo 가 없음.
+            return 200, {"contents": [{"name": "고아 상품"}]}
+
+        with mock.patch.object(
+            naver_client, "search_products", side_effect=_mock_search_no_origin_no
+        ):
+            with mock.patch.object(naver_client, "get_product") as get_mock:
+                result = mcp_server.check_config(read_existing=True)
+
+        assert result["suggested_from_existing"] == {}
+        assert result["existing_read_error"] is not None
+        assert "originProductNo" in result["existing_read_error"]
+        # origin 번호를 모르므로 get_product 도 호출되지 않는다.
+        assert get_mock.call_count == 0

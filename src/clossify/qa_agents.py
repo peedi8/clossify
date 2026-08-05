@@ -733,6 +733,98 @@ def _field_is_deferred(field: str, deferred: list[str] | tuple[str, ...] | set[s
     return any(str(name or "").strip() == target for name in deferred)
 
 
+# ---------------------------------------------------------------------------
+# 미루기(deferred) 대상 고시 필드 allowlist — 고시 정의에서 유도.
+#
+# 감리 지적: 과거 이 게이트는 어떤 키든 판매자가 deferred_notice_fields 로 넘기면
+# "적용됐다" 고 믿게 두고, 네이버 스키마에 없는 키를 실제로 전송했다. 대소문자
+# 변형·오타·별칭(originAreaInfo.content.value, country_of_origin, madein 등) 이
+# 각각 HTTP POST 1회씩 일으키며 "상세페이지 참조" 값이 임의 키로 딸려 나갔다.
+# 본 allowlist 는 이를 막는다 — **수동 목록이 아니라** notice_types.json 의 35종
+# 전체 fields 배열의 합집합에서 유도한다(고시 정의가 바뀌면 자동으로 따라감).
+#
+# 원산지 필드는 ORIGIN_FIELDS_NOT_DEFERRABLE 이 별도로 거르므로, 본 집합에
+# 원산지 키가 있더라도 미루기 대상이 되지 않는다(이중 방어).
+# ---------------------------------------------------------------------------
+_DEFERRABLE_NOTICE_FIELDS_CACHE: frozenset[str] | None = None
+
+
+def _deferrable_notice_fields() -> frozenset[str]:
+    """미루기 대상이 될 수 있는 고시 필드명의 allowlist 를 반환.
+
+    **수동 목록이 아니다** — ``data/notice_types.json`` 의 35종 전체에서
+    ``fields`` 배열을 합집합으로 모아 반환한다(고시 정의가 단일 진실 공급원).
+    새 고시 타입이나 필드가 데이터에 추가되면 본 집합이 자동으로 따라간다.
+
+    Returns:
+        미루기 허용 필드명 ``frozenset``. 원산지 후보명이 섞여 있더라도 호출자가
+        ``_reject_origin_deferred`` 로 한 번 더 거른다(이중 방어).
+
+    Raises:
+        RuntimeError: ``notice_types.json`` 부재/손상 (fail-closed — 이미
+            ``_load_notice_types`` 가 같은 파일을 검증하므로 정상 설치 시 발생
+            하지 않는다).
+    """
+    global _DEFERRABLE_NOTICE_FIELDS_CACHE
+    if _DEFERRABLE_NOTICE_FIELDS_CACHE is not None:
+        return _DEFERRABLE_NOTICE_FIELDS_CACHE
+    names: set[str] = set()
+    for entry in _load_notice_types():
+        if not isinstance(entry, dict):
+            continue
+        fields = entry.get("fields")
+        if not isinstance(fields, list):
+            continue
+        for name in fields:
+            if isinstance(name, str) and name.strip():
+                names.add(name.strip())
+    _DEFERRABLE_NOTICE_FIELDS_CACHE = frozenset(names)
+    return _DEFERRABLE_NOTICE_FIELDS_CACHE
+
+
+def _partition_deferred_by_allowlist(
+    deferred: list[str] | tuple[str, ...] | set[str] | None,
+) -> tuple[list[str], list[str]]:
+    """미루기 후보를 (allowlist 내, allowlist 밖) 으로 분리한다.
+
+    allowlist 는 ``_deferrable_notice_fields`` 에서 유도한다(수동 목록 아님).
+    원산지 필드는 allowlist 안에 있더라도 ``ORIGIN_FIELDS_NOT_DEFERRABLE`` 로
+    별도 거른다 — 원산지는 어떤 표기로도 미루기 대상이 될 수 없다(기존 의도).
+
+    Args:
+        deferred: 판매자가 넘긴 미루기 후보 필드명 컬렉션.
+
+    Returns:
+        ``(allowed, rejected)`` —
+        - ``allowed``: allowlist 안에 있고 원산지가 아닌 필드명 리스트(순서 보존).
+        - ``rejected``: allowlist 밖이거나 원산지인 필드명 리스트(순서 보존).
+          호출자가 거부 사유에 그대로 쓴다.
+    """
+    if not deferred:
+        return [], []
+    allowed: list[str] = []
+    rejected: list[str] = []
+    allowlist = _deferrable_notice_fields()
+    seen: set[str] = set()
+    for name in deferred:
+        text = str(name or "").strip()
+        if not text:
+            # 빈 항목은 호출자(mcp_server) 가 이미 거부하지만, 본 함수가 직접
+            # 호출되는 경로까지 방어적으로 거른다.
+            continue
+        if text in seen:
+            # 중복 항목은 첫 번째 것만 인정(나머지는 무시).
+            continue
+        seen.add(text)
+        if text in ORIGIN_FIELDS_NOT_DEFERRABLE:
+            rejected.append(text)
+        elif text in allowlist:
+            allowed.append(text)
+        else:
+            rejected.append(text)
+    return allowed, rejected
+
+
 def _reject_origin_deferred(
     deferred: list[str] | tuple[str, ...] | set[str] | None,
 ) -> list[str]:
@@ -1571,6 +1663,7 @@ __all__ = [
     "_clamp_verdict",
     "_compliance_code_check",
     "_copy_code_check",
+    "_deferrable_notice_fields",
     "_field_is_deferred",
     "_field_missing_with_deferred",
     "_infer_notice_type",
@@ -1589,6 +1682,7 @@ __all__ = [
     "_notice_field_xor_violations",
     "_notice_type_spec",
     "_notice_xor_groups",
+    "_partition_deferred_by_allowlist",
     "_qa_agent_result",
     "_reject_origin_deferred",
     "_verdict_from_violations",

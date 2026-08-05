@@ -690,3 +690,173 @@ class TestMethodRestriction:
             assert status == 405
         finally:
             srv.close()
+
+
+# ---------------------------------------------------------------------------
+# FIX-P3: 중복 Origin 헤더 + product_key 필수.
+#
+# (k) 중복 Origin 헤더: 첫 번째는 "null", 두 번째는 "https://evil.example".
+#     과거 headers.get("Origin") 은 첫 값만 보고 통과시켰다. 이제 get_all 로
+#     모든 값을 검사하므로 거부되어야 한다.
+# (l) 올바른 토큰 + product_key 누락 → 거부. 과거 ``if body_pkey and ...``
+#     였으므로 빈 문자열이 조용히 통과했다. 이제 product_key 는 필수.
+# ---------------------------------------------------------------------------
+def _send_raw_request(
+    port: int,
+    *,
+    raw_headers: list[tuple[str, str]],
+    body: dict | None = None,
+) -> tuple[int, dict]:
+    """중복 헤더를 보낼 수 있는 로우 소켓 요청 헬퍼.
+
+    ``http.client.HTTPConnection.request`` 는 dict 만 받아 중복 헤더를
+    표현할 수 없다. 본 헬퍼는 원시 바이트를 보내서 중복 Origin/Referer 를
+    테스트한다.
+    """
+    payload = b""
+    if body is not None:
+        payload = json.dumps(body).encode("utf-8")
+    lines = [b"POST / HTTP/1.1", b"Host: 127.0.0.1", b"Connection: close"]
+    if body is not None:
+        lines.append(b"Content-Type: application/json")
+        lines.append(f"Content-Length: {len(payload)}".encode("ascii"))
+    for k, v in raw_headers:
+        lines.append(f"{k}: {v}".encode())
+    raw = b"\r\n".join(lines) + b"\r\n\r\n" + payload
+    with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+        sock.sendall(raw)
+        chunks: list[bytes] = []
+        while True:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    resp = b"".join(chunks)
+    # 상태 줄 + 헤더 + 본문 분리.
+    head, _, rest = resp.partition(b"\r\n\r\n")
+    status_line = head.split(b"\r\n", 1)[0]
+    status = int(status_line.split(b" ")[1])
+    try:
+        parsed = json.loads(rest.decode("utf-8"))
+    except (ValueError, TypeError):
+        parsed = {}
+    return status, parsed
+
+
+class TestFixP3DuplicateOriginAndProductKey:
+    """FIX-P3: 중복 Origin 헤더 검사 + product_key 필수."""
+
+    def test_duplicate_origin_second_evil_rejected(self):
+        """Origin: null + Origin: https://evil.example → 거부.
+
+        과거 headers.get("Origin") 은 첫 값("null")만 보고 통과시켰다.
+        get_all 로 모든 값을 검사하므로 두 번째 악의적 값에서 거부되어야 한다.
+        """
+        token = approval_server.new_token()
+        srv = approval_server.ApprovalServer(
+            product_key="dupori001ab",
+            token=token,
+            ttl_seconds=60,
+        )
+        port = srv.start()
+        try:
+            status, body = _send_raw_request(
+                port,
+                raw_headers=[
+                    ("X-Approval-Token", token),
+                    ("Origin", "null"),
+                    ("Origin", "https://evil.example"),
+                ],
+                body={"product_key": "dupori001ab"},
+            )
+            assert status == 403
+            assert body.get("code") == "bad_origin"
+            assert srv.outcome is None
+        finally:
+            srv.close()
+
+    def test_duplicate_referer_second_evil_rejected(self):
+        """Referer: file:///ok + Referer: https://evil/ → 거부."""
+        token = approval_server.new_token()
+        srv = approval_server.ApprovalServer(
+            product_key="dupref001ab",
+            token=token,
+            ttl_seconds=60,
+        )
+        port = srv.start()
+        try:
+            status, body = _send_raw_request(
+                port,
+                raw_headers=[
+                    ("X-Approval-Token", token),
+                    ("Referer", "file:///C:/preview.html"),
+                    ("Referer", "https://evil.example/x"),
+                ],
+                body={"product_key": "dupref001ab"},
+            )
+            assert status == 403
+            assert body.get("code") == "bad_origin"
+            assert srv.outcome is None
+        finally:
+            srv.close()
+
+    def test_missing_product_key_rejected(self):
+        """올바른 토큰 + product_key 누락 → 거부.
+
+        과거 ``if body_pkey and ...`` 였으므로 빈 문자열이 조용히 통과했다.
+        올바른 토큰만 있으면 어떤 상품의 승인이든 덮어쓸 수 있었다.
+        이제 product_key 누락 자체가 400 missing_product_key.
+        """
+        token = approval_server.new_token()
+        srv = approval_server.ApprovalServer(
+            product_key="misspkey01a",
+            token=token,
+            ttl_seconds=60,
+        )
+        port = srv.start()
+        try:
+            # body 에 product_key 없음.
+            status, body, _ = _send_request(port, token=token, body={})
+            assert status == 400
+            assert body.get("code") == "missing_product_key"
+            assert srv.outcome is None
+        finally:
+            srv.close()
+
+    def test_empty_product_key_rejected(self):
+        """product_key 가 빈 문자열이어도 거부."""
+        token = approval_server.new_token()
+        srv = approval_server.ApprovalServer(
+            product_key="emptpkey01a",
+            token=token,
+            ttl_seconds=60,
+        )
+        port = srv.start()
+        try:
+            status, body, _ = _send_request(port, token=token, body={"product_key": ""})
+            assert status == 400
+            assert body.get("code") == "missing_product_key"
+            assert srv.outcome is None
+        finally:
+            srv.close()
+
+    def test_correct_product_key_still_works(self):
+        """회귀: 올바른 토큰 + 올바른 product_key → 승인."""
+        token = approval_server.new_token()
+        srv = approval_server.ApprovalServer(
+            product_key="okpkey001ab",
+            token=token,
+        )
+        port = srv.start()
+        try:
+
+            def _approve():
+                time.sleep(0.1)
+                _send_request(port, token=token, body={"product_key": "okpkey001ab"})
+
+            t = threading.Thread(target=_approve, daemon=True)
+            t.start()
+            outcome = srv.wait(timeout=5)
+            assert outcome.approved is True
+        finally:
+            srv.close()

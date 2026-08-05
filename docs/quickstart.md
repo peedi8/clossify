@@ -20,11 +20,28 @@ pip install -e .
 
 ## 2. 설정 파일
 
+`.local/` 은 gitignore 대상이라 clone 직후에는 **존재하지 않는다**. 따라서 설정 파일
+복사 전에 디렉터리를 먼저 만들어야 한다. POSIX 셸과 Windows PowerShell 양쪽 명령을
+두었다 — 쓰는 환경에 맞는 한쪽만 실행한다.
+
+**POSIX(sh/bash/zsh, Linux·macOS·Git Bash)**:
+
 ```sh
 mkdir -p .local
 cp config.example.json .local/config.json
 # .local/config.json 을 실제 값으로 채운다
 ```
+
+**Windows PowerShell**:
+
+```powershell
+New-Item -ItemType Directory -Force -Path .local | Out-Null
+Copy-Item config.example.json .local\config.json
+# .local\config.json 을 실제 값으로 채운다
+```
+
+`mkdir -p`(POSIX)와 `New-Item -Force`(PowerShell)은 모두 **이미 디렉터리가 있어도
+에러가 아니라** 그대로 통과한다. 첫 clone 이후에도 안전하게 다시 실행할 수 있다.
 
 `.local/` 은 현재 작업 디렉터리(cwd) 아래에 만든다. 서버는 cwd 를 기준으로 상태
 디렉터리를 정하기 때문에, **3단계의 `cwd` 설정과 같은 디렉터리**에 `.local/` 이

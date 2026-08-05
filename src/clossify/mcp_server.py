@@ -901,11 +901,39 @@ def _read_existing_policies(
     # 실제 API 응답은 상품 목록을 ``contents`` 에 담아 반환한다.
     # 과거에 ``products`` 라고 추측해 읽던 자리를 그대로 폴백으로 둔다 —
     # 어느 한쪽이 스키마 변경으로 사라져도 조용한 빈 결과(신규 셀러로 둔갑)
-    # 가 발생하지 않도록. 두 키 모두 없거나 빈 리스트면 신규 셀러.
-    raw_products = body.get("contents")
-    if raw_products is None:
+    # 가 발생하지 않도록.
+    #
+    # **FIX-P3**: 스키마 이상과 "진짜 신규 셀러"를 구분한다.
+    # - ``contents`` 또는 ``products`` 키가 *있고* 값이 빈 리스트거나
+    #   그 키의 원소가 ``originProductNo`` 가 없으면 진짜 신규 셀러(또는
+    #   빈 스토어)로 본다 — error=None.
+    # - 두 키 모두 아예 없거나, 키는 있지만 값이 list 가 아니면(예:
+    #   ``{"unexpected": [...]}``) 스키마 이상으로 본다 — error 에 사유를
+    #   담아 반환. 이 경우 호출자가 "제안 없음 = 신규 셀러" 로 오해하는 것을
+    #   막는다.
+    has_contents_key = "contents" in body
+    has_products_key = "products" in body
+    if has_contents_key:
+        raw_products = body.get("contents")
+    elif has_products_key:
         raw_products = body.get("products")
-    if not isinstance(raw_products, list) or not raw_products:
+    else:
+        # 두 키 모두 없음 — 스키마가 예상과 다르다 (신규 셀러 아님).
+        msg = (
+            "기존 상품 검색 응답에 'contents'/'products' 키가 없다 "
+            "(스키마 이상 — 신규 셀러와 구분 안 됨). "
+            f"응답 키: {sorted(body.keys())[:10]}"
+        )
+        return {}, [], _sanitize_text(msg)
+    if not isinstance(raw_products, list):
+        # 키는 있지만 list 가 아님 — 스키마 이상.
+        msg = (
+            "기존 상품 검색 응답의 'contents'/'products' 값이 list 가 아니다 "
+            "(스키마 이상). "
+            f"값 타입: {type(raw_products).__name__}"
+        )
+        return {}, [], _sanitize_text(msg)
+    if not raw_products:
         # 신규 셀러 — 제안 없음. error=None (부재가 실패는 아니다).
         return {}, [], None
 
@@ -918,7 +946,13 @@ def _read_existing_policies(
     first = _normalize_search_listing(raw_products[0])
     origin_no = str(first.get("originProductNo") or "").strip()
     if not origin_no:
-        return {}, [], None
+        # **FIX-P3**: 첫 listing 엔트리에 originProductNo 가 없으면 스키마
+        # 이상이다 (과거에는 조용히 신규 셀러로 취급했다). error 로 명시.
+        msg = (
+            "기존 상품 검색 응답의 첫 항목에 originProductNo 가 없다 "
+            "(스키마 이상 — 신규 셀러와 구분 안 됨)."
+        )
+        return {}, [], _sanitize_text(msg)
 
     psc, pbody = naver_client.get_product(origin_no)
     if not (isinstance(psc, int) and psc == 200) or not isinstance(pbody, dict):
@@ -1427,6 +1461,15 @@ def register_product(
     # _build_option_info 가 읽는 "option_groups" 키로 product dict 에 싣는다.
     # 비어있지 않은 문자열 1~3개만 허용 — 그 외는 네이버 호출 0회로 거부한다.
     # 생략(None) 시 기존 폴백 동작을 유지한다.
+    #
+    # **축 수 일치 검증 (FIX-P3)**: 과거 이 게이트는 개수만 1~3 이면 통과시켰다.
+    # 1축 옵션+["색상","사이즈","소재"] 처럼 축 수와 그룹 이름 수가 어긋나면
+    # naver_client._build_option_info 가 (1) 초과분을 조용히 잘라내거나 (2) 부족분을
+    # "옵션2"/"옵션3" 같은 번호 이름으로 조용히 채웠다 — 판매자가 "내가 준 이름이
+    # 전송됐다" 고 믿는데 실제로는 다른 이름이 전송되는 조용한 손실/조용한 보충.
+    # 본 검증은 그것을 막는다: option_groups 가 주어졌고 options 도 있으면, 축 수와
+    # 그룹 이름 수가 정확히 일치해야 한다. 중복 이름도 거부한다(네이버에서 축
+    # 구분이 안 된다).
     if option_groups is not None:
         if not isinstance(option_groups, list):
             return _fail(
@@ -1444,8 +1487,43 @@ def register_product(
                     "option_groups 의 각 원소는 비어있지 않은 문자열이어야 합니다.",
                     dry_run=_dry_run,
                 )
+        # 중복 이름 검사 — 네이버에서 축 구분이 안 되므로 거부.
+        normalized_names = [str(name).strip() for name in option_groups]
+        # set 연산으로 중복 추출 — 루프 내 if/continue (PLR1704) 회피.
+        unique_names: set[str] = set()
+        duplicates = [n for n in normalized_names if n in unique_names or unique_names.add(n)]
+        if duplicates:
+            return _fail(
+                "option_groups 에 중복 이름이 있다 (네이버에서 축 구분이 안 됨): "
+                + ", ".join(duplicates),
+                dry_run=_dry_run,
+            )
+        # 축 수 일치 검사 — options 가 있을 때만. options 가 없으면 그룹 이름만
+        # 유효성 검증하고 넘어간다(이후 과정에서 옵션이 없으면 option_info 도
+        # 비어있게 됨).
+        if options:
+            if not isinstance(options, list):
+                return _fail(
+                    "options 는 dict 리스트여야 합니다.",
+                    dry_run=_dry_run,
+                )
+            try:
+                axis_count = naver_client._option_width(options)
+            except Exception as exc:
+                return _fail(
+                    f"option 축 수 계산 실패: {exc}",
+                    dry_run=_dry_run,
+                )
+            group_count = len(normalized_names)
+            if group_count != axis_count:
+                return _fail(
+                    f"option_groups 개수({group_count})가 옵션 축 수({axis_count})와 "
+                    f"일치하지 않습니다. 조용한 절삭/조용한 보충 금지 — 개수를 맞추거나 "
+                    f"옵션 데이터를 점검하세요.",
+                    dry_run=_dry_run,
+                )
 
-    # deferred_notice_fields 검증 + 원산지 필터.
+    # deferred_notice_fields 검증 + 원산지 필터 + allowlist 검증.
     #
     # 판매자가 명시적으로 "상세페이지 참조" 로 미루기로 선택한 고시 필드명 리스트다.
     # 입력 형태는 문자열 리스트. 비문자열/빈 문자열 항목이 섞이면 거부한다 (네이버
@@ -1457,6 +1535,14 @@ def register_product(
     # 반환하며, 원산지가 하나라도 있으면 전체 요청을 거부한다 (부분 적용 금지 —
     # 판매자가 "이 필드들만 미뤘다" 고 믿도록, 거부 사유에 어떤 필드가 문제인지
     # 명시한다).
+    #
+    # **allowlist 검증 (FIX-P3)**: 과거 이 게이트는 어떤 키든 판매자가 넘기면
+    # "적용됐다" 고 믿게 두고, 네이버 스키마에 없는 키를 전송했다. 대소문자 변형·
+    # 오타·별칭(country_of_origin, madein, originAreaInfo.content.value 등)이
+    # 각각 네이버 POST 1회씩을 일으키며 "상세페이지 참조" 값이 임의 키로 딸려
+    # 나갔다. 본 allowlist 는 notice_types.json 의 35종 전체 fields 배열의 합집합에서
+    # 유도한다(수동 목록 아님). allowlist 밖의 키는 거부하고 사유를 반환한다 —
+    # 조용히 무시하지도, 전송하지도 않는다.
     _deferred_clean: list[str] = []
     if deferred_notice_fields is not None:
         if not isinstance(deferred_notice_fields, list):
@@ -1497,7 +1583,35 @@ def register_product(
                 ),
                 "error": None,
             }
-        _deferred_clean = rejected
+        # allowlist 검증 — 고시 정의(35종 fields 합집합)에 없는 키는 거부.
+        # 대소문자 변형·오타·별칭이 네이버에 임의 키로 딸려 나가는 것을 막는다.
+        # 부분 적용 금지 — 하나라도 allowlist 밖이면 전체 요청을 거부하고 어느
+        # 키가 문제인지 사유에 드러낸다.
+        allowed_keys, off_list_keys = qa_agents._partition_deferred_by_allowlist(rejected)
+        if off_list_keys:
+            return {
+                "ok": False,
+                "status_code": None,
+                "origin_product_no": None,
+                "channel_product_no": None,
+                "missing_channel_no": True,
+                "name_truncated": False,
+                "raw": None,
+                "seller_tags": None,
+                "blocked_by": "deferred_field_not_in_allowlist",
+                "filled_from_prepared": [],
+                "prepared_lookup": {},
+                "notice_filled_from_config": [],
+                "deferred_notice_fields": [],
+                "dry_run": _dry_run,
+                "message": (
+                    "deferred_notice_fields 중 고시 필드 정의에 없는 키가 있다 "
+                    "(대소문자 변형·별칭·오타 포함 — 네이버에 임의 키로 "
+                    "'상세페이지 참조' 가 전송되는 것을 막는다): " + ", ".join(off_list_keys)
+                ),
+                "error": None,
+            }
+        _deferred_clean = allowed_keys
 
     # product_key 결정 — 명시 인자가 있으면 그것을, 없으면 이름+가격으로
     # 후보를 찾는다. 같은 이름·가격의 SKU 가 여러 개일 때(색상만 다른 옵션

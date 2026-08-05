@@ -1476,9 +1476,23 @@ def _build_option_info(p, opts):
         return {}
     width = _option_width(opts)
     groups = _option_group_list(p)
-    if len(groups) < width:
+    # FIX-P3: 과거 이 지점은 len(groups) < width 일 때 "옵션1"/"옵션2" 같은
+    # 이름을 **조용히 지어 붙였고**, len(groups) > width 일 때 초과분을 조용히
+    # 잘라냈다. 둘 다 "판매자가 이름을 줬다고 믿는데 실제로는 다른 이름이
+    # 전송된다" 는 조용한 손실/조용한 보충 이다. 이제 count mismatch 는
+    # ValueError 로 거부한다 — 호출자(mcp_server) 가 사전에 검증하겠지만,
+    # build_payload 를 직접 호출하는 경로까지 방어적으로 막는다(fail-closed).
+    if groups and len(groups) != width:
+        raise ValueError(
+            f"option_groups 개수({len(groups)})가 옵션 축 수({width})와 일치하지 않습니다. "
+            f"그룹 이름 {len(groups)}개를 줬는데 옵션 데이터는 {width}축입니다. "
+            "조용한 절삭/조용한 보충 금지 — 개수를 맞추거나 옵션 데이터를 점검하세요."
+        )
+    if not groups:
+        # groups 미제공 시 폴백 번호매김은 기존 동작으로 유지한다 — 이 경로는
+        # "판매자가 이름을 안 줬다" 이지 "틀린 개수를 줬다" 가 아니므로.
         if width == 1:
-            groups = groups or [p.get("option_group", "사이즈")]
+            groups = [p.get("option_group", "사이즈")]
         while len(groups) < width:
             groups.append(f"옵션{len(groups) + 1}")
     group_names = {f"optionGroupName{i}": groups[i - 1] for i in range(1, width + 1)}

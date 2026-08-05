@@ -290,3 +290,72 @@ def test_prompt_tool_set_matches_runtime() -> None:
         f"  Missing from prompts: {sorted(runtime_names - mentioned)}\n"
         f"  Phantom in prompts:   {sorted(mentioned - runtime_names)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# (f) FIX-P3: register_product keyword args documented in the prompt must
+#     exist in the live signature; the prompt must mention the FIX-P3
+#     surface args. Guards against doc/code drift on the gating args.
+# ---------------------------------------------------------------------------
+# The args listed here are the FIX-P3 surface that the registration_agent
+# prompt documents. If the live signature drops or renames one, this test
+# catches it. If a new gating arg is added to the signature but not documented,
+# add it here so the next contributor is forced to document it.
+_REGISTER_PRODUCT_DOCUMENTED_ARGS = {
+    "preview_confirmed",
+    "option_groups",
+    "deferred_notice_fields",
+}
+
+
+def test_register_product_documented_args_match_signature() -> None:
+    """The args documented in registration_agent.md must exist in the live
+    ``register_product`` signature.
+
+    One-way coupling: the prompt may document a *subset* of the signature (the
+    gating/behavioural args), but every documented name must exist in the
+    signature. A typo or a renamed arg in code without updating the prompt is
+    caught here.
+    """
+    import inspect
+
+    from clossify import mcp_server
+
+    sig = inspect.signature(mcp_server.register_product)
+    live_kwargs = {
+        name
+        for name, p in sig.parameters.items()
+        if p.kind in (p.KEYWORD_ONLY, p.POSITIONAL_OR_KEYWORD)
+    }
+    missing = sorted(_REGISTER_PRODUCT_DOCUMENTED_ARGS - live_kwargs)
+    assert not missing, (
+        "registration_agent.md documents register_product kwargs that no "
+        f"longer exist in the signature: {missing}. Update the prompt or "
+        "the signature."
+    )
+
+
+def test_registration_agent_prompt_mentions_fix_p3_args() -> None:
+    """registration_agent.md must mention the FIX-P3 surface args.
+
+    Catches the case where a new gating arg is added to the signature and the
+    test above is updated, but the prompt itself is never edited. The prompt
+    is what the client LLM sees — an undocumented gate is a silent failure for
+    the model.
+    """
+    prompt_path = _AGENTS_DIR / "registration_agent.md"
+    assert prompt_path.exists(), "registration_agent.md is missing."
+    text = prompt_path.read_text(encoding="utf-8")
+    missing: list[str] = []
+    for arg in _REGISTER_PRODUCT_DOCUMENTED_ARGS:
+        if not re.search(rf"\b{re.escape(arg)}\b", text):
+            missing.append(arg)
+    # enable_local_approval is a config flag (not a tool arg) but is part of
+    # the FIX-P3 surface — the prompt must mention it too.
+    if not re.search(r"\benable_local_approval\b", text):
+        missing.append("enable_local_approval")
+    assert not missing, (
+        "registration_agent.md does not mention the FIX-P3 surface term(s): "
+        f"{missing}. The client model cannot use a gate it has never been told "
+        "about."
+    )
