@@ -586,6 +586,10 @@ class TestToolRegistrationPreserved:
         ``preview_confirmed`` 는 미리보기 승인 게이트로
         추가된 키워드 인자다. 기본값 ``False`` 이며, 설정의
         ``require_preview_confirmation`` 이 켜져 있을 때 게이트로 동작한다.
+        ``option_groups`` 는 다축 옵션 조합의 그룹 이름(예:
+        ``["색상","사이즈"]``) 을 ``naver_client._build_option_info`` 로
+        전달하기 위해 끝에 추가된 키워드 전용 인자다. 이 키가 없으면
+        그룹 이름이 "옵션1"/"옵션2" 등의 번호 폴백으로 떨어진다.
         """
         import inspect
 
@@ -606,5 +610,6 @@ class TestToolRegistrationPreserved:
             "courier",
             "notice",
             "preview_confirmed",
+            "option_groups",
         ]
         assert param_names == expected, f"시그니처 변경 감지: {param_names}"

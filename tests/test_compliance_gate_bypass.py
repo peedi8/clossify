@@ -617,7 +617,10 @@ class TestToolRegistrationPreserved:
         """register_product 의 파라미터 이름/타입이 유지되는가.
 
         preview_confirmed 는 미리보기 승인 게이트를 위해 추가된 키워드 전용
-        인자다. 기존 파라미터 순서는 변경되지 않았고, 새 인자가 끝에 추가되었다.
+        인자다. option_groups 는 다축 옵션 조합의 그룹 이름(예:
+        ``["색상","사이즈"]``) 을 naver_client._build_option_info 로
+        전달하기 위해 추가된 키워드 전용 인자다. 기존 파라미터 순서는
+        변경되지 않았고, 새 인자는 끝에 추가되었다.
         """
         import inspect
 
@@ -638,6 +641,7 @@ class TestToolRegistrationPreserved:
             "courier",
             "notice",
             "preview_confirmed",
+            "option_groups",
         ]
         assert param_names == expected, f"시그니처 변경 감지: {param_names}"
 

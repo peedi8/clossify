@@ -1337,6 +1337,14 @@ def prepare_listing(d, *, attach_fn=None):
             "as_guide": d.get("as_guide") or "",
             "courier": d.get("courier") or "CJGLS",
             "delivery_fee": d.get("delivery_fee", 3000),
+            # option_groups: 다축 옵션의 그룹 이름(예: ["색상","사이즈"]).
+            # naver_client._option_group_list 가 "option_groups" 키를 읽어
+            # optionCombinationGroupNames 를 채운다. 이 키가 빠지면 폴백으로
+            # "옵션1"/"옵션2" 번호 이름이 붙는다 — prepared product block 에서
+            # 이 키가 빠지면 register_prepared_listing 경로가 그룹 이름을 잃는다
+            # (mcp_server.register_product 의 직접 경로와 불일치).
+            # mcp_server.register_product 와 동일하게, 값이 주어질 때만 싣는다.
+            "option_groups": list(d.get("option_groups") or []),
         },
         "images": {
             "listing_urls": listing_urls,

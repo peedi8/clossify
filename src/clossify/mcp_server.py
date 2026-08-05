@@ -795,6 +795,7 @@ def register_product(
     courier: str = "CJGLS",
     notice: dict[str, Any] | None = None,
     preview_confirmed: bool = False,
+    option_groups: list[str] | None = None,
 ) -> dict[str, Any]:
     """상품 정보를 받아 등록 페이로드를 빌드하고 네이버 커머스 API 로 등록한다.
 
@@ -844,6 +845,12 @@ def register_product(
             미리보기 파일 경로를 사유에 포함한다 (네이버 호출 0회). 이것은
             **선언 게이트**다 — 사용자가 실제로 미리보기를 봤는지 기계적으로
             알 수 없으므로, "``True`` 로 회신했다" 는 선언일 뿐이다.
+        option_groups: 다축 옵션 조합의 그룹 이름 리스트(예:
+            ``["색상", "사이즈"]``). ``naver_client._build_option_info`` 가
+            페이로드의 ``optionCombinationGroupNames`` 를 채우는 데 쓴다.
+            생략 시 기존 폴백(``"옵션1"``/``"옵션2"``/``"사이즈"``)을 유지한다.
+            비문자열/빈 문자열 항목, 리스트 길이 1~3 범위 밖은 거부한다
+            (네이버 호출 0회). 옵션이 없는 단일 품목에는 의미 없다.
 
     Returns:
         ``{"ok": bool, "status_code": int | None, "origin_product_no": str | None,
@@ -875,6 +882,27 @@ def register_product(
         return _fail("category_id 는 비어있지 않은 문자열이어야 합니다.", dry_run=_dry_run)
     if status not in {"SALE", "SUSPENSION"}:
         return _fail("status 는 'SALE' 또는 'SUSPENSION' 이어야 합니다.", dry_run=_dry_run)
+    # option_groups 검증: 다축 옵션의 그룹 이름 리스트. naver_client 의
+    # _build_option_info 가 읽는 "option_groups" 키로 product dict 에 싣는다.
+    # 비어있지 않은 문자열 1~3개만 허용 — 그 외는 네이버 호출 0회로 거부한다.
+    # 생략(None) 시 기존 폴백 동작을 유지한다.
+    if option_groups is not None:
+        if not isinstance(option_groups, list):
+            return _fail(
+                "option_groups 는 길이 1~3 의 문자열 리스트여야 합니다.",
+                dry_run=_dry_run,
+            )
+        if not (1 <= len(option_groups) <= 3):
+            return _fail(
+                "option_groups 는 길이 1~3 의 문자열 리스트여야 합니다.",
+                dry_run=_dry_run,
+            )
+        for item in option_groups:
+            if not isinstance(item, str) or not item.strip():
+                return _fail(
+                    "option_groups 의 각 원소는 비어있지 않은 문자열이어야 합니다.",
+                    dry_run=_dry_run,
+                )
 
     # product_key 결정 — 명시 인자가 있으면 그것을, 없으면 이름+가격으로
     # 후보를 찾는다. 같은 이름·가격의 SKU 가 여러 개일 때(색상만 다른 옵션
@@ -1086,6 +1114,13 @@ def register_product(
         product["options"] = options
     if notice is not None:
         product["notice"] = notice
+    # option_groups: 다축 옵션의 그룹 이름(예: ["색상","사이즈"]).
+    # naver_client._build_option_info → _option_group_list 가 "option_groups" 키를
+    # 읽어 optionCombinationGroupNames 를 채운다. 이 키가 없으면 폴백으로
+    # "옵션1"/"옵션2" 같은 번호 이름이 붙는다(이 결함의 본질).
+    # 검증은 이미 위에서 마쳤으므로 여기서는 None 이 아닐 때만 싣는다.
+    if option_groups is not None:
+        product["option_groups"] = list(option_groups)
 
     try:
         payload = naver_client.build_payload(product, detail_html, image_urls, status=status)
