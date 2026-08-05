@@ -588,21 +588,36 @@ def _common_notice_defaults(defaults) -> dict:
 
 
 def _category_path_for(category_id: str) -> str:
-    """``category_id`` 의 카테고리 경로를 반환 (알 수 없으면 빈 문자열).
+    """``category_id`` 의 카테고리 경로를 반환.
 
     판정 지점(build_payload)이 호출자가 경로를 넘겨주기를 기대하지 않고
-    ``categoryId`` 만으로 스스로 경로를 조회하도록 돕는다. 데이터 파일 부재·
-    알 수 없는 ID 는 조용히 빈 문자열로 떨어진다 — 이 경우 ETC 기본값을
-    쓰며(fail-closed 규칙 위반 없음: 알 수 없음을 알 수 없음으로 다룬다).
+    ``categoryId`` 만으로 스스로 경로를 조회하도록 돕는다.
+
+    **FIX-P2: 조용한 ETC 강등 금지.** 과거에는 모든 예외를 잡아 빈 문자열로
+    떨어뜨렸고, ``_resolve_notice_type`` 은 빈 경로를 ETC 기본값으로 해석했다.
+    이는 데이터 파일 부재/손상(인프라 실패)을 "정말 ETC 인 카테고리" 와 구분하지
+    못하는 근본 결함이다 — 결과적으로 잘못된 고시 타입으로 규제 필드를 신고하게
+    된다.
+
+    이제 ``CategoryMetaUnavailableError`` (데이터 파일 부재/손상) 를 잡아 빈
+    문자열로 강등하지 않고 그대로 전파한다. 호출자(build_payload →
+    register_product / prepare_listing) 의 예외 처리가 이를 등록 거부로
+    번역한다 — 알 수 없음을 알 수 없음으로 다룬다(fail-closed).
+
+    ``raise_if_unknown=False`` 이므로 알 수 없는 카테고리 ID 는 예외 없이 빈
+    문자열을 반환한다. 이 경로는 "메타 데이터는 있지만 해당 ID 가 없다" 는
+    뜻이므로 ETC 기본값이 합리적이다.
+
     mcp_server._category_path_for / register._category_path_for 와 동일한
     lookup(category_meta.category_path)을 쓴다.
-    """
-    try:
-        from . import category_meta
 
-        return category_meta.category_path(category_id, raise_if_unknown=False)
-    except Exception:
-        return ""
+    Raises:
+        category_meta.CategoryMetaUnavailableError: 데이터 파일이 부재하거나
+            읽을 수 없는 경우. 호출자가 등록 거부로 번역한다.
+    """
+    from . import category_meta
+
+    return category_meta.category_path(category_id, raise_if_unknown=False)
 
 
 def _resolve_notice_type(p) -> str:

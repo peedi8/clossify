@@ -60,9 +60,12 @@ _LOCAL_LIST_PATH = os.path.join(_REPO_ROOT, ".secrets", "banned_words.local.txt"
 # 검사 대상 디렉터리/파일 (상대경로는 저장소 루트 기준).
 # src 가 패키지 자산(data/*.json, agents/*.md 포함) 을 모두 품고 있으므로
 # 별도의 "agents" / "data" 항목은 더 이상 필요하지 않다(FIX-P1/P1b).
+# FIX-P2: 저장소 루트 "data" 디렉터리는 스크립트 생성 산출물이자 패키지 데이터
+# (src/clossify/data) 와 별개다. 루트 "data" 가 존재하지 않으면 스캐너가 조용히
+# 스킵했었는데 — 이제 _iter_files 가 존재하지 않는 경로를 에러로 알리므로
+# stale 항목을 제거한다(조용한 스킵 금지).
 SCAN_PATHS = [
     "src",
-    "data",
     "scripts",
     "tests",
     "pyproject.toml",
@@ -214,7 +217,14 @@ def _repo(path: str) -> str:
 
 
 def _iter_files(paths: list[str]):
-    """검사 대상 파일(절대경로)을 순회한다. 스킵 디렉터리/확장자는 건너뜀."""
+    """검사 대상 파일(절대경로)을 순회한다. 스킵 디렉터리/확장자는 건너뛴다.
+
+    **FIX-P2: 조용한 스킵 금지.** 과거에는 ``paths`` 항목이 디렉터리도 아니고
+    파일도 아닌(존재하지 않는 경로) 경우 조용히 무시했다. 이는 ``SCAN_PATHS``
+    에 stale 항목이 들어있어도 누가 알 수 없게 만든다 — 검사 범위가 의도보다
+    좁아진 것을 아무도 모른다. 이제 존재하지 않는 경로면 ``FileNotFoundError``
+    를 발생시킨다. ``SCAN_PATHS`` 자체는 올바른 항목만 두도록 별도로 관리한다.
+    """
     for p in paths:
         ap = _repo(p)
         if os.path.isdir(ap):
@@ -230,6 +240,12 @@ def _iter_files(paths: list[str]):
             if ext in SKIP_EXTS:
                 continue
             yield ap
+        else:
+            # FIX-P2: 조용한 스킵 금지. 존재하지 않는 경로는 에러로 알린다.
+            raise FileNotFoundError(
+                f"검사 대상 경로가 존재하지 않습니다: {p} ({ap}). "
+                "SCAN_PATHS 항목을 확인하세요 (조용한 스킵 금지)."
+            )
 
 
 def _read_text(path: str) -> str:

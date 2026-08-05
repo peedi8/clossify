@@ -467,18 +467,32 @@ def _notice_field_answer_shape(field: str) -> str:
 
 
 def _category_path_for(category_id: str) -> str:
-    """``category_id`` 의 카테고리 경로를 반환 (알 수 없으면 빈 문자열).
+    """``category_id`` 의 카테고리 경로를 반환.
 
     ``qa_agents._infer_notice_type`` 이 카테고리 경로에서 고시 타입을
-    추론할 수 있도록 돕는다. 데이터 파일 부재/알 수 없는 ID 는 조용히
-    빈 문자열로 떨어진다 (이 경우 ETC 기본값 사용).
-    """
-    try:
-        from . import category_meta
+    추론할 수 있도록 돕는다.
 
-        return category_meta.category_path(category_id, raise_if_unknown=False)
-    except Exception:
-        return ""
+    **FIX-P2: 조용한 ETC 강등 금지.** 과거에는 모든 예외를 잡아 빈 문자열로
+    떨어뜨렸고, 이 빈 문자열은 ``_infer_notice_type`` 에서 ETC 기본값으로
+    해석되었다. 이는 카테고리 메타 데이터 파일이 부재하거나 깨진 경우(인프라
+    실패)를 "정말 ETC 인 카테고리" 와 구분하지 못하는 근본 결함이다.
+
+    이제 ``CategoryMetaUnavailableError`` (데이터 파일 부재/손상) 를 잡아
+    빈 문자열로 강등하지 않고 그대로 전파한다. 호출자(``_build_compliance_context``,
+    ``_resolve_notice_type_for``) 의 예외 처리가 이를 컴플라이언스 FAIL 로
+    번역한다 — 알 수 없음을 알 수 없음으로 다룬다(fail-closed).
+
+    ``raise_if_unknown=False`` 이므로 알 수 없는 카테고리 ID 는 ``KeyError``
+    를 발생시키지 않고 빈 문자열을 반환한다. 이 경로는 "메타 데이터는 있지만
+    해당 ID 가 없다" 는 뜻이므로 ETC 기본값이 합리적이다.
+
+    Raises:
+        category_meta.CategoryMetaUnavailableError: 데이터 파일이 부재하거나
+            읽을 수 없는 경우. 호출자가 컴플라이언스 FAIL 로 번역한다.
+    """
+    from . import category_meta
+
+    return category_meta.category_path(category_id, raise_if_unknown=False)
 
 
 def _build_compliance_context(
@@ -1556,6 +1570,10 @@ def register_product(
         _preview_path_for_gate = _resolved_payload.get("preview_path") or None
     _require_preview = _config_require_preview_confirmation()
     _enable_local_approval = _config_enable_local_approval()
+    # FIX-P2 결함 1: 승인 편집 추적 초기값. 로컬 승인 다리가 꺼져 있거나
+    # 승인 과정에서 편집이 없어도 이 변수는 항상 정의되어야 한다 — 아래
+    # 재검사 블록에서 무조건 참조하기 때문이다.
+    _approval_edits_applied: dict[str, Any] = {}
     if _require_preview and not preview_confirmed:
         # 로컬 승인 다리가 켜져 있으면 "승인 대기 모드" 로 진입한다 —
         # 사용자가 브라우저에서 [승인] 버튼을 누를 때까지 대기한다.
@@ -1706,17 +1724,30 @@ def register_product(
 
         # 승인됨. 수정 필드가 있으면 명시 인자로 반영(명시값 우선 원칙).
         # edits 는 {field: value} 형태. 필드명은 한국어(상품명, 판매가, 태그, 고시.*).
+        #
+        # FIX-P2 결함 1: 승인 편집이 QA 판정 뒤에 적용된다. 편집으로 바뀐
+        # QA 대상 필드(상품명·고시 필드·태그)를 그냥 흘려보내면 "full 게이트"
+        # 라벨이 거짓이 된다 — 검증하지 않은 값이 검증됐다고 나간다. 편집된
+        # 필드를 추적해 게이트 통과 후 결정론 재검사를 돌리고, 게이트 라벨을
+        # 낮추며 무엇이 미검수인지 명시한다. LLM 검수(카피 품질)는 자동
+        # 재호출하지 않는다(비용); 라벨로 드러낸다.
         _edits = _outcome.decisions.get("edits") if isinstance(_outcome.decisions, dict) else None
+        # NOTE: _approval_edits_applied 은 함수 위쪽에서 미리 {} 로 초기화된다.
+        # 여기서는 승인 과정의 편집만 추적하도록 다시 비운다.
+        _approval_edits_applied = {}
         if isinstance(_edits, dict) and _edits:
             _applied = _apply_approval_edits(_edits)
             if _applied.get("name"):
                 name = _applied["name"]
+                _approval_edits_applied["name"] = name
             if _applied.get("price") is not None:
                 price = _applied["price"]
             if _applied.get("tags") is not None:
                 tags = _applied["tags"]
+                _approval_edits_applied["tags"] = tags
             if _applied.get("notice") is not None:
                 notice = _applied["notice"]
+                _approval_edits_applied["notice"] = notice
 
         # 승인이 확인되었으므로 preview_confirmed 를 True 로 취급하고 진행.
         preview_confirmed = True
@@ -1913,7 +1944,21 @@ def register_product(
     # 않고 트립와이어로 드러낸다.
     # ------------------------------------------------------------------ #
     payload_type = _payload_notice_type(payload)
-    gate_type = _gate_notice_type(category_id, product)
+    # FIX-P2: _gate_notice_type → _category_path_for 가 이제 CategoryMetaUnavailableError
+    # 를 조용히 삼키지 않고 전파한다. 카테고리 메타 데이터 파일이 부재/손상된 경우
+    # 게이트 타입을 확정할 수 없다 — "알 수 없음" 을 ETC 로 강등하지 말고 fail-closed
+    # 로 차단한다(조용한 ETC 강등 금지).
+    try:
+        gate_type = _gate_notice_type(category_id, product)
+    except Exception as exc:
+        return _fail(
+            f"고시 타입 판정 중 오류(카테고리 메타 조회 실패, 등록 차단): {_sanitize_error(exc)}",
+            name_truncated=name_truncated,
+            filled_from_prepared=filled_from_prepared,
+            prepared_lookup=prepared_lookup,
+            notice_filled_from_config=notice_filled,
+            dry_run=_dry_run,
+        )
     if payload_type and gate_type and payload_type != gate_type:
         return {
             "ok": False,
@@ -2060,6 +2105,127 @@ def register_product(
                 }
             gate_label = "full"
 
+    # ------------------------------------------------------------------ #
+    # FIX-P2 결함 1 — 승인 편집 필드에 대한 결정론 재검사.
+    #
+    # 승인 편집으로 QA 가 판정했던 필드(name / notice / tags)가 바뀌었으면,
+    # 바뀐 값에 대해 결정론 검사(컴플라이언스·카피 코드검사)를 재실행한다.
+    # LLM 검수(카피 품질 등)는 자동 재호출하지 않는다(비용) — 대신
+    # 게이트 라벨을 "full" 에서 "approval_edited" 로 낮추고 결과에 무엇이
+    # 미검수인지 명시한다.
+    #
+    # QA 대상 필드 (현재 코드에서 확인):
+    #   - ``name``  → _copy_code_check(금지어) + _compliance_code_check(고시)
+    #   - ``notice`` → _compliance_code_check(필수 필드·상호배제·원산지·타입)
+    #   - ``tags``  → _compliance_code_check 의 간접 대상은 아니지만 SEO 카피
+    #                  품질의 일부. LLM 없이 잡을 수 있는 검사는 현재 없다.
+    #                  미검수 항목으로 드러낸다.
+    #
+    # FAIL 시: 기존 fail-closed 규칙 그대로 등록하지 않는다(네이버 호출 0회).
+    # ------------------------------------------------------------------ #
+    approval_edits_unreviewed: list[str] = []
+    if _approval_edits_applied:
+        # 1) name / notice 에 대한 결정론 재검사 (tags 는 결정론 검사 대상 아님).
+        if "name" in _approval_edits_applied or "notice" in _approval_edits_applied:
+            try:
+                _edit_gate = _run_compliance_gate(
+                    name,
+                    category_id,
+                    payload,
+                    deferred_notice_fields=_deferred_clean or None,
+                )
+            except Exception as exc:
+                return _fail(
+                    f"승인 편집 필드 재검사 중 오류(등록 차단): {_sanitize_error(exc)}",
+                    name_truncated=name_truncated,
+                    filled_from_prepared=filled_from_prepared,
+                    prepared_lookup=prepared_lookup,
+                    notice_filled_from_config=notice_filled,
+                    dry_run=_dry_run,
+                )
+            if _edit_gate["blocked"]:
+                # 편집된 값이 결정론 위반 → 등록 차단 (네이버 호출 0회).
+                _edit_msg_lines = [
+                    "승인 편집으로 바뀐 값이 컴플라이언스 위반이다 — 등록을 거부했다 (fail-closed).",
+                    "게이트는 편집 전 값으로 QA 를 통과했지만, 실제 전송될 값으로 재검사해 차단했다.",
+                ]
+                for _v in _edit_gate["violations"]:
+                    _edit_msg_lines.append(f"- [{_v['rule']}] {_v['detail']}")
+                return {
+                    "ok": False,
+                    "status_code": None,
+                    "origin_product_no": None,
+                    "channel_product_no": None,
+                    "missing_channel_no": True,
+                    "name_truncated": name_truncated,
+                    "raw": None,
+                    "seller_tags": None,
+                    "blocked_by": "approval_edit_compliance",
+                    "gate": "approval_edited",
+                    "violations": _edit_gate["violations"],
+                    "needs_user": _edit_gate["needs_user"],
+                    "approval_edits_applied": dict(_approval_edits_applied),
+                    "filled_from_prepared": filled_from_prepared,
+                    "prepared_lookup": prepared_lookup,
+                    "notice_filled_from_config": notice_filled,
+                    "deferred_notice_fields": list(_deferred_report),
+                    "dry_run": _dry_run,
+                    "message": "\n".join(_edit_msg_lines),
+                    "error": None,
+                }
+            # 2) 카피 코드검사(금지어)를 편집된 name 으로 재실행.
+            if "name" in _approval_edits_applied:
+                _copy_recheck = qa_agents._copy_code_check(name, detail_html or "")
+                _copy_fail = False
+                for _v in _copy_recheck.get("violations") or []:
+                    if (
+                        isinstance(_v, dict)
+                        and str(_v.get("severity") or "").upper() == qa_agents.FAIL
+                    ):
+                        _copy_fail = True
+                        break
+                if _copy_fail:
+                    return {
+                        "ok": False,
+                        "status_code": None,
+                        "origin_product_no": None,
+                        "channel_product_no": None,
+                        "missing_channel_no": True,
+                        "name_truncated": name_truncated,
+                        "raw": None,
+                        "seller_tags": None,
+                        "blocked_by": "approval_edit_copy",
+                        "gate": "approval_edited",
+                        "violations": _copy_recheck.get("violations") or [],
+                        "approval_edits_applied": dict(_approval_edits_applied),
+                        "filled_from_prepared": filled_from_prepared,
+                        "prepared_lookup": prepared_lookup,
+                        "notice_filled_from_config": notice_filled,
+                        "deferred_notice_fields": list(_deferred_report),
+                        "dry_run": _dry_run,
+                        "message": (
+                            "승인 편집으로 바뀐 상품명이 금지 표현 위반이다 — "
+                            "등록을 거부했다 (fail-closed)."
+                        ),
+                        "error": None,
+                    }
+        # 3) gate 라벨 낮추기 + 미검수 항목 명시.
+        # 편집된 필드는 LLM 카피 품질 검사가 다시 돌지 않았다(비용). 그 사실을
+        # 라벨과 unreviewed 목록으로 드러낸다. 거짓 "full" 라벨을 금지한다.
+        gate_label = "approval_edited"
+        if "name" in _approval_edits_applied:
+            approval_edits_unreviewed.append(
+                "copy_qa: 편집된 상품명에 대한 LLM 카피 품질 검사 미실행"
+            )
+        if "tags" in _approval_edits_applied:
+            approval_edits_unreviewed.append(
+                "copy_qa: 편집된 태그에 대한 LLM 카피 품질 검사 미실행"
+            )
+        if "notice" in _approval_edits_applied:
+            approval_edits_unreviewed.append(
+                "copy_qa: 편집된 고시 필드에 대한 LLM 카피 품질 검사 미실행"
+            )
+
     # 결정론 게이트 통과 — 네이버 API 호출 진행.
     try:
         outcome = naver_client.register_product(payload)
@@ -2093,6 +2259,11 @@ def register_product(
             "requested_status": status,
             "applied_status": outcome.get("statusType"),
             "dry_run": _dry_run,
+            # FIX-P2 결함 1: 실제 전송된 값에 적용된 판정을 기록에 남긴다.
+            # 편집이 있었으면 라벨이 "full" 이 아님을 드러내고, 미검수 항목을 명시.
+            "approval_edits_applied": dict(_approval_edits_applied),
+            "approval_edits_unreviewed": list(approval_edits_unreviewed),
+            "sent_name": name,
             "error": None,
         }
 
@@ -2232,6 +2403,11 @@ def register_product(
         "status_correction_error": status_correction_error,
         "registration_record": registration_record,
         "dry_run": _dry_run,
+        # FIX-P2 결함 1: 실제 전송된 값과 그 값에 적용된 판정을 기록에 남긴다.
+        # 편집이 있었으면 라벨이 "full" 이 아님을 드러내고, 미검수 항목을 명시.
+        "approval_edits_applied": dict(_approval_edits_applied),
+        "approval_edits_unreviewed": list(approval_edits_unreviewed),
+        "sent_name": name,
         "error": None if ok else _sanitize_text(f"API 반환 상태 {status_code}"),
     }
 

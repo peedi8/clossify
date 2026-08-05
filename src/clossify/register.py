@@ -527,16 +527,29 @@ def _category_path_for(category_id):
 
     준비 단계와 등록 단계가 고시 타입 추론을 같은 입력으로 하게 한다.
     등록 단계(``mcp_server._category_path_for``)와 *동일한* lookup 을 쓴다.
-    데이터 파일 부재·알 수 없는 ID 는 조용히 빈 문자열로 떨어진다 — 이 경우
-    양쪽 모두 ETC 기본값으로 합의하므로 불일치가 생기지 않는다(fail-closed
-    규칙을 위반하지 않는다: 알 수 없음을 알 수 없음으로 다룬다).
-    """
-    try:
-        from . import category_meta
 
-        return category_meta.category_path(category_id, raise_if_unknown=False)
-    except Exception:
-        return ""
+    **FIX-P2: 조용한 ETC 강등 금지.** 과거에는 모든 예외를 잡아 빈 문자열로
+    떨어뜨렸고, 이 빈 문자열은 ``_infer_notice_type`` 에서 ETC 기본값으로
+    해석되었다. 이는 카테고리 메타 데이터 파일이 부재하거나 깨진 경우(인프라
+    실패)를 "정말 ETC 인 카테고리" 와 구분하지 못하는 근본 결함이다 —
+    결과적으로 잘못된 고시 타입으로 규제 필드를 신고하게 된다.
+
+    이제 ``CategoryMetaUnavailableError`` (데이터 파일 부재/손상) 를 잡아 빈
+    문자열로 강등하지 않고 그대로 전파한다. 호출자(``prepare_listing`` 의
+    try/except 블록) 가 이를 컴플라이언스 FAIL 로 번역한다 — 알 수 없음을
+    알 수 없음으로 다룬다(fail-closed).
+
+    ``raise_if_unknown=False`` 이므로 알 수 없는 카테고리 ID 는 예외 없이 빈
+    문자열을 반환한다. 이 경로는 "메타 데이터는 있지만 해당 ID 가 없다" 는
+    뜻이므로 ETC 기본값이 합리적이다.
+
+    Raises:
+        category_meta.CategoryMetaUnavailableError: 데이터 파일이 부재하거나
+            읽을 수 없는 경우. 호출자가 컴플라이언스 FAIL 로 번역한다.
+    """
+    from . import category_meta
+
+    return category_meta.category_path(category_id, raise_if_unknown=False)
 
 
 def _inject_notice_type(payload, inferred_type):
