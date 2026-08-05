@@ -62,8 +62,13 @@ def _font_asset_path(config_key: str, fallback_filename: str) -> str:
 
     Priority:
       1. ``cfg()["fonts"][config_key]`` (absolute path).
-      2. ``<root>/assets/fonts/<fallback_filename>`` (bundled fallback).
-      3. The bare fallback filename (caller handles missing-file).
+      2. The bare fallback filename (caller handles missing-file).
+
+    Note: there is no bundled ``assets/fonts/`` directory shipped with the
+    package. The previous fallback (a project-root-relative path) pointed
+    at a directory that does not exist in the wheel and was removed during
+    FIX-P1-install-paths. Operators who want font rendering must set
+    ``cfg()["fonts"][config_key]`` to an absolute path.
     """
     try:
         fonts = common.cfg().get("fonts")
@@ -73,7 +78,7 @@ def _font_asset_path(config_key: str, fallback_filename: str) -> str:
         raw = str(fonts.get(config_key) or "").strip()
         if raw:
             return raw
-    return str(common.ROOT_DIR / "assets" / "fonts" / fallback_filename)
+    return fallback_filename
 
 
 def BRAND_RENDER_WIDTH() -> int:

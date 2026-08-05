@@ -33,7 +33,7 @@ from typing import Any
 
 from mcp.server import MCPServer
 
-from . import naver_client, qa_agents
+from . import common, naver_client, qa_agents
 from . import register as _register_mod
 
 # 서버 인스턴스 — 클라이언트 LLM이 discover 하는 도구들의 컨테이너.
@@ -321,11 +321,10 @@ def _apply_approval_edits(
 # 이전에는 본 모듈에 dict 로 하드코딩되어 있었으나, 문서와 코드가 갈라지는
 # 문제로 데이터 파일로 분리했다. 라벨을 새로 창작하지 않는다 — 출처 기반
 # 수집만 data/notice_field_labels.json 의 labels 에 추가한다.
-_NOTICE_LABELS_PATH = os.path.join(
-    os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..")),
-    "data",
-    "notice_field_labels.json",
-)
+# FIX-P1-install-paths: 패키지 데이터 경로는 importlib.resources 기반으로 해결.
+# 이 라벨 파일은 genuinely optional 이다 — 파일이 없거나 깨지면 호출자가
+# 필드명 그대로를 라벨로 쓴다(아래 _load_notice_field_labels 의 폴백 참고).
+_NOTICE_LABELS_PATH = common.package_data_path("notice_field_labels.json")
 
 # 1회 캐시 — 매 호출마다 디스크를 읽지 않는다. None 은 "로드 시도 전",
 # dict 는 "로드 결과(성공 시 항목, 실패 시 빈 dict → 폴백)" 을 뜻한다.

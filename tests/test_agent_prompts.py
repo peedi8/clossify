@@ -34,7 +34,12 @@ import pytest
 
 # Project root:  tests/test_agent_prompts.py -> parent
 _ROOT = Path(__file__).resolve().parent.parent
-_AGENTS_DIR = _ROOT / "agents"
+# FIX-P1b: agents/*.md live inside the package (src/clossify/agents/). The
+# loader (common.AGENTS_DIR) reads them from there, so this test must too —
+# pointing at the repo root would mask the regression where assets and
+# loader disagree (the original FIX-P1b bug). Using the package path keeps
+# this guard in sync with the loader's source-of-truth.
+_AGENTS_DIR = _ROOT / "src" / "clossify" / "agents"
 _SRC_DIR = _ROOT / "src" / "clossify"
 
 # The seven MCP tools the server exposes.  These are verified dynamically by

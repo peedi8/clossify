@@ -19,7 +19,7 @@
   - 데이터는 캐싱하여 반복 호출 비용을 줄인다.
 
 데이터 파일 위치는 환경변수 ``CLOSSIFY_DATA_DIR`` 로 재정의 가능하며,
-기본값은 저장소 루트의 ``data/`` 디렉터리다.
+기본값은 패키지에 포함된 ``data/`` 디렉터리다 (``importlib.resources`` 로 해결).
 """
 
 from __future__ import annotations
@@ -29,9 +29,11 @@ import os
 import threading
 from typing import Any
 
-# 데이터 디렉터리 기본값: 저장소 루트(본 모듈 기준 상위 2단계) 의 data/.
-_REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
-_DEFAULT_DATA_DIR = os.path.join(_REPO_ROOT, "data")
+from . import common
+
+# 데이터 디렉터리: 패키지에 포함된 ``data/`` (importlib.resources 로 해결).
+# ``CLOSSIFY_DATA_DIR`` 환경변수로 사용자 정의 데이터 디렉터리를 가리킬 수 있다
+# (FIX-P1-install-paths 이전의 동작 보존). 환경변수가 없으면 패키지 데이터를 사용한다.
 
 META_FILENAME = "category_meta.json"
 CERT_FILENAME = "certification_types.json"
@@ -44,10 +46,16 @@ _cache_lock = threading.Lock()
 
 
 def _data_dir() -> str:
+    """데이터 디렉터리를 반환.
+
+    ``CLOSSIFY_DATA_DIR`` 환경변수가 비어있지 않은 경로를 가리키면 그것을
+    사용하고, 그 외에는 패키지에 포함된 ``data/`` 디렉터리
+    (``importlib.resources`` 로 해결)를 사용한다.
+    """
     custom = os.environ.get("CLOSSIFY_DATA_DIR")
     if custom and custom.strip():
         return os.path.normpath(custom.strip())
-    return _DEFAULT_DATA_DIR
+    return str(common.DATA_DIR)
 
 
 def _meta_path() -> str:

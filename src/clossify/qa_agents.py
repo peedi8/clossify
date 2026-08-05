@@ -272,11 +272,9 @@ def _load_notice_types():
     if _NOTICE_TYPES_CACHE is not None:
         return _NOTICE_TYPES_CACHE
     import json
-    import os
 
-    repo_root = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    path = os.path.join(repo_root, "data", "notice_types.json")
-    if not os.path.exists(path):
+    path = common.package_data_path("notice_types.json")
+    if not path.exists():
         raise RuntimeError(f"notice_types.json 파일이 없습니다: {path} (fail-closed).")
     try:
         with open(path, encoding="utf-8") as f:
@@ -325,23 +323,25 @@ def _load_notice_field_types() -> dict[str, dict]:
 
     Returns:
         필드명 → 타입 딕셔너리. 각 값은 최소한 ``{"type": "string"|"boolean"|
-        "date"}`` 키를 갖는다. 파일 부재 시 **빈 dict** 를 반환한다 —
-        "확인된 것이 없으면 전부 문자열" 이 기존 동작이기 때문이다.
-        단, 파일이 존재하면서 구조가 깨졌으면 fail-closed 로 예외를
-        던진다 (조용한 문자열 폴백으로 회귀하는 것을 막는다).
+        "date"}`` 키를 갖는다.
+
+    Raises:
+        RuntimeError: 파일이 부재하거나 구조가 올바르지 않을 때 (fail-closed).
+            과거에는 파일 부재 시 빈 dict 를 조용히 반환했으나, FIX-P1-install-paths
+            에서 이 조용한 폴백을 금지했다 — 데이터 파일은 패키지에 포함되므로
+            부재는 설치 불량이나 빌드 오류이다 (사용자 환경 문제가 아니다).
     """
     global _NOTICE_FIELD_TYPES_CACHE
     if _NOTICE_FIELD_TYPES_CACHE is not None:
         return _NOTICE_FIELD_TYPES_CACHE
     import json
-    import os
 
-    repo_root = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    path = os.path.join(repo_root, "data", "notice_field_types.json")
-    if not os.path.exists(path):
-        # 파일 자체가 없으면 확인된 타입이 없는 것 → 빈 맵(전부 문자열).
-        _NOTICE_FIELD_TYPES_CACHE = {}
-        return _NOTICE_FIELD_TYPES_CACHE
+    path = common.package_data_path("notice_field_types.json")
+    if not path.exists():
+        raise RuntimeError(
+            f"notice_field_types.json 파일이 없습니다: {path} (fail-closed). "
+            "패키지 설치가 올바르지 않습니다 — wheel 을 재설치하세요."
+        )
     try:
         with open(path, encoding="utf-8") as f:
             doc = json.load(f)
@@ -414,22 +414,24 @@ def _load_notice_field_relations() -> dict[str, list[list[str]]]:
 
     Returns:
         고시 타입명(대문자) → XOR 그룹 리스트. 각 XOR 그룹은 필드명 리스트.
-        파일 부재 시 **빈 dict** 를 반환한다 — "확인된 관계가 없으면 기존 동작"
-        이 계약이기 때문이다. 단, 파일이 존재하면서 구조가 깨졌으면 fail-closed
-        로 예외를 던진다 (조용한 폴백으로 회귀하는 것을 막는다).
+
+    Raises:
+        RuntimeError: 파일이 부재하거나 구조가 올바르지 않을 때 (fail-closed).
+            과거에는 파일 부재 시 빈 dict 를 조용히 반환했으나, FIX-P1-install-paths
+            에서 이 조용한 폴백을 금지했다 — 데이터 파일은 패키지에 포함되므로
+            부재는 설치 불량이나 빌드 오류이다.
     """
     global _NOTICE_FIELD_RELATIONS_CACHE
     if _NOTICE_FIELD_RELATIONS_CACHE is not None:
         return _NOTICE_FIELD_RELATIONS_CACHE
     import json
-    import os
 
-    repo_root = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    path = os.path.join(repo_root, "data", "notice_field_relations.json")
-    if not os.path.exists(path):
-        # 파일 자체가 없으면 확인된 관계가 없는 것 → 빈 맵(기존 동작).
-        _NOTICE_FIELD_RELATIONS_CACHE = {}
-        return _NOTICE_FIELD_RELATIONS_CACHE
+    path = common.package_data_path("notice_field_relations.json")
+    if not path.exists():
+        raise RuntimeError(
+            f"notice_field_relations.json 파일이 없습니다: {path} (fail-closed). "
+            "패키지 설치가 올바르지 않습니다 — wheel 을 재설치하세요."
+        )
     try:
         with open(path, encoding="utf-8") as f:
             doc = json.load(f)

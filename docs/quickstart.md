@@ -21,12 +21,16 @@ pip install -e .
 ## 2. 설정 파일
 
 ```sh
+mkdir -p .local
 cp config.example.json .local/config.json
 # .local/config.json 을 실제 값으로 채운다
 ```
 
-정본 경로는 `.local/config.json` 이고, 환경변수 `CLOSSIFY_CONFIG` 로 다른 경로를
-가리킬 수 있다. `check_config` 가 **반드시 채워야 한다**고 검사하는 키는 3 개다:
+`.local/` 은 현재 작업 디렉터리(cwd) 아래에 만든다. 서버는 cwd 를 기준으로 상태
+디렉터리를 정하기 때문에, **3단계의 `cwd` 설정과 같은 디렉터리**에 `.local/` 이
+있어야 한다. 정본 경로는 `<cwd>/.local/config.json` 이고, 환경변수 `CLOSSIFY_CONFIG`
+로 다른 경로를 가리킬 수 있다 (`CLOSSIFY_STATE_DIR` 로 상태 디렉터리 전체를
+재정의할 수도 있다). `check_config` 가 **반드시 채워야 한다**고 검사하는 키는 3 개다:
 
 - `naver.client_id`
 - `naver.client_secret`

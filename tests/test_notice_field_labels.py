@@ -39,7 +39,7 @@ from clossify import mcp_server, naver_client
 # 공통 픽스처.
 # --------------------------------------------------------------------------- #
 
-_LABELS_PATH = _PROJECT_ROOT / "data" / "notice_field_labels.json"
+_LABELS_PATH = _PROJECT_ROOT / "src" / "clossify" / "data" / "notice_field_labels.json"
 
 # 35개 고시 타입 전체에 공통으로 등장하는 5개 필드 (하드 요구사항).
 _COMMON_FIVE = (

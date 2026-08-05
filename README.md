@@ -236,6 +236,7 @@ POST 하고, 토큰이 맞으면 등록이 진행된다. **10분**이 지나면 
 
 ```sh
 pip install -e .
+mkdir -p .local
 cp config.example.json .local/config.json
 # .local/config.json 을 실제 값으로 채운다
 ```
@@ -342,4 +343,4 @@ pre-commit(gitleaks 등) 설정은 저장소 참고. 자세한 설계·모듈 �
 - `docs/ARCHITECTURE.md` — 모듈 구조, 데이터 자산, 등록 흐름, QA verdict 체계
 - `docs/adr/` — 아키텍처 결정 기록(0001~0004)
 - `SECURITY.md` — 보안 정책, 키 유출 대응
-- `data/README.md` — 카테고리/고시/인증 메타데이터 출처와 갱신
+- `src/clossify/data/README.md` — 카테고리/고시/인증 메타데이터 출처와 갱신

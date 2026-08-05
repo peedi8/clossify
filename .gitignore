@@ -40,5 +40,6 @@ gitleaks-report.*
 
 # 카테고리 메타 수집 중간 산출물 — wheel 에 포함되지 않는 임시 파일.
 # 조회 진행상황(재개 가능)과 실패 카테고리 로그. 공개 추적 대상이 아님.
-data/.category_meta.progress.json
-data/.category_meta.failed.json
+# 데이터가 패키지 안(src/clossify/data/)으로 옮겨져 경로를 함께 옮김.
+src/clossify/data/.category_meta.progress.json
+src/clossify/data/.category_meta.failed.json

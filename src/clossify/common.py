@@ -15,29 +15,72 @@ from __future__ import annotations
 
 import json
 import os
+from importlib.resources import files as _ir_files
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Project root resolution.
+# Path resolution (FIX-P1-install-paths).
 #
-# Source used ``Path(__file__).resolve().parents[1]`` because sourcing.py
-# lived at ``<root>/backend/sourcing.py``. This module lives at
-# ``<root>/src/clossify/common.py`` so the project root is two parents up.
-# Resolved eagerly and asserted non-empty per the spec note on ROOT_DIR.
+# Two distinct categories of files exist and must not be conflated:
+#
+#   (1) Package data — read-only assets shipped inside the wheel
+#       (``data/*.json``, ``agents/*.md``). These are resolved through
+#       ``importlib.resources`` so the same code works in the source tree,
+#       an editable install, and a wheel install. No ``__file__``-based
+#       "repo root" estimation is used.
+#
+#   (2) User-space configuration and working state — files the operator
+#       owns and mutates (``config.json``, ``prepared/``, logs, caches).
+#       These live under ``CLOSSIFY_STATE_DIR`` if set, otherwise
+#       ``<cwd>/.local/``. ``CLOSSIFY_CONFIG`` overrides the config file
+#       location specifically (see ``naver_client.resolve_config_path``).
 # ---------------------------------------------------------------------------
-ROOT_DIR: Path = Path(__file__).resolve().parents[2]
-assert ROOT_DIR.name, "ROOT_DIR must resolve to a named directory"
+_PKG_DIR: Path = Path(str(_ir_files("clossify")))
+DATA_DIR: Path = _PKG_DIR / "data"
 
-AGENTS_DIR: Path = ROOT_DIR / "agents"
-AGENT_LOG_PATH: Path = ROOT_DIR / ".local" / "agent_log.json"
+
+def package_data_path(filename: str) -> Path:
+    """Return the path to a packaged data file under ``data/``.
+
+    Uses ``importlib.resources`` so the path resolves correctly in the
+    source tree, in editable installs, and in wheel installs. Callers
+    that read this path should still handle the file-not-found case by
+    raising a clear error rather than silently returning empty data.
+    """
+    return DATA_DIR / str(filename)
+
+
+def _state_dir() -> Path:
+    """Return the working-state directory root.
+
+    Honours ``CLOSSIFY_STATE_DIR`` (absolute path override). Defaults to
+    ``<cwd>/.local`` so each working directory has its own state, which
+    matches how operators actually run the server (one store per folder).
+    """
+    override = os.environ.get("CLOSSIFY_STATE_DIR")
+    if override and override.strip():
+        return Path(override.strip()).expanduser().resolve()
+    return Path.cwd() / ".local"
+
+
+# Package data locations (read-only).
+AGENTS_DIR: Path = _PKG_DIR / "agents"
+
+# User-space state locations (read/write, operator-owned).
+STATE_DIR: Path = _state_dir()
+# Back-compat alias: legacy code referred to the project-root local dir.
+# LOCAL_DIR is the modern name for the same directory. Do not introduce new
+# uses of LOCAL_DIR — prefer STATE_DIR.
+LOCAL_DIR: Path = STATE_DIR
+AGENT_LOG_PATH: Path = STATE_DIR / "agent_log.json"
 AGENT_LOG_LIMIT: int = 200
-CATEGORY_TRACE_LOG_PATH: Path = ROOT_DIR / ".local" / "category_trace.jsonl"
-TRAIN_LOG_PATH: Path = ROOT_DIR / ".local" / "train_log.jsonl"
-PREPARED_DIR: Path = ROOT_DIR / ".local" / "prepared"
+CATEGORY_TRACE_LOG_PATH: Path = STATE_DIR / "category_trace.jsonl"
+TRAIN_LOG_PATH: Path = STATE_DIR / "train_log.jsonl"
+PREPARED_DIR: Path = STATE_DIR / "prepared"
 PREPARED_PAYLOAD_VERSION: int = 1
-LLM_TMP_DIR: Path = ROOT_DIR / ".local" / "llm_tmp"
-KW_CACHE_PATH: Path = ROOT_DIR / ".local" / "kw_cache.json"
-POSTTEAM_RATES_PATH: Path = ROOT_DIR / ".local" / "postteam_rates.json"
+LLM_TMP_DIR: Path = STATE_DIR / "llm_tmp"
+KW_CACHE_PATH: Path = STATE_DIR / "kw_cache.json"
+POSTTEAM_RATES_PATH: Path = STATE_DIR / "postteam_rates.json"
 
 SEO_MIN_SEARCH_VOLUME: int = 10
 VISION_QA_MAX_SIDE: int = 1568

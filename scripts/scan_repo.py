@@ -58,9 +58,10 @@ _LOCAL_LIST_PATH = os.path.join(_REPO_ROOT, ".secrets", "banned_words.local.txt"
 # ──────────────────────────────────────────────────────────────────────
 
 # 검사 대상 디렉터리/파일 (상대경로는 저장소 루트 기준).
+# src 가 패키지 자산(data/*.json, agents/*.md 포함) 을 모두 품고 있으므로
+# 별도의 "agents" / "data" 항목은 더 이상 필요하지 않다(FIX-P1/P1b).
 SCAN_PATHS = [
     "src",
-    "agents",
     "data",
     "scripts",
     "tests",

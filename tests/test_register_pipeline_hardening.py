@@ -399,14 +399,36 @@ class TestFix8Packaging:
     def test_wheel_force_include_present(self):
         toml_path = _PROJECT_ROOT / "pyproject.toml"
         content = toml_path.read_text(encoding="utf-8")
+        # config.example.json 은 여전히 repo 루트→wheel 내부 로 force-include 된다.
         assert "force-include" in content
-        assert "agents" in content
         assert "config.example.json" in content
+        # FIX-P1b: agents/ 는 src/clossify/agents/ 로 옮겨졌으므로 wheel
+        # force-include 대상이 아니다. packages = ["src/clossify"] 가 자동 포함한다.
+        # 만약 force-include 섹션이 다시 agents 를 나열하면 regression 이다.
+        # (주석에 "agents" 가 나오는 것은 허용한다 — 실제 설정 라인만 금지.)
+        for line in content.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            assert '"agents"' not in stripped and 'agents"' not in stripped, (
+                f"force-include must not list agents/ (it is inside src/clossify now). "
+                f"Offending line: {stripped!r}"
+            )
 
     def test_agents_directory_has_nine_files(self):
-        agents_dir = _PROJECT_ROOT / "agents"
+        # FIX-P1b: agents/*.md 는 src/clossify/agents/ 아래로 옮겨졌다
+        # (패키지 자산은 패키지 안). 저장소 루트에는 더 이상 agents/ 가 없다.
+        agents_dir = _SRC / "clossify" / "agents"
         md_files = list(agents_dir.glob("*.md"))
         assert len(md_files) == 9, f"Expected 9 agent .md files, found {len(md_files)}"
+
+    def test_no_root_agents_directory(self):
+        # 정본 2개 금지: 저장소 루트에는 agents/ 가 남아 있으면 안 된다.
+        root_agents = _PROJECT_ROOT / "agents"
+        assert not root_agents.is_dir(), (
+            f"Root {root_agents!r} still exists — agents/ must live only inside "
+            "src/clossify/agents/ (single source of truth)."
+        )
 
     def test_config_example_json_exists(self):
         assert (_PROJECT_ROOT / "config.example.json").is_file()

@@ -65,7 +65,13 @@ jobs:
       - run: pip install -e ".[dev]"
       # config.example.json 의 placeholder 만으로 테스트가 통과해야 한다
       # (실제 자격증명 없이도 QA 회귀 확인이 가능해야 함).
+      #
+      # 배포물 검증(wheel 빌드 후 내용 확인)은 로컬에서 빌드 도구 부재 시 skip 되도록
+      # 되어 있다. CI 는 그 회피가 통하면 안 되는 자리다 — 설치본이 소스판과 다른
+      # 물건이 되는 결함을 잡으라고 만든 가드이므로 여기서는 반드시 실행한다.
       - run: pytest -q
+        env:
+          CLOSSIFY_RUN_WHEEL_TESTS: "1"
 
   # 잡 이름 "scan-repo" 는 보호 규칙과 계약 — 변경 금지.
   scan-repo:

@@ -39,8 +39,8 @@ from clossify import mcp_server, naver_client
 # 공통 픽스처.
 # --------------------------------------------------------------------------- #
 
-_LABELS_PATH = _PROJECT_ROOT / "data" / "notice_field_labels.json"
-_NOTICE_TYPES_PATH = _PROJECT_ROOT / "data" / "notice_types.json"
+_LABELS_PATH = _PROJECT_ROOT / "src" / "clossify" / "data" / "notice_field_labels.json"
+_NOTICE_TYPES_PATH = _PROJECT_ROOT / "src" / "clossify" / "data" / "notice_types.json"
 
 # §3 제거 대상 DateType 유령 필드 4종.
 _GHOST_DATE_TYPES = (

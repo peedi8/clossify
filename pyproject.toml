@@ -32,20 +32,24 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/clossify"]
-# Fix 8 — agents 프롬프트(9개 .md) 와 config.example.json 을 wheel 에 포함.
-# LLM 클라이언트가 패키지 설치만으로 프롬프트 자산/예시 설정을 사용할 수 있도록.
+# config.example.json 은 사용자 영역 템플릿(repo 루트) 이므로 패키지 밖에 있다.
+# 패키지 런타임 코드는 이 파일을 읽지 않는다(사용자가 .local/config.json 으로
+# 복사해 값을 채우는 용도). wheel 설치본에도 동봉하기 위해 force-include 로
+# clossify/ 아래에 배치한다.
 [tool.hatch.build.targets.wheel.force-include]
-"agents" = "clossify/agents"
 "config.example.json" = "clossify/config.example.json"
-# 카테고리 메타데이터를 wheel 에 포함. 패키지 설치만으로
-# category_meta 조회 헬퍼가 데이터를 사용할 수 있도록.
-"data/category_meta.json" = "clossify/data/category_meta.json"
-"data/certification_types.json" = "clossify/data/certification_types.json"
-"data/notice_types.json" = "clossify/data/notice_types.json"
-"data/notice_field_labels.json" = "clossify/data/notice_field_labels.json"
+
+# 패키지 자산(data/*.json, agents/*.md)은 src/clossify/ 안에 있으므로
+# packages = ["src/clossify"] 로 인해 wheel 에 자동 포함된다. 과거에는 data/ 와
+# agents/ 가 repo 루트에 있어 force-include 로 나열해야 했고, 그중 data 3개가
+# 누락돼 감리 BLOCKER 로 지적됐다(설치본에서 로더가 빈 맵으로 조용히 폴백해
+# 컴플라이언스 검사가 무력화). FIX-P1 은 data/ 를, FIX-P1b 는 agents/ 를 각각
+# 패키지 안으로 옮기면서 이중 유지보수 지점과 누락 가능성을 동시에 제거했다.
+# importlib.resources 가 소스 트리·editable 설치·wheel 설치 모두에서 동일한
+# 경로로 자산을 찾는다(로더: common.AGENTS_DIR, common.package_data_path).
 
 [tool.hatch.build.targets.sdist]
-include = ["src/clossify", "agents", "data", "config.example.json", "README.md", "LICENSE.md", "pyproject.toml"]
+include = ["src/clossify", "config.example.json", "README.md", "LICENSE.md", "pyproject.toml"]
 
 # ruff 설정. CI 가 `ruff check .` 를 실행하며, 이 설정이 없으면 ruff 의
 # 기본 룰셋이 적용되어 프로젝트 의도와 무관한 대량 위반이 발생한다. 아래 룰셋은

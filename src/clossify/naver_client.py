@@ -5,8 +5,10 @@
 """검증된 네이버 커머스API 클라이언트 — 인증/이미지업로드/등록/조회/수정.
 2026-06-23 풀루프 실증된 흐름을 함수로 정리.
 
-경로 메모: 본 모듈은 src/clossify/ 에 위치하므로, 프로젝트 루트의
-.local/config.json 을 가리키기 위해 __file__ 기준 상위 2단계를 사용한다.
+경로 메모 (FIX-P1-install-paths): 본 모듈은 패키지 데이터(``data/*.json``)를
+``importlib.resources`` 기반의 ``common.package_data_path`` 로 읽고, 사용자
+설정(``config.json``) 은 ``CLOSSIFY_CONFIG`` 환경변수 또는 ``<cwd>/.local/``
+에서 찾는다. ``__file__`` 기반 프로젝트 루트 추정은 사용하지 않는다.
 """
 
 import base64
@@ -19,12 +21,13 @@ import time
 import bcrypt
 import requests
 
+from . import common
 from .text_props import CATEGORY_PATH_NOTICE_HINTS
 
 BASE = "https://api.commerce.naver.com"
-# src/clossify/naver_client.py -> ../../. = project root
-_PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
-_DEFAULT_CONFIG_PATH = os.path.join(_PROJECT_ROOT, ".local", "config.json")
+# 사용자 설정 파일 기본경로: <cwd>/.local/config.json.
+# CLOSSIFY_CONFIG 환경변수로 절대경로를 지정할 수 있다 (우선).
+_DEFAULT_CONFIG_PATH = os.path.join(str(common.STATE_DIR), "config.json")
 SELLER_TAG_AUTOSTRIP_KEY = "sellerTagsAutoStrip"
 MAX_RESTRICTED_SELLER_TAG_RETRIES = 2
 KNOWN_RESTRICTED_SELLER_TAGS = {"인테리어", "화병", "도자기", "꽃병"}
@@ -62,7 +65,8 @@ def resolve_config_path() -> str:
 
     우선순위:
       1. 환경변수 ``CLOSSIFY_CONFIG`` 가 비어있지 않은 경로를 가리키면 그것.
-      2. 그 외는 프로젝트 루트의 ``.local/config.json``.
+      2. 그 외는 ``<cwd>/.local/config.json`` (``CLOSSIFY_STATE_DIR`` 로
+         ``<cwd>/.local`` 부분을 재정의 가능).
 
     반환값은 정규화된 경로 문자열. 파일 존재 여부는 검사하지 않는다
     (``check_config`` 같은 호출자가 부재 케이스를 다룬다).
@@ -418,8 +422,8 @@ def _load_notice_type_specs() -> list:
     global _NOTICE_TYPES_CACHE, _NOTICE_TYPE_INDEX
     if _NOTICE_TYPES_CACHE is not None:
         return _NOTICE_TYPES_CACHE
-    path = os.path.join(_PROJECT_ROOT, "data", "notice_types.json")
-    if not os.path.exists(path):
+    path = common.package_data_path("notice_types.json")
+    if not path.exists():
         raise RuntimeError(f"notice_types.json 파일이 없습니다: {path} (fail-closed).")
     try:
         with open(path, encoding="utf-8") as f:
@@ -1257,10 +1261,8 @@ def register_product(payload, tk=None):
         _append_unique(meta["restricted_terms"], prefilter_removed)
 
     if os.environ.get("COMMERCE_DRY_RUN") == "1":
-        payload_path = os.path.join(
-            os.path.dirname(__file__), "..", "..", ".local", "dry_run_payload.json"
-        )
-        os.makedirs(os.path.dirname(payload_path), exist_ok=True)
+        payload_path = common.STATE_DIR / "dry_run_payload.json"
+        payload_path.parent.mkdir(parents=True, exist_ok=True)
         with open(payload_path, "w", encoding="utf-8") as f:
             json.dump(working_payload, f, ensure_ascii=False, indent=2)
         origin = working_payload.get("originProduct") if isinstance(working_payload, dict) else {}
@@ -1268,7 +1270,7 @@ def register_product(payload, tk=None):
             "ok": True,
             "dry_run": True,
             "originProductNo": None,
-            "payload_path": ".local/dry_run_payload.json",
+            "payload_path": str(payload_path),
             "statusType": origin.get("statusType") if isinstance(origin, dict) else None,
         }
 
