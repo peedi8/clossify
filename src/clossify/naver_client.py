@@ -1340,6 +1340,43 @@ def get_product(origin_no, tk=None):
     return r.status_code, (r.json() if r.status_code == 200 else r.text)
 
 
+def search_products(page: int = 1, size: int = 10, tk=None):
+    """기존 등록 상품 목록을 조회한다 (POST /external/v1/products/search).
+
+    본 함수는 첫 대화 온보딩에서 판매자의 **기존 상품에서 스토어 정책값을 읽어
+    제안** 하는 경로만을 위해 존재한다. 상품 등록 흐름이나 다른 도구는 이 함수를
+    호출하지 않는다.
+
+    Args:
+        page: 1-base 페이지 번호. 최근 상품을 우선하려면 size 와 함께 1페이지만.
+        size: 페이지당 상품 수. 온보딩 제안에는 소수(기본 10)면 충분하다.
+        tk:  이미 발급받은 액세스 토큰. None 이면 새로 발급한다.
+
+    Returns:
+        ``(status_code, body)`` — 기존 호출자 규약(``get_product`` 등)과 동일.
+        성공 시 body 의 ``contents`` 배열(2026-08-05 실측 녹화 형태) 각 원소는
+        최상위 ``originProductNo`` 와 중첩 ``channelProducts`` 배열을 가지며,
+        채널 수준값(``channelProductNo``/``name``/``statusType``)은
+        ``channelProducts[0]`` 안에 있다. 과거 스키마 호환을 위해 ``products``
+        키도 폴백으로 읽는 쪽(check_config)에서 다룬다 — 본 함수는 응답을
+        있는 그대로 돌려줄 뿐 키를 해석하지 않는다.
+        실패 시 body 는 응답 본문(문자열 또는 dict).
+
+    Note:
+        이 함수 자체는 "무엇을 읽을지" 결정하지 않는다. 호출자(check_config 의
+        ``read_existing=True`` 경로)가 정책값 추출을 담당한다. 함수는 순수한
+        API 호출 래퍼다 — 값을 해석·변환·추정하지 않는다.
+    """
+    tk = tk or get_token()
+    r = requests.post(
+        BASE + "/external/v1/products/search",
+        headers=_h(tk),
+        data=json.dumps({"page": int(page), "size": int(size)}).encode("utf-8"),
+        timeout=20,
+    )
+    return r.status_code, _json_or_text_response(r)
+
+
 def _option_stock(option):
     """옵션 재고 수량을 fail-closed 로 파싱.
 

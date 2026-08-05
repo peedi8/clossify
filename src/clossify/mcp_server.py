@@ -7,7 +7,8 @@
 이 모듈은 MCP Python SDK(v2, PyPI `mcp`)의 `MCPServer`(FastMCP 후속)를 사용해
 로컬 stdio MCP 서버를 노출한다. 서버는 6개의 도구를 제공한다:
 
-- ``check_config``: 자격증명/설정 파일 존재 및 형식 검사 (외부 API 호출 없음).
+- ``check_config``: 자격증명/설정 파일 존재 및 형식 검사. 기본은 외부 API 호출
+  없음. ``read_existing=True`` 면 기존 상품에서 정책값을 읽어 제안(온보딩).
 - ``upload_images``: 로컬 이미지 경로 리스트를 네이버 이미지서버에 업로드.
 - ``register_product``: 상품 정보를 받아 등록 페이로드를 구성하고 커머스 API로 등록.
 - ``get_product``: 등록된 상품(origin product)을 조회.
@@ -660,19 +661,319 @@ def _run_compliance_gate(
     }
 
 
-@mcp.tool()
-def check_config() -> dict[str, Any]:
-    """네이버 커머스 API 자격증명/설정 상태를 검사한다 (외부 API 호출 없음).
+# --------------------------------------------------------------------------- #
+# 정책 온보딩 — 기존 상품에서 스토어 정책값을 읽어 제안 (check_config 내부).
+#
+# 세 계약:
+#   1. 제안만 한다. 설정 파일을 직접 쓰지 않는다.
+#   2. 출처를 밝힌다. 각 제안값은 어느 상품에서 읽었는지(originProductNo)를 담는다.
+#   3. 없으면 없다고 한다. 추정·합성·기본값 폴밸을 하지 않는다.
+#
+# config 와 기존 상품이 다르면(예: AS 안내문에 폐기된 해외구매대행 문구가 남아
+# 있음) 그 차이를 알리고 덮어쓰지 않는다.
+# --------------------------------------------------------------------------- #
 
+# 정책값을 읽을 config 키 → (config 키 경로, 항목 이름) 매핑.
+# 빈 값(빈 문자열/공백/플레이스홀더)을 가진 키가 policy_gaps 에 들어간다.
+_POLICY_CONFIG_KEYS: tuple[tuple[str, ...], ...] = (
+    ("smartstore_notice_defaults", "origin_area_code"),
+    ("smartstore_notice_defaults", "origin_content"),
+    ("smartstore_notice_defaults", "as_tel"),
+    ("smartstore_notice_defaults", "as_guide"),
+    ("smartstore_notice_defaults", "manufacturer"),
+    ("smartstore_notice_defaults", "importer"),
+    ("smartstore_notice_defaults", "returnCostReason"),
+    ("smartstore_notice_defaults", "noRefundReason"),
+    ("smartstore_notice_defaults", "qualityAssuranceStandard"),
+    ("smartstore_notice_defaults", "compensationProcedure"),
+    ("smartstore_notice_defaults", "troubleShootingContents"),
+)
+
+
+def _cfg_value_at(cfg: dict[str, Any], path: tuple[str, ...]) -> Any:
+    """config 에서 다단계 키 경로로 값을 읽는다. 없으면 None."""
+    cur: Any = cfg
+    for key in path:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(key)
+    return cur
+
+
+def _diagnose_policy_gaps(cfg: dict[str, Any]) -> list[str]:
+    """설정 파일에서 비어 있는 정책 항목의 키 경로 목록을 반환.
+
+    빈 값(빈 문자열/공백/None/플레이스홀더)을 가진 항목만 담는다.
+    외부 API 호출을 하지 않는다 — config 파일 객체만 본다.
+    """
+    gaps: list[str] = []
+    for path in _POLICY_CONFIG_KEYS:
+        value = _cfg_value_at(cfg, path)
+        if not _is_policy_value_present(value):
+            gaps.append(".".join(path))
+    return gaps
+
+
+def _is_policy_value_present(value: Any) -> bool:
+    """정책값이 "채워져 있는가" — None/빈/공백/플레이스홀더 는 채워지지 않은 것."""
+    if value is None:
+        return False
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return False
+        if _is_placeholder(text):
+            return False
+        return True
+    # 비문자열(숫자 등)은 값이 있는 것으로 본다.
+    return True
+
+
+def _normalize_search_listing(entry: Any) -> dict[str, Any]:
+    """검색 응답의 listing 엔트리를 평탄화한다.
+
+    실측된 응답 형태(2026-08-05 녹화)는 origin/채널값이 중첩되어 있다::
+
+        {"originProductNo": 13638045156,
+         "channelProducts": [{"channelProductNo": 13698323110,
+                              "name": "...", "statusType": "..."}]}
+
+    ``originProductNo`` 는 최상위에 있고, 채널 수준값(``name``/``statusType``/
+    ``channelProductNo``)은 ``channelProducts`` 배열의 첫 원소 안에 있다.
+    본 함수는 두 자리를 합쳐 하나의 dict 으로 평탄화한다 — 채널 수준값이
+    필요한 호출자가 중첩을 다시 풀지 않아도 된다. 어느 한쪽 자리가 비어 있어도
+    있는 값은 살린다 (추정·합성 금지).
+
+    Args:
+        entry: 검색 응답의 listing 원소 (dict 가 아닌 경우 빈 dict 반환).
+
+    Returns:
+        최상위 origin 필드 + ``channelProducts[0]`` 의 채널 수준 필드를 합친 dict.
+        origin 필드가 채널 필드와 충돌하면 origin(최상위) 값을 유지한다.
+    """
+    if not isinstance(entry, dict):
+        return {}
+    flat: dict[str, Any] = {}
+    channels = entry.get("channelProducts")
+    if isinstance(channels, list) and channels:
+        first_channel = channels[0]
+        if isinstance(first_channel, dict):
+            for k, v in first_channel.items():
+                flat[k] = v
+    # 최상위(origin) 값을 나중에 얹어 채널값과 충돌 시 origin 이 이기도록.
+    for k, v in entry.items():
+        if k == "channelProducts":
+            continue
+        flat[k] = v
+    return flat
+
+
+def _read_existing_policies(
+    cfg: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]], str | None]:
+    """기존 상품에서 스토어 정책값을 읽어 제안/불일치 보고를 산출한다.
+
+    Returns:
+        ``(suggested, drift, error)`` —
+        - ``suggested``: ``{config_key_path: {"value": ..., "source_product_no": str,
+          "config_key": str}}``. 설정이 비어 있는 항목에 한해 제안한다.
+        - ``drift``: 설정에 값이 있는데 기존 상품과 다른 항목들의 차이 보고.
+        - ``error``: 읽기 실패 사유. None 이면 성공. 신규 셀러(상품 0개)는
+          제안이 빈 채로 돌아가되 error 는 None 이다 — "조용한 빈 값 금지"는
+          반환에 ``suggested_from_existing`` 이 빈 dict 임을 호출자가 검사하는
+          것으로 충족된다.
+
+    계약: 값을 추정·합성하지 않는다. 응답에 없는 필드는 담지 않는다.
+    """
+    # 1. 기존 상품 목록 조회 (최근 상품 소수).
+    sc, body = naver_client.search_products(page=1, size=5)
+    if not (isinstance(sc, int) and sc == 200) or not isinstance(body, dict):
+        msg = f"기존 상품 검색 실패 (HTTP {sc})"
+        return {}, [], _sanitize_text(msg)
+
+    # 실제 API 응답은 상품 목록을 ``contents`` 에 담아 반환한다.
+    # 과거에 ``products`` 라고 추측해 읽던 자리를 그대로 폴백으로 둔다 —
+    # 어느 한쪽이 스키마 변경으로 사라져도 조용한 빈 결과(신규 셀러로 둔갑)
+    # 가 발생하지 않도록. 두 키 모두 없거나 빈 리스트면 신규 셀러.
+    raw_products = body.get("contents")
+    if raw_products is None:
+        raw_products = body.get("products")
+    if not isinstance(raw_products, list) or not raw_products:
+        # 신규 셀러 — 제안 없음. error=None (부재가 실패는 아니다).
+        return {}, [], None
+
+    # 2. 가장 최근 상품 1건(originProductNo)의 정책값을 상세 조회.
+    # 각 listing 엔트리는 origin/채널값이 중첩된 구조다:
+    #   {originProductNo, channelProducts: [{channelProductNo, name, statusType}]}
+    # origin 번호는 최상위에 있지만 name/statusType 같은 채널 수준값은
+    # channelProducts[0] 안에 있다. _normalize_search_listing 이 두 자리를
+    # 합쳐 평탄화한다 — 어느 한쪽 자리가 비어 있어도 있는 값은 살린다.
+    first = _normalize_search_listing(raw_products[0])
+    origin_no = str(first.get("originProductNo") or "").strip()
+    if not origin_no:
+        return {}, [], None
+
+    psc, pbody = naver_client.get_product(origin_no)
+    if not (isinstance(psc, int) and psc == 200) or not isinstance(pbody, dict):
+        msg = f"기존 상품 상세 조회 실패 (origin={origin_no}, HTTP {psc})"
+        return {}, [], _sanitize_text(msg)
+
+    # 3. 페이로드에서 정책값 추출 — 없으면 없는 대로 둔다 (추정 금지).
+    extracted = _extract_policy_values_from_product(pbody, origin_no)
+
+    # 4. config 의 현재 정책값과 비교해 제안/불일치 산출.
+    suggested: dict[str, dict[str, Any]] = {}
+    drift: list[dict[str, Any]] = []
+    for cfg_path, item_key in _POLICY_TO_EXTRACTION_KEY:
+        cfg_value = _cfg_value_at(cfg, cfg_path)
+        ext = extracted.get(item_key)
+        if ext is None:
+            # 기존 상품에도 없는 값은 제안하지 않는다 (추정 금지).
+            continue
+        cfg_key_str = ".".join(cfg_path)
+        if not _is_policy_value_present(cfg_value):
+            # 설정이 비어 있으면 제안.
+            suggested[cfg_key_str] = {
+                "value": ext["value"],
+                "source_product_no": ext["source_product_no"],
+                "config_key": cfg_key_str,
+            }
+        else:
+            # 설정에 값이 있으면 불일치(드리프트)만 검사.
+            cfg_text = _normalize_policy_text(cfg_value)
+            ext_text = _normalize_policy_text(ext["value"])
+            if cfg_text and ext_text and cfg_text != ext_text:
+                drift.append(
+                    {
+                        "config_key": cfg_key_str,
+                        "config_value": _stringify_policy(cfg_value),
+                        "existing_value": _stringify_policy(ext["value"]),
+                        "source_product_no": ext["source_product_no"],
+                    }
+                )
+    return suggested, drift, None
+
+
+# config 키 경로 → 추출 항목 이름 매핑. 추출 항목 이름은
+# _extract_policy_values_from_product 이 만드는 dict 의 키와 짝을 맞춘다.
+_POLICY_TO_EXTRACTION_KEY: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("smartstore_notice_defaults", "origin_area_code"), "origin_area_code"),
+    (("smartstore_notice_defaults", "origin_content"), "origin_content"),
+    (("smartstore_notice_defaults", "as_tel"), "as_tel"),
+    (("smartstore_notice_defaults", "as_guide"), "as_guide"),
+    (("smartstore_notice_defaults", "manufacturer"), "manufacturer"),
+    (("smartstore_notice_defaults", "importer"), "importer"),
+    (("smartstore_notice_defaults", "returnCostReason"), "returnCostReason"),
+    (("smartstore_notice_defaults", "noRefundReason"), "noRefundReason"),
+    (("smartstore_notice_defaults", "qualityAssuranceStandard"), "qualityAssuranceStandard"),
+    (("smartstore_notice_defaults", "compensationProcedure"), "compensationProcedure"),
+    (("smartstore_notice_defaults", "troubleShootingContents"), "troubleShootingContents"),
+)
+
+
+def _extract_policy_values_from_product(
+    product_body: dict[str, Any], source_no: str
+) -> dict[str, dict[str, Any]]:
+    """get_product 응답 본문에서 스토어 정책값을 추출한다.
+
+    응답의 출처 노드:
+      - ``originProduct.deliveryInfo.claimDeliveryInfo`` (반품/교환 배송비)
+      - ``originProduct.detailAttribute.afterServiceInfo`` (AS 전화·안내문)
+      - ``originProduct.detailAttribute.originAreaInfo`` (원산지 코드·내용·수입자)
+      - ``originProduct.detailAttribute.productInfoProvidedNotice.<node>.*``
+        (공통 고시 5필드, 제조사 등)
+
+    각 추출값은 ``{"value": ..., "source_product_no": source_no}`` 형태.
+    응답에 없는 필드는 반환 dict 에 담지 않는다 (추정 금지).
+    """
+    out: dict[str, dict[str, Any]] = {}
+
+    def setv(key: str, value: Any) -> None:
+        if value is None:
+            return
+        if isinstance(value, str) and not value.strip():
+            return
+        out[key] = {"value": value, "source_product_no": source_no}
+
+    origin = product_body.get("originProduct")
+    if not isinstance(origin, dict):
+        return out
+    detail = origin.get("detailAttribute")
+    if not isinstance(detail, dict):
+        detail = {}
+
+    # AS 전화·안내문.
+    as_info = detail.get("afterServiceInfo")
+    if isinstance(as_info, dict):
+        setv("as_tel", as_info.get("afterServiceTelephoneNumber"))
+        setv("as_guide", as_info.get("afterServiceGuideContent"))
+
+    # 원산지.
+    origin_info = detail.get("originAreaInfo")
+    if isinstance(origin_info, dict):
+        setv("origin_area_code", origin_info.get("originAreaCode"))
+        setv("origin_content", origin_info.get("content"))
+        setv("importer", origin_info.get("importer"))
+
+    # 고시 노드에서 공통 5필드 + 제조사 추출. 노드 이름이 타입마다 다르므로
+    # etc/wear/... 모든 dict 본문을 순회한다 (data/notice_types.json 의 node 이름).
+    notice = detail.get("productInfoProvidedNotice")
+    if isinstance(notice, dict):
+        for _node_name, node_body in notice.items():
+            if not isinstance(node_body, dict):
+                continue
+            for camel_field in (
+                "manufacturer",
+                "returnCostReason",
+                "noRefundReason",
+                "qualityAssuranceStandard",
+                "compensationProcedure",
+                "troubleShootingContents",
+            ):
+                if camel_field not in out:
+                    setv(camel_field, node_body.get(camel_field))
+    return out
+
+
+def _normalize_policy_text(value: Any) -> str:
+    """정책값 비교를 위한 정규화 — 앞뒤 공백·중복 공백 제거."""
+    return " ".join(str(value or "").split())
+
+
+def _stringify_policy(value: Any) -> str:
+    """드리프트 보고용 문자열화 (정규화 후)."""
+    return _normalize_policy_text(value)
+
+
+@mcp.tool()
+def check_config(read_existing: bool = False) -> dict[str, Any]:
+    """네이버 커머스 API 자격증명/설정 상태를 검사한다.
+
+    기본 동작(``read_existing=False``)은 외부 API 호출을 일절 하지 않는다.
     ``.local/config.json`` 파일의 존재, JSON 파싱 가능 여부, 그리고
     ``naver.client_id`` / ``naver.client_secret`` / ``naver.store_url_slug``
     세 키의 존재 및 플레이스홀더 미사용 여부를 확인한다.
     LLM은 이 도구로 "설정이 완료되었는가?" 를 분기 없이 확인할 수 있다.
 
+    ``read_existing=True`` 일 때만, 판매자의 **기존 상품에서 스토어 정책값을
+    읽어 제안** 한다 (온보딩). 기존 상품이 0개인 신규 셀러는 제안이 빈 채로
+    돌아오며 그 사실이 반환에 드러난다. 지어내지 않고, 조용히 저장하지 않는다.
+
+    본 도구는 설정 파일을 **절대 쓰지 않는다**. 읽기만 한다. 제안값을 저장하려면
+    클라이언트가 사용자 승인을 받은 뒤 파일을 직접 써야 한다 — 그냥 쓰면 안 된다.
+    반환의 ``suggested_from_existing`` 항목은 "어느 키에 무엇을 넣으면 되는지" 를
+    알려주는 안내일 뿐이다.
+
+    Args:
+        read_existing: ``True`` 면 기존 상품에서 정책값을 읽어 제안한다 (외부 API
+            호출 1~회 발생). 기본값 ``False`` — 외부 API 호출 0회.
+
     Returns:
         ``{"ok": bool, "config_path": str, "present": {...}, "missing": [...],
         "placeholders": [...], "origin_configured": bool, "origin_hint": str,
-        "as_tel_configured": bool, "as_tel_hint": str, "error": str | None}``
+        "as_tel_configured": bool, "as_tel_hint": str, "error": str | None,
+        "policy_gaps": [...], "suggested_from_existing": {...},
+        "drift_from_existing": [...], "existing_read_error": str | None}``
         - ``ok``: 모든 필수 키가 존재하고 플레이스홀더가 아님.
         - ``present``: 필수 키별 현재 값의 *존재 여부* (값 자체는 노출 안 함).
         - ``missing``: 누락된 필수 키 이름 목록.
@@ -680,8 +981,25 @@ def check_config() -> dict[str, Any]:
         - ``origin_configured``: 원산지 정본 설정 여부(값 미노출).
         - ``as_tel_configured``: AS 전화번호 정본 설정 여부(값 미노출).
         - ``error``: 파일이 없거나 JSON 파싱에 실패한 경우의 메시지.
+        - ``policy_gaps``: 설정에 비어 있는 정책 항목의 config 키 경로 목록
+          (예: ``smartstore_notice_defaults.returnCostReason``). ``read_existing``
+          과 무관하게 항상 채워진다 — 외부 호출 없이 파일만 읽어 산출한다.
+        - ``suggested_from_existing``: 기존 상품에서 읽은 정책값 제안.
+          ``read_existing=True`` 일 때만 채워진다. 각 항목은 ``{"value": ...,
+          "source_product_no": str, "config_key": str}`` 형태. 출처 없는 값은
+          담지 않는다 (추정 금지).
+        - ``drift_from_existing``: 설정에 값이 있는데 기존 상품의 값과 **다른**
+          항목의 차이 보고. ``read_existing=True`` 일 때만. 덮어쓰지 않고 차이만
+          알린다. 각 항목은 ``{"config_key": str, "config_value": str,
+          "existing_value": str, "source_product_no": str}`` 형태.
+        - ``existing_read_error``: ``read_existing=True`` 로 읽기에 실패한 경우
+          사유. ``None`` 이면 시도 자체가 없었거나 성공한 것. 기존 진단 키들은
+          이 실패와 무관하게 정상 동작한다 (부분 실패 허용).
 
     안내: 실제 값은 반환하지 않는다. 이 도구는 가시성이 아니라 게이트(gate)다.
+    단, ``suggested_from_existing`` / ``drift_from_existing`` 은 예외다 — 이들은
+    사용자가 검토하고 승인할 "제안" 이므로 값을 드러낸다. 게이트 본연의 진단 키
+    (``ok``/``present``/``missing``/...)는 값을 노출하지 않는다.
     """
     # 매 호출마다 최신 경로를 사용 (CLOSSIFY_CONFIG 오버라이드 반영).
     cfg_path = naver_client.config_path()
@@ -769,6 +1087,35 @@ def check_config() -> dict[str, Any]:
             "register_product 가 컴플라이언스 검사에서 등록을 거부합니다. "
             "안내문구/플레이스홀더를 넣으면 거부됩니다 (fail-closed)."
         )
+
+    # ------------------------------------------------------------------ #
+    # 정책 공백 진단 (policy_gaps) — 외부 API 호출 없이 파일만 읽어 산출.
+    #
+    # 어떤 정책 항목이 설정에 비어 있는지 config 키 경로로 보고한다.
+    # 클라이언트 모델이 이 목록을 사용자에게 보여주고, 사용자가 하나씩 채우거나
+    # 아래 suggested_from_existing 제안을 승인할 수 있게 한다.
+    # read_existing 여부와 무관하게 항상 채워진다 (외부 호출 0).
+    # ------------------------------------------------------------------ #
+    result["policy_gaps"] = _diagnose_policy_gaps(cfg)
+
+    # ------------------------------------------------------------------ #
+    # 기존 상품에서 정책값 읽기 (suggested_from_existing / drift_from_existing).
+    #
+    # read_existing=True 일 때만 실행한다. 기본값 False — 외부 호출 0회 유지.
+    # 읽기 실패 시 existing_read_error 에 사유를 담되, 위에서 이미 채워진
+    # 진단 키(ok/present/missing/...)는 그대로 살아 있다 (부분 실패 허용).
+    # ------------------------------------------------------------------ #
+    suggested: dict[str, dict[str, Any]] = {}
+    drift: list[dict[str, Any]] = []
+    existing_read_error: str | None = None
+    if read_existing:
+        try:
+            suggested, drift, existing_read_error = _read_existing_policies(cfg)
+        except Exception as exc:  # 방어 — 기존 진단은 살린다.
+            existing_read_error = _sanitize_error(exc)
+    result["suggested_from_existing"] = suggested
+    result["drift_from_existing"] = drift
+    result["existing_read_error"] = existing_read_error
 
     result["ok"] = not missing and not placeholders
     return result

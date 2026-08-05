@@ -16,9 +16,14 @@ description: 상품등록(네이버 커머스 API) 담당 에이전트 — 상�
 도구로 노출되지 않으므로 클라이언트 LLM 이 호출할 수 없다. 등록 흐름의 정상
 호출 순서는 다음과 같다:
 
-1. `check_config()` → 자격증명/설정 파일 존재 및 플레이스홀더 여부(외부 API 호출 0).
+1. `check_config(read_existing=False)` → 자격증명/설정 파일 존재 및 플레이스홀더 여부.
+   기본(`read_existing=False`)은 외부 API 호출 0. `read_existing=True` 면 기존 상품에서
+   정책값을 읽어 제안(온보딩) — 제안만 하고 설정 파일을 쓰지 않는다(저장은 클라이언트가
+   사용자 승인을 받은 뒤 파일을 직접 쓸 때만).
    반환: `{ok, config_path, present, missing, placeholders, origin_configured,
-   as_tel_configured, ...}`. 값 자체는 노출하지 않는다(게이트).
+   as_tel_configured, policy_gaps, suggested_from_existing, drift_from_existing,
+   existing_read_error, ...}`. 게이트 본연의 진단 키는 값을 노출하지 않는다.
+   `suggested_from_existing`/`drift_from_existing` 은 제안이므로 값을 드러낸다.
 2. `prepare_listing(product)` → 상품 정보 + 이미지 소스로 prepared payload 생성.
    반환: `{ok, product_key, needs_llm, needs_user, qa, images, preview_path}`.
    `needs_llm` 의 각 항목은 아래 `submit_reviews` 로 회신해야 한다.
