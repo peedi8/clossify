@@ -43,8 +43,8 @@ packages = ["src/clossify"]
 # packages = ["src/clossify"] 로 인해 wheel 에 자동 포함된다. 과거에는 data/ 와
 # agents/ 가 repo 루트에 있어 force-include 로 나열해야 했고, 그중 data 3개가
 # 누락돼 감리 BLOCKER 로 지적됐다(설치본에서 로더가 빈 맵으로 조용히 폴백해
-# 컴플라이언스 검사가 무력화). FIX-P1 은 data/ 를, FIX-P1b 는 agents/ 를 각각
-# 패키지 안으로 옮기면서 이중 유지보수 지점과 누락 가능성을 동시에 제거했다.
+# 컴플라이언스 검사가 무력화). data/ 와 agents/ 를 각각 패키지 안으로 옮기면서
+# 이중 유지보수 지점과 누락 가능성을 동시에 제거했다 (install-paths 재배치).
 # importlib.resources 가 소스 트리·editable 설치·wheel 설치 모두에서 동일한
 # 경로로 자산을 찾는다(로더: common.AGENTS_DIR, common.package_data_path).
 

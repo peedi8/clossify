@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: LicenseRef-SustainableUse-1.0
 # Providing this software to others is permitted only free of charge and for
 # non-commercial purposes. See LICENSE.md.
-"""FIX-P2 결함 3종 검증.
+"""조용한 실패/거짓 게이트 결함 3종 검증.
 
 본 테스트는 "검증하지 않은 것을 검증됐다고 말하지 않는다" 는 원칙의
 세 가지 회귀를 검증한다:
@@ -188,7 +188,7 @@ class TestApprovalEditRecheck:
 
         회귀 시나리오: QA 가 "정상이름" 으로 PASS 했는데, 승인 편집에서
         "최고급" 같은 금지 표현으로 바꾸면 — 과거에는 그대로 전송되었다.
-        FIX-P2 후에는 카피 코드검사(금지어)가 편집된 이름으로 재실행되어
+        개정 후에는 카피 코드검사(금지어)가 편집된 이름으로 재실행되어
         차단한다(fail-closed).
         """
         # 승인 편집으로 상품명을 금지 표현으로 바꾼다.
@@ -514,7 +514,7 @@ class TestCategoryMetaFailurePropagation:
         회귀 시나리오: 카테고리 메타 파일이 없거나 깨졌을 때, 과거에는
         ``_category_path_for`` 가 빈 문자열을 반환해 ETC 로 떨어졌고, 게이트가
         ETC 기준으로 통과시켜 잘못된 고시 타입으로 등록되었다.
-        FIX-P2 후에는 ``CategoryMetaUnavailableError`` 가 전파되어 등록이 거부된다.
+        개정 후에는 ``CategoryMetaUnavailableError`` 가 전파되어 등록이 거부된다.
         """
         monkeypatch.delenv("COMMERCE_DRY_RUN", raising=False)
         http_calls = {"count": 0}
@@ -555,7 +555,7 @@ class TestCategoryMetaFailurePropagation:
         """(g) prepare_listing 이 메타 조회 실패를 컴플라이언스 FAIL 로 번역.
 
         회귀 시나리오: 과거에는 ``_category_path_for`` 가 빈 문자열을 반환해
-        prepare_listing 이 ETC 로 진행되었다. FIX-P2 후에는 예외가 전파되어
+        prepare_listing 이 ETC 로 진행되었다. 개정 후에는 예외가 전파되어
         prepare_listing 의 try/except 가 컴플라이언스 FAIL 로 번역한다.
         """
         d = {
@@ -613,7 +613,7 @@ class TestScannerNoSilentSkip:
 
         회귀 시나리오: 과거에는 ``_iter_files`` 가 존재하지 않는 경로를
         조용히 스킵했다. ``SCAN_PATHS`` 에 stale 항목이 있어도 누가 알 수 없었다.
-        FIX-P2 후에는 ``FileNotFoundError`` 를 발생시킨다.
+        개정 후에는 ``FileNotFoundError`` 를 발생시킨다.
         """
         # 존재하는 디렉터리 하나와 존재하지 않는 경로 하나.
         real_dir = tmp_path / "src"

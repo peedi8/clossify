@@ -327,9 +327,10 @@ def _load_notice_field_types() -> dict[str, dict]:
 
     Raises:
         RuntimeError: 파일이 부재하거나 구조가 올바르지 않을 때 (fail-closed).
-            과거에는 파일 부재 시 빈 dict 를 조용히 반환했으나, FIX-P1-install-paths
-            에서 이 조용한 폴백을 금지했다 — 데이터 파일은 패키지에 포함되므로
-            부재는 설치 불량이나 빌드 오류이다 (사용자 환경 문제가 아니다).
+            과거에는 파일 부재 시 빈 dict 를 조용히 반환했으나,
+            install-paths 재배치에서 이 조용한 폴백을 금지했다 — 데이터 파일은
+            패키지에 포함되므로 부재는 설치 불량이나 빌드 오류이다 (사용자 환경
+            문제가 아니다).
     """
     global _NOTICE_FIELD_TYPES_CACHE
     if _NOTICE_FIELD_TYPES_CACHE is not None:
@@ -417,9 +418,9 @@ def _load_notice_field_relations() -> dict[str, list[list[str]]]:
 
     Raises:
         RuntimeError: 파일이 부재하거나 구조가 올바르지 않을 때 (fail-closed).
-            과거에는 파일 부재 시 빈 dict 를 조용히 반환했으나, FIX-P1-install-paths
-            에서 이 조용한 폴백을 금지했다 — 데이터 파일은 패키지에 포함되므로
-            부재는 설치 불량이나 빌드 오류이다.
+            과거에는 파일 부재 시 빈 dict 를 조용히 반환했으나,
+            install-paths 재배치에서 이 조용한 폴백을 금지했다 — 데이터 파일은
+            패키지에 포함되므로 부재는 설치 불량이나 빌드 오류이다.
     """
     global _NOTICE_FIELD_RELATIONS_CACHE
     if _NOTICE_FIELD_RELATIONS_CACHE is not None:

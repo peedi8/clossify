@@ -67,8 +67,8 @@ def _font_asset_path(config_key: str, fallback_filename: str) -> str:
     Note: there is no bundled ``assets/fonts/`` directory shipped with the
     package. The previous fallback (a project-root-relative path) pointed
     at a directory that does not exist in the wheel and was removed during
-    FIX-P1-install-paths. Operators who want font rendering must set
-    ``cfg()["fonts"][config_key]`` to an absolute path.
+    the install-paths relocation. Operators who want font rendering must
+    set ``cfg()["fonts"][config_key]`` to an absolute path.
     """
     try:
         fonts = common.cfg().get("fonts")

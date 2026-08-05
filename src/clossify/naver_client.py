@@ -5,7 +5,7 @@
 """검증된 네이버 커머스API 클라이언트 — 인증/이미지업로드/등록/조회/수정.
 2026-06-23 풀루프 실증된 흐름을 함수로 정리.
 
-경로 메모 (FIX-P1-install-paths): 본 모듈은 패키지 데이터(``data/*.json``)를
+경로 메모 (install-paths 재배치): 본 모듈은 패키지 데이터(``data/*.json``)를
 ``importlib.resources`` 기반의 ``common.package_data_path`` 로 읽고, 사용자
 설정(``config.json``) 은 ``CLOSSIFY_CONFIG`` 환경변수 또는 ``<cwd>/.local/``
 에서 찾는다. ``__file__`` 기반 프로젝트 루트 추정은 사용하지 않는다.
@@ -593,7 +593,7 @@ def _category_path_for(category_id: str) -> str:
     판정 지점(build_payload)이 호출자가 경로를 넘겨주기를 기대하지 않고
     ``categoryId`` 만으로 스스로 경로를 조회하도록 돕는다.
 
-    **FIX-P2: 조용한 ETC 강등 금지.** 과거에는 모든 예외를 잡아 빈 문자열로
+    **조용한 ETC 강등 금지.** 과거에는 모든 예외를 잡아 빈 문자열로
     떨어뜨렸고, ``_resolve_notice_type`` 은 빈 경로를 ETC 기본값으로 해석했다.
     이는 데이터 파일 부재/손상(인프라 실패)을 "정말 ETC 인 카테고리" 와 구분하지
     못하는 근본 결함이다 — 결과적으로 잘못된 고시 타입으로 규제 필드를 신고하게
@@ -1476,7 +1476,7 @@ def _build_option_info(p, opts):
         return {}
     width = _option_width(opts)
     groups = _option_group_list(p)
-    # FIX-P3: 과거 이 지점은 len(groups) < width 일 때 "옵션1"/"옵션2" 같은
+    # 과거 이 지점은 len(groups) < width 일 때 "옵션1"/"옵션2" 같은
     # 이름을 **조용히 지어 붙였고**, len(groups) > width 일 때 초과분을 조용히
     # 잘라냈다. 둘 다 "판매자가 이름을 줬다고 믿는데 실제로는 다른 이름이
     # 전송된다" 는 조용한 손실/조용한 보충 이다. 이제 count mismatch 는

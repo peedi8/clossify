@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: LicenseRef-SustainableUse-1.0
 # Providing this software to others is permitted only free of charge and for
 # non-commercial purposes. See LICENSE.md.
-"""Distribution integrity test — proves the install-path fix (FIX-P1).
+"""Distribution integrity test — proves the install-path relocation fix.
 
 The core problem this test guards against: modules computed "repo root" as
 ``os.path.dirname(__file__)/../..``, which works in the source tree but
@@ -27,13 +27,13 @@ rather than grepping packaging config strings. It asserts:
       ``importlib.resources`` and the files are readable.
   (h) At runtime, ``common.STATE_DIR`` derives from ``CLOSSIFY_STATE_DIR``
       or cwd, not from a ``__file__``-based root.
-  (i) FIX-P1b: every packaged ``agents/*.md`` prompt asset is **actually
+  (i) every packaged ``agents/*.md`` prompt asset is **actually
       loadable** at runtime via ``copywriting._agent_rules_bundle`` (no
       mocks — the real file is read). This catches the regression where
       the loader path pointed inside the package but the assets lived at
       repo root, so 912 passing tests (which mock the LLM path) never
       exercised the real prompt read.
-  (j) FIX-P1b: no ``agents/`` directory remains at the repository root
+  (j) no ``agents/`` directory remains at the repository root
       (single source of truth — the package-internal copy is the only one).
 """
 
@@ -170,7 +170,7 @@ def test_c_agents_assets_in_wheel(built_wheel: Path) -> None:
 
     Source enumeration happens against ``common.AGENTS_DIR`` (the package
     asset directory inside ``src/clossify/agents/``), not against the repo
-    root. FIX-P1b moved the assets there; the loader reads them from there
+    root. The asset relocation moved the assets there; the loader reads them from there
     too, so the source-of-truth on disk must match what the wheel contains.
     """
     from clossify import common
@@ -329,9 +329,9 @@ def test_h_state_dir_not_file_based() -> None:
 
 
 # ---------------------------------------------------------------------------
-# (i) FIX-P1b: every agents/*.md prompt is actually loadable (NO MOCKS).
+# (i) every agents/*.md prompt is actually loadable (NO MOCKS).
 #
-# This is the test that would have caught the FIX-P1b regression: the loader
+# This is the test that would have caught the install-paths regression: the loader
 # pointed inside the package, but the assets lived at repo root. Every other
 # test mocked the LLM path so the real prompt read never happened. Here we
 # really read every packaged agent markdown file through the loader and
@@ -353,7 +353,7 @@ def test_i_agent_rules_bundles_load_for_real() -> None:
     agent_files = sorted(p.name for p in common.AGENTS_DIR.glob("*.md"))
     assert agent_files, (
         f"No agents/*.md found in package asset dir {common.AGENTS_DIR!r} — "
-        "the directory is empty or missing. This is the FIX-P1b regression: "
+        "the directory is empty or missing. This is the install-paths regression: "
         "loader resolves inside the package but the assets are not there."
     )
 
@@ -380,7 +380,7 @@ def test_i_agent_rules_bundles_load_for_real() -> None:
 
     assert not failures, (
         "Some agents/*.md failed to load through the real loader (no mocks). "
-        "This is the FIX-P1b regression signature.\n  " + "\n  ".join(failures)
+        "This is the install-paths regression signature.\n  " + "\n  ".join(failures)
     )
     # Every loaded bundle must be non-trivial (>100 chars — these are prompt
     # documents, not stubs). Guards against accidental truncation.
@@ -389,14 +389,14 @@ def test_i_agent_rules_bundles_load_for_real() -> None:
 
 
 # ---------------------------------------------------------------------------
-# (j) FIX-P1b: no agents/ directory remains at the repository root.
+# (j) no agents/ directory remains at the repository root.
 # ---------------------------------------------------------------------------
 
 
 def test_j_no_root_agents_directory() -> None:
     """The repo root must NOT contain an ``agents/`` directory.
 
-    FIX-P1b moved the assets to ``src/clossify/agents/``. Leaving a stale
+    The asset relocation moved the assets to ``src/clossify/agents/``. Leaving a stale
     copy at the root would create two sources of truth (the package copy
     the loader reads, and the root copy nothing reads) and silently mask
     future regressions in the package-internal location.

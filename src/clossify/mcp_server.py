@@ -321,7 +321,7 @@ def _apply_approval_edits(
 # 이전에는 본 모듈에 dict 로 하드코딩되어 있었으나, 문서와 코드가 갈라지는
 # 문제로 데이터 파일로 분리했다. 라벨을 새로 창작하지 않는다 — 출처 기반
 # 수집만 data/notice_field_labels.json 의 labels 에 추가한다.
-# FIX-P1-install-paths: 패키지 데이터 경로는 importlib.resources 기반으로 해결.
+# 패키지 데이터 경로는 importlib.resources 기반으로 해결 (install-paths 재배치).
 # 이 라벨 파일은 genuinely optional 이다 — 파일이 없거나 깨지면 호출자가
 # 필드명 그대로를 라벨로 쓴다(아래 _load_notice_field_labels 의 폴백 참고).
 _NOTICE_LABELS_PATH = common.package_data_path("notice_field_labels.json")
@@ -472,7 +472,7 @@ def _category_path_for(category_id: str) -> str:
     ``qa_agents._infer_notice_type`` 이 카테고리 경로에서 고시 타입을
     추론할 수 있도록 돕는다.
 
-    **FIX-P2: 조용한 ETC 강등 금지.** 과거에는 모든 예외를 잡아 빈 문자열로
+    **조용한 ETC 강등 금지.** 과거에는 모든 예외를 잡아 빈 문자열로
     떨어뜨렸고, 이 빈 문자열은 ``_infer_notice_type`` 에서 ETC 기본값으로
     해석되었다. 이는 카테고리 메타 데이터 파일이 부재하거나 깨진 경우(인프라
     실패)를 "정말 ETC 인 카테고리" 와 구분하지 못하는 근본 결함이다.
@@ -903,7 +903,7 @@ def _read_existing_policies(
     # 어느 한쪽이 스키마 변경으로 사라져도 조용한 빈 결과(신규 셀러로 둔갑)
     # 가 발생하지 않도록.
     #
-    # **FIX-P3**: 스키마 이상과 "진짜 신규 셀러"를 구분한다.
+    # 스키마 이상과 "진짜 신규 셀러"를 구분한다.
     # - ``contents`` 또는 ``products`` 키가 *있고* 값이 빈 리스트거나
     #   그 키의 원소가 ``originProductNo`` 가 없으면 진짜 신규 셀러(또는
     #   빈 스토어)로 본다 — error=None.
@@ -946,7 +946,7 @@ def _read_existing_policies(
     first = _normalize_search_listing(raw_products[0])
     origin_no = str(first.get("originProductNo") or "").strip()
     if not origin_no:
-        # **FIX-P3**: 첫 listing 엔트리에 originProductNo 가 없으면 스키마
+        # 첫 listing 엔트리에 originProductNo 가 없으면 스키마
         # 이상이다 (과거에는 조용히 신규 셀러로 취급했다). error 로 명시.
         msg = (
             "기존 상품 검색 응답의 첫 항목에 originProductNo 가 없다 "
@@ -1462,7 +1462,7 @@ def register_product(
     # 비어있지 않은 문자열 1~3개만 허용 — 그 외는 네이버 호출 0회로 거부한다.
     # 생략(None) 시 기존 폴백 동작을 유지한다.
     #
-    # **축 수 일치 검증 (FIX-P3)**: 과거 이 게이트는 개수만 1~3 이면 통과시켰다.
+    # **축 수 일치 검증**: 과거 이 게이트는 개수만 1~3 이면 통과시켰다.
     # 1축 옵션+["색상","사이즈","소재"] 처럼 축 수와 그룹 이름 수가 어긋나면
     # naver_client._build_option_info 가 (1) 초과분을 조용히 잘라내거나 (2) 부족분을
     # "옵션2"/"옵션3" 같은 번호 이름으로 조용히 채웠다 — 판매자가 "내가 준 이름이
@@ -1536,7 +1536,7 @@ def register_product(
     # 판매자가 "이 필드들만 미뤘다" 고 믿도록, 거부 사유에 어떤 필드가 문제인지
     # 명시한다).
     #
-    # **allowlist 검증 (FIX-P3)**: 과거 이 게이트는 어떤 키든 판매자가 넘기면
+    # **allowlist 검증**: 과거 이 게이트는 어떤 키든 판매자가 넘기면
     # "적용됐다" 고 믿게 두고, 네이버 스키마에 없는 키를 전송했다. 대소문자 변형·
     # 오타·별칭(country_of_origin, madein, originAreaInfo.content.value 등)이
     # 각각 네이버 POST 1회씩을 일으키며 "상세페이지 참조" 값이 임의 키로 딸려
@@ -1684,7 +1684,7 @@ def register_product(
         _preview_path_for_gate = _resolved_payload.get("preview_path") or None
     _require_preview = _config_require_preview_confirmation()
     _enable_local_approval = _config_enable_local_approval()
-    # FIX-P2 결함 1: 승인 편집 추적 초기값. 로컬 승인 다리가 꺼져 있거나
+    # 승인 편집 추적 초기값. 로컬 승인 다리가 꺼져 있거나
     # 승인 과정에서 편집이 없어도 이 변수는 항상 정의되어야 한다 — 아래
     # 재검사 블록에서 무조건 참조하기 때문이다.
     _approval_edits_applied: dict[str, Any] = {}
@@ -1839,7 +1839,7 @@ def register_product(
         # 승인됨. 수정 필드가 있으면 명시 인자로 반영(명시값 우선 원칙).
         # edits 는 {field: value} 형태. 필드명은 한국어(상품명, 판매가, 태그, 고시.*).
         #
-        # FIX-P2 결함 1: 승인 편집이 QA 판정 뒤에 적용된다. 편집으로 바뀐
+        # 승인 편집이 QA 판정 뒤에 적용된다. 편집으로 바뀐
         # QA 대상 필드(상품명·고시 필드·태그)를 그냥 흘려보내면 "full 게이트"
         # 라벨이 거짓이 된다 — 검증하지 않은 값이 검증됐다고 나간다. 편집된
         # 필드를 추적해 게이트 통과 후 결정론 재검사를 돌리고, 게이트 라벨을
@@ -2058,7 +2058,7 @@ def register_product(
     # 않고 트립와이어로 드러낸다.
     # ------------------------------------------------------------------ #
     payload_type = _payload_notice_type(payload)
-    # FIX-P2: _gate_notice_type → _category_path_for 가 이제 CategoryMetaUnavailableError
+    # _gate_notice_type → _category_path_for 가 이제 CategoryMetaUnavailableError
     # 를 조용히 삼키지 않고 전파한다. 카테고리 메타 데이터 파일이 부재/손상된 경우
     # 게이트 타입을 확정할 수 없다 — "알 수 없음" 을 ETC 로 강등하지 말고 fail-closed
     # 로 차단한다(조용한 ETC 강등 금지).
@@ -2220,7 +2220,7 @@ def register_product(
             gate_label = "full"
 
     # ------------------------------------------------------------------ #
-    # FIX-P2 결함 1 — 승인 편집 필드에 대한 결정론 재검사.
+    # 승인 편집 필드에 대한 결정론 재검사.
     #
     # 승인 편집으로 QA 가 판정했던 필드(name / notice / tags)가 바뀌었으면,
     # 바뀐 값에 대해 결정론 검사(컴플라이언스·카피 코드검사)를 재실행한다.
@@ -2373,7 +2373,7 @@ def register_product(
             "requested_status": status,
             "applied_status": outcome.get("statusType"),
             "dry_run": _dry_run,
-            # FIX-P2 결함 1: 실제 전송된 값에 적용된 판정을 기록에 남긴다.
+            # 실제 전송된 값에 적용된 판정을 기록에 남긴다.
             # 편집이 있었으면 라벨이 "full" 이 아님을 드러내고, 미검수 항목을 명시.
             "approval_edits_applied": dict(_approval_edits_applied),
             "approval_edits_unreviewed": list(approval_edits_unreviewed),
@@ -2517,7 +2517,7 @@ def register_product(
         "status_correction_error": status_correction_error,
         "registration_record": registration_record,
         "dry_run": _dry_run,
-        # FIX-P2 결함 1: 실제 전송된 값과 그 값에 적용된 판정을 기록에 남긴다.
+        # 실제 전송된 값과 그 값에 적용된 판정을 기록에 남긴다.
         # 편집이 있었으면 라벨이 "full" 이 아님을 드러내고, 미검수 항목을 명시.
         "approval_edits_applied": dict(_approval_edits_applied),
         "approval_edits_unreviewed": list(approval_edits_unreviewed),

@@ -592,7 +592,7 @@ class TestDeferredInputValidation:
 # "상세페이지 참조" 를 전송했다. 본 절은 allowlist 밖 키가 거부되는지 검증한다.
 # --------------------------------------------------------------------------- #
 class TestDeferredAllowlistRejection:
-    """``deferred_notice_fields`` 의 allowlist 검증 (FIX-P3)."""
+    """``deferred_notice_fields`` 의 allowlist 검증."""
 
     @pytest.mark.parametrize(
         "bad_field",

@@ -143,7 +143,7 @@ def _origin_ok(header_value: str) -> bool:
 def origin_referer_ok(headers: http.client.HTTPMessage) -> bool:
     """요청의 Origin/Referer 가 모두 허용되는지.
 
-    **FIX-P3**: 과거 ``headers.get("Origin")`` 을 써서 **첫 번째 값만** 검사했다.
+    **과거**: ``headers.get("Origin")`` 을 써서 **첫 번째 값만** 검사했다.
     중복 Origin 헤더(``Origin: null`` + ``Origin: https://evil``)가 오면 첫 번째
     값만 보고 통과시켰다. 본 함수는 ``get_all`` 로 **모든 값**을 검사한다 —
     하나라도 허용 목록 밖이면 거부. ``Referer`` 도 같은 방식.
@@ -272,7 +272,7 @@ class _ApprovalHandler(http.server.BaseHTTPRequestHandler):
 
         # 5. product_key 일치 검사 (방어 7: 범위 제한). 본문의 product_key 는
         #    **필수**며 서버가 대기 중인 product_key 와 정확히 같아야 한다.
-        #    **FIX-P3**: 과거 ``if body_pkey and ...`` 였다 — product_key 가
+        #    과거에는 ``if body_pkey and ...`` 였다 — product_key 가
         #    *없으면* 조용히 통과했다. 올바른 토큰만 있으면 어떤 상품의 승인
         #    이든 덮어쓸 수 있었다. 이제 product_key 누락 자체를 거부한다.
         body_pkey = str(body.get("product_key") or "").strip()

@@ -59,8 +59,8 @@ _LOCAL_LIST_PATH = os.path.join(_REPO_ROOT, ".secrets", "banned_words.local.txt"
 
 # 검사 대상 디렉터리/파일 (상대경로는 저장소 루트 기준).
 # src 가 패키지 자산(data/*.json, agents/*.md 포함) 을 모두 품고 있으므로
-# 별도의 "agents" / "data" 항목은 더 이상 필요하지 않다(FIX-P1/P1b).
-# FIX-P2: 저장소 루트 "data" 디렉터리는 스크립트 생성 산출물이자 패키지 데이터
+# 별도의 "agents" / "data" 항목은 더 이상 필요하지 않다 (패키지 안으로 이동함).
+# 저장소 루트 "data" 디렉터리는 스크립트 생성 산출물이자 패키지 데이터
 # (src/clossify/data) 와 별개다. 루트 "data" 가 존재하지 않으면 스캐너가 조용히
 # 스킵했었는데 — 이제 _iter_files 가 존재하지 않는 경로를 에러로 알리므로
 # stale 항목을 제거한다(조용한 스킵 금지).
@@ -114,22 +114,46 @@ GENERIC_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         "internal_ticket_id",
         re.compile(r"(?<![\w])([A-Z])-(\d{2,4})(?!\d)"),
     ),
-    # - 내부 작업 식별자 (FIX-<letter>): ``FIX-`` 대문자 접두사 + 하이픈 +
-    #   단일 알파벳. 앞에 낱말 문자가 없어야 하고, 뒤에 낱말 문자가 바로
-    #   오지 않아야 한다(``FIX-able`` 같은 일반 영단어는 잡지 않는다 —
-    #   하이픈 뒤가 단일 문자로 끝나는 경우만 매칭).
-    #   ``FIX-a``, ``FIX-B`` 형태의 내부 식별자를 잡는다.
-    (
-        "internal_fix_id",
-        re.compile(r"(?<![\w])FIX-([A-Za-z])(?![\w])"),
-    ),
     # - 내부 작업 식별자 (FEAT-<word>): ``FEAT-`` 대문자 접두사 + 하이픈 +
     #   2개 이상의 알파벳으로 이루어진 낱말. 앞에 낱말 문자가 없어야 한다.
     #   일반 영단어(``feat-`` 소문자)는 대소문자 구분으로 제외된다.
-    #   ``FEAT-preview``, ``FEAT-gate`` 형태의 내부 식별자를 잡는다.
+    #   알파벳만으로 이루어진(숫자 없는) 소문자 본문 형태의 내부 식별자를 잡는다.
     (
         "internal_feat_id",
         re.compile(r"(?<![\w])FEAT-([A-Za-z]{2,})(?![\w])"),
+    ),
+    # - 내부 작업 식별자 (일반형): 짧은 대문자 접두사(2~6자) + 하이픈 +
+    #   짧은 영숫자 본문(1~4자). 본문은 **글자 1개 이상 + 숫자 1개 이상**을
+    #   모두 가져야 한다. 이 제약이 일반 문자열과의 충돌을 푼다:
+    #     * 본문이 숫자만이면 제외 → ``ADR-0001`` 같은 저장소 ADR 명명은
+    #       통과(``0001`` 에 글자 없음).
+    #     * 본문이 글자만이면 제외 → ``FEAT-gate``/``FEAT-preview``(소문자,
+    #       숫자 없음)는 ``internal_feat_id`` 가 잡고, ``BYO-key``/
+    #       ``SEO-optimised`` 같은 영어 하이픈연결단은 여기서 걸리지 않는다.
+    #     * 본문이 5자 이상이면 제외 → ``HMAC-SHA256`` 같은 표준 암호 식별자는
+    #       통과(``SHA256`` 이 6자).
+    #     * 접두사가 대문자만이 아니면 제외 → ``LicenseRef-...`` ``SPDX-...``
+    #       (혼합대소문자 접두사)는 걸리지 않는다.
+    #   남는 것은 ``OPS-T12``/``REL-V2``/``INF-N1b`` 같은
+    #   "대문자 접두사 + 하이픈 + 짧은 영숫자(글자+숫자 혼합)" 형태의
+    #   내부 작업코드 일반이다. ``tests/`` 아래의 검증용 더미 식별자도
+    #   이 형태를 피해야 한다 — 하이픈 대신 밑줄 등을 쓰거나 형태를 바꾼다.
+    (
+        "internal_work_id",
+        re.compile(
+            r"(?<![\w])[A-Z]{2,6}-(?=[A-Za-z0-9]*\d)(?=\d*[A-Za-z])[A-Za-z0-9]{1,4}(?![\w])"
+        ),
+    ),
+    # - 하이픈 없이 합쳐진 작업코드 식별자: ``fix_p<N>`` / ``FixP<N>`` /
+    #   ``FIX_P<N>`` 일반형. 대소문자 무시, ``fix`` + 선택적 ``_``/``-`` +
+    #   ``p`` + 최소 한 자리 숫자. 앞·뒤에 낱말 문자가 없어야 매칭한다.
+    #   위 ``internal_work_id`` 는 하이픈이 있는 형태만 잡으므로, 하이픈을
+    #   빼고 붙여 쓴 동일한 유출(예: 식별자·클래스명)을 별도로 잡는다.
+    #   ``fixpoint``/``fix_param`` 같은 일반 영단어는 ``fix`` 뒤 ``p`` 가
+    #   있더라도 숫자가 뒤따르지 않으므로 걸리지 않는다.
+    (
+        "internal_work_id_concat",
+        re.compile(r"(?<![\w])fix[_-]?p\d", re.IGNORECASE),
     ),
 ]
 
@@ -138,6 +162,11 @@ GENERIC_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 # tests/ 아래의 코드는 검증용 가짜 누출 문자열(가짜 전화번호·가짜 경로·
 # 가짜 시크릿)을 본질적으로 포함하므로, 범용 패턴에 대해 허용한다.
 # 이 허용목록은 고유명사가 아닌 **범용 패턴명**만 다루므로 안전하다.
+#
+# ``internal_work_id`` 는 tests/ 예외에 **없다**. 테스트 픽스처의 더미
+# 식별자(예: 가짜 모델명/채널번호)는 하이픈 없는 형태 등 패턴에 걸리지
+# 않도록 값을 선택해야 한다. 이렇게 해야 tests/ 에서도 가드가 완전히
+# 활성 상태로 남는다 — 가짜 작업코드가 테스트 파일에 스며들면 잡힌다.
 ALLOWED_MASKING_PAIRS: list[tuple[str, str]] = [
     (r"tests/.*\.py$", "windows_abs_path"),
     (r"tests/.*\.py$", "posix_home_path"),
@@ -155,12 +184,17 @@ CJK_RANGES = [
 # 이 스캐너 자신이 정의·문서화해야 하는 범용 패턴명 — 자기 자신을
 # 검사하면 정의부/해설 리터럴이 위반으로 잡히므로 self_skip 대상에서 제외.
 # (``local_word`` 는 층 이름으로 별도 처리한다.)
+# 참고: 스캐너 자신의 주석에는 패턴이 무엇을 잡는지 보여주기 위해 예시
+# 작업코드 형태가 리터럴로 등장한다. 이것은 스캐너의 본질적 속성(무엇을
+# 금지하는지 문서화해야 함)이지 우회가 아니다. self_skip 으로 이 리터럴들이
+# 자기 자신에게 걸리지 않게 한다.
 _SELF_SKIP_GENERIC_NAMES = frozenset(
     {
         "windows_abs_path",
         "internal_ticket_id",
-        "internal_fix_id",
         "internal_feat_id",
+        "internal_work_id",
+        "internal_work_id_concat",
     }
 )
 # 커밋 메시지 형식 검사 — 특정 도구명이 아닌 **형태**로 검사.
@@ -219,7 +253,7 @@ def _repo(path: str) -> str:
 def _iter_files(paths: list[str]):
     """검사 대상 파일(절대경로)을 순회한다. 스킵 디렉터리/확장자는 건너뛴다.
 
-    **FIX-P2: 조용한 스킵 금지.** 과거에는 ``paths`` 항목이 디렉터리도 아니고
+    **조용한 스킵 금지.** 과거에는 ``paths`` 항목이 디렉터리도 아니고
     파일도 아닌(존재하지 않는 경로) 경우 조용히 무시했다. 이는 ``SCAN_PATHS``
     에 stale 항목이 들어있어도 누가 알 수 없게 만든다 — 검사 범위가 의도보다
     좁아진 것을 아무도 모른다. 이제 존재하지 않는 경로면 ``FileNotFoundError``
@@ -241,7 +275,7 @@ def _iter_files(paths: list[str]):
                 continue
             yield ap
         else:
-            # FIX-P2: 조용한 스킵 금지. 존재하지 않는 경로는 에러로 알린다.
+            # 조용한 스킵 금지. 존재하지 않는 경로는 에러로 알린다.
             raise FileNotFoundError(
                 f"검사 대상 경로가 존재하지 않습니다: {p} ({ap}). "
                 "SCAN_PATHS 항목을 확인하세요 (조용한 스킵 금지)."

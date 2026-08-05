@@ -197,8 +197,8 @@ class TestChannelNoKeyAlwaysPresent:
         monkeypatch.delenv("COMMERCE_DRY_RUN", raising=False)
         _patch_register_chain(
             monkeypatch,
-            origin_no="ORIGIN-B1",
-            channel_no="CH-B1",
+            origin_no="ORIGIN_B1",
+            channel_no="CH_B1",
         )
         result = mcp_server.register_product(
             name="성공반환키",
@@ -211,7 +211,7 @@ class TestChannelNoKeyAlwaysPresent:
             preview_confirmed=True,
         )
         assert "channel_product_no" in result
-        assert result["channel_product_no"] == "CH-B1"
+        assert result["channel_product_no"] == "CH_B1"
 
     def test_key_present_on_failure(self, isolated_prepared_dir, monkeypatch):
         """검증 실패(빈 이름) 반환에도 channel_product_no 키가 있다."""
@@ -456,8 +456,8 @@ class TestReadRecordByKey:
             monkeypatch,
             created_status="SALE",
             verified_status="SALE",
-            origin_no="ORIGIN-G2",
-            channel_no="CH-G2",
+            origin_no="ORIGIN_G2",
+            channel_no="CH_G2",
         )
 
         result = mcp_server.register_product(
@@ -472,9 +472,9 @@ class TestReadRecordByKey:
         )
         assert result["ok"] is True
 
-        record = register_mod.read_registration_record(origin_product_no="ORIGIN-G2")
+        record = register_mod.read_registration_record(origin_product_no="ORIGIN_G2")
         assert record is not None, "origin_product_no 로 기록을 찾을 수 있어야 한다"
-        assert record["channel_product_no"] == "CH-G2"
+        assert record["channel_product_no"] == "CH_G2"
 
 
 # ============================================================================

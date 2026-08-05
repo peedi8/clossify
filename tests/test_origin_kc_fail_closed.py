@@ -261,12 +261,12 @@ class TestModelNameNoExternalPrefix:
             "origin_code": "05",
             "made_in": "한국",
         }
-        cfg = {"origin_area_code": "05", "origin_content": "한국", "model_name": "MDL-X1"}
+        cfg = {"origin_area_code": "05", "origin_content": "한국", "model_name": "MODEL_X1"}
         with mock.patch.object(naver_client, "_notice_config", return_value=cfg):
             with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
                 payload = naver_client.build_payload(product, "<html></html>", ["http://x.png"])
         etc = payload["originProduct"]["detailAttribute"]["productInfoProvidedNotice"]["etc"]
-        assert etc["modelName"] == "MDL-X1"
+        assert etc["modelName"] == "MODEL_X1"
 
     def test_no_tb_prefix_string_in_source(self):
         source = (Path(naver_client.__file__)).read_text(encoding="utf-8")

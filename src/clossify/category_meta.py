@@ -33,7 +33,7 @@ from . import common
 
 # 데이터 디렉터리: 패키지에 포함된 ``data/`` (importlib.resources 로 해결).
 # ``CLOSSIFY_DATA_DIR`` 환경변수로 사용자 정의 데이터 디렉터리를 가리킬 수 있다
-# (FIX-P1-install-paths 이전의 동작 보존). 환경변수가 없으면 패키지 데이터를 사용한다.
+# (install-paths 재배치 이전의 동작 보존). 환경변수가 없으면 패키지 데이터를 사용한다.
 
 META_FILENAME = "category_meta.json"
 CERT_FILENAME = "certification_types.json"

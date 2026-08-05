@@ -648,21 +648,21 @@ class TestLiveSearchShapeRegression:
 
 
 # --------------------------------------------------------------------------- #
-# (h) FIX-P3: 스키마 이상과 "진짜 신규 셀러" 구분.
+# (h) 스키마 이상과 "진짜 신규 셀러" 구분.
 #
 # 과거에는 ``contents``/``products`` 키가 아예 없거나 값이 list 가 아닌
 # 응답을 "신규 셀러"로 둔갑시켰다 (existing_read_error=None, 제안={}). 이제
 # 스키마 이상으로 판정되면 error 에 사유를 담아 반환한다. 빈 리스트는
 # 여전히 진짜 신규 셀러로 취급한다 (회귀 금지).
 # --------------------------------------------------------------------------- #
-class TestFixP3SchemaAnomalyDistinguished:
-    """FIX-P3: ``contents``/``products`` 키 부재 = 스키마 이상 (신규 셀러 아님)."""
+class TestSchemaAnomalyDistinguishedFromNewSeller:
+    """``contents``/``products`` 키 부재 = 스키마 이상 (신규 셀러 아님)."""
 
     def test_unknown_response_keys_flagged_as_error(self, tmp_path, monkeypatch):
         """``{"unexpected": [...]}`` 처럼 키가 아예 없으면 error.
 
         과거: ``existing_read_error=None``, ``suggested={}`` (신규 셀러로 둔갑).
-        FIX-P3: ``existing_read_error`` 에 사유, ``suggested={}``.
+        개정 후: ``existing_read_error`` 에 사유, ``suggested={}``.
         """
         cfg_file = _write_cfg(tmp_path, _BASE_CFG)
         monkeypatch.setenv("CLOSSIFY_CONFIG", str(cfg_file))
@@ -728,7 +728,7 @@ class TestFixP3SchemaAnomalyDistinguished:
         """첫 listing 엔트리에 originProductNo 가 없으면 스키마 이상.
 
         과거: ``existing_read_error=None`` (조용한 신규 셀러 둔갑).
-        FIX-P3: error 에 사유 명시.
+        개정 후: error 에 사유 명시.
         """
         cfg_file = _write_cfg(tmp_path, _BASE_CFG)
         monkeypatch.setenv("CLOSSIFY_CONFIG", str(cfg_file))

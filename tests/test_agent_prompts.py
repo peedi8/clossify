@@ -34,10 +34,10 @@ import pytest
 
 # Project root:  tests/test_agent_prompts.py -> parent
 _ROOT = Path(__file__).resolve().parent.parent
-# FIX-P1b: agents/*.md live inside the package (src/clossify/agents/). The
+# agents/*.md live inside the package (src/clossify/agents/). The
 # loader (common.AGENTS_DIR) reads them from there, so this test must too —
 # pointing at the repo root would mask the regression where assets and
-# loader disagree (the original FIX-P1b bug). Using the package path keeps
+# loader disagree (the original install-paths bug). Using the package path keeps
 # this guard in sync with the loader's source-of-truth.
 _AGENTS_DIR = _ROOT / "src" / "clossify" / "agents"
 _SRC_DIR = _ROOT / "src" / "clossify"
@@ -293,11 +293,11 @@ def test_prompt_tool_set_matches_runtime() -> None:
 
 
 # ---------------------------------------------------------------------------
-# (f) FIX-P3: register_product keyword args documented in the prompt must
-#     exist in the live signature; the prompt must mention the FIX-P3
+# (f) register_product keyword args documented in the prompt must
+#     exist in the live signature; the prompt must mention the registration
 #     surface args. Guards against doc/code drift on the gating args.
 # ---------------------------------------------------------------------------
-# The args listed here are the FIX-P3 surface that the registration_agent
+# The args listed here are the registration surface that the registration_agent
 # prompt documents. If the live signature drops or renames one, this test
 # catches it. If a new gating arg is added to the signature but not documented,
 # add it here so the next contributor is forced to document it.
@@ -335,8 +335,8 @@ def test_register_product_documented_args_match_signature() -> None:
     )
 
 
-def test_registration_agent_prompt_mentions_fix_p3_args() -> None:
-    """registration_agent.md must mention the FIX-P3 surface args.
+def test_registration_agent_prompt_mentions_all_gating_args() -> None:
+    """registration_agent.md must mention the registration surface args.
 
     Catches the case where a new gating arg is added to the signature and the
     test above is updated, but the prompt itself is never edited. The prompt
@@ -351,11 +351,11 @@ def test_registration_agent_prompt_mentions_fix_p3_args() -> None:
         if not re.search(rf"\b{re.escape(arg)}\b", text):
             missing.append(arg)
     # enable_local_approval is a config flag (not a tool arg) but is part of
-    # the FIX-P3 surface — the prompt must mention it too.
+    # the registration surface — the prompt must mention it too.
     if not re.search(r"\benable_local_approval\b", text):
         missing.append("enable_local_approval")
     assert not missing, (
-        "registration_agent.md does not mention the FIX-P3 surface term(s): "
+        "registration_agent.md does not mention the registration surface term(s): "
         f"{missing}. The client model cannot use a gate it has never been told "
         "about."
     )

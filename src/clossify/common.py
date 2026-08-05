@@ -19,7 +19,7 @@ from importlib.resources import files as _ir_files
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Path resolution (FIX-P1-install-paths).
+# Path resolution (install-paths 재배치).
 #
 # Two distinct categories of files exist and must not be conflated:
 #

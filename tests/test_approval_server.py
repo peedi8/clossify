@@ -693,7 +693,7 @@ class TestMethodRestriction:
 
 
 # ---------------------------------------------------------------------------
-# FIX-P3: 중복 Origin 헤더 + product_key 필수.
+# 중복 Origin 헤더 + product_key 필수.
 #
 # (k) 중복 Origin 헤더: 첫 번째는 "null", 두 번째는 "https://evil.example".
 #     과거 headers.get("Origin") 은 첫 값만 보고 통과시켰다. 이제 get_all 로
@@ -743,8 +743,8 @@ def _send_raw_request(
     return status, parsed
 
 
-class TestFixP3DuplicateOriginAndProductKey:
-    """FIX-P3: 중복 Origin 헤더 검사 + product_key 필수."""
+class TestDuplicateOriginHeaderAndRequiredProductKey:
+    """중복 Origin 헤더 검사 + product_key 필수."""
 
     def test_duplicate_origin_second_evil_rejected(self):
         """Origin: null + Origin: https://evil.example → 거부.
