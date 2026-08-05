@@ -137,7 +137,6 @@
     "ratedVoltage",
     "powerConsumption",
     "energyEfficiencyRating",
-    "releaseDateType",
     "releaseDate",
     "releaseDateText",
     "manufacturer",
@@ -148,7 +147,10 @@
     "afterServiceDirector"
    ],
    "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
-   "field_source_note": "additionalCost is NotNull per live Naver API (2026-08-04): with every listed field populated, 'additionalCost : 데이터를 입력해 주세요' was returned; injecting additionalCost proceeded to XOR validation. Source: live API 400 NotNull response, 2026-08-04."
+   "field_source_note": "additionalCost is NotNull per live Naver API (2026-08-04): with every listed field populated, 'additionalCost : 데이터를 입력해 주세요' was returned; injecting additionalCost proceeded to XOR validation. Source: live API 400 NotNull response, 2026-08-04.",
+   "field_notes": {
+    "releaseDateType": "공식 문서 스키마에 존재하지 않는 필드. 프로브에서 임의 문자열을 넣어 전송해도 API 가 이를 무시했다 (BOOKS 등록 200 과 동일한 패턴 — 스키마 밖 필드는 조용히 누락). 2026-08-05 제거. releaseDate/releaseDateText XOR 쌍은 유지. (이 타입 필드 목록에서 제거됨 — 20→19건)"
+   }
   },
   {
    "type": "SEASON_APPLIANCES",
@@ -167,7 +169,6 @@
     "ratedVoltage",
     "powerConsumption",
     "energyEfficiencyRating",
-    "releaseDateType",
     "releaseDate",
     "releaseDateText",
     "manufacturer",
@@ -177,7 +178,10 @@
     "warrantyPolicy",
     "afterServiceDirector"
    ],
-   "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product"
+   "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+   "field_notes": {
+    "releaseDateType": "공식 문서 스키마에 존재하지 않는 필드. 프로브에서 임의 문자열을 넣어 전송해도 API 가 이를 무시했다 (BOOKS 등록 200 과 동일한 패턴 — 스키마 밖 필드는 조용히 누락). 2026-08-05 제거. releaseDate/releaseDateText XOR 쌍은 유지. (이 타입 필드 목록에서 제거됨 — 20→19건)"
+   }
   },
   {
    "type": "OFFICE_APPLIANCES",
@@ -196,7 +200,6 @@
     "ratedVoltage",
     "powerConsumption",
     "energyEfficiencyRating",
-    "releaseDateType",
     "releaseDate",
     "releaseDateText",
     "manufacturer",
@@ -206,7 +209,10 @@
     "warrantyPolicy",
     "afterServiceDirector"
    ],
-   "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product"
+   "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+   "field_notes": {
+    "releaseDateType": "공식 문서 스키마에 존재하지 않는 필드. 프로브에서 임의 문자열을 넣어 전송해도 API 가 이를 무시했다 (BOOKS 등록 200 과 동일한 패턴 — 스키마 밖 필드는 조용히 누락). 2026-08-05 제거. releaseDate/releaseDateText XOR 쌍은 유지. (이 타입 필드 목록에서 제거됨 — 20→19건)"
+   }
   },
   {
    "type": "SLEEPING_GEAR",
@@ -275,7 +281,6 @@
     "itemName",
     "modelName",
     "certificationType",
-    "releaseDateType",
     "releaseDate",
     "releaseDateText",
     "manufacturer",
@@ -285,7 +290,10 @@
     "warrantyPolicy",
     "afterServiceDirector"
    ],
-   "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product"
+   "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+   "field_notes": {
+    "releaseDateType": "공식 문서 스키마에 존재하지 않는 필드. 프로브에서 임의 문자열을 넣어 전송해도 API 가 이를 무시했다 (BOOKS 등록 200 과 동일한 패턴 — 스키마 밖 필드는 조용히 누락). 2026-08-05 제거. releaseDate/releaseDateText XOR 쌍은 유지. (이 타입 필드 목록에서 제거됨 — 17→16건)"
+   }
   },
   {
    "type": "JEWELLERY",
@@ -330,12 +338,14 @@
     "size",
     "pages",
     "components",
-    "publishDateType",
     "publishDate",
     "publishDateText",
     "description"
    ],
-   "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product"
+   "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+   "field_notes": {
+    "publishDateType": "공식 문서 스키마에 존재하지 않는 필드. 프로브에서 임의 문자열을 넣어 전송해도 API 가 오류를 내지 않았고 BOOKS 타입은 그 상태로 HTTP 200 등록까지 완료됨 — 스키마에 없어 무시된 것으로 실증됨. 2026-08-05 제거. 필수 목록에 남기면 게이트가 존재하지 않는 값을 요구하게 된다. (이 타입 필드 목록에서 제거됨 — 15→14건)"
+   }
   },
   {
    "type": "KIDS",
@@ -356,7 +366,6 @@
     "color",
     "material",
     "recommendedAge",
-    "releaseDateType",
     "releaseDate",
     "releaseDateText",
     "manufacturer",
@@ -364,7 +373,10 @@
     "warrantyPolicy",
     "afterServiceDirector"
    ],
-   "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product"
+   "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+   "field_notes": {
+    "releaseDateType": "공식 문서 스키마에 존재하지 않는 필드. 프로브에서 임의 문자열을 넣어 전송해도 API 가 이를 무시했다 (BOOKS 등록 200 과 동일한 패턴 — 스키마 밖 필드는 조용히 누락). 2026-08-05 제거. releaseDate/releaseDateText XOR 쌍은 유지. (이 타입 필드 목록에서 제거됨 — 20→19건)"
+   }
   },
   {
    "type": "BIOCHEMISTRY",
@@ -379,10 +391,8 @@
     "troubleShootingContents",
     "productName",
     "dosageForm",
-    "packDateType",
     "packDate",
     "packDateText",
-    "expirationDateType",
     "expirationDate",
     "expirationDateText",
     "weight",
@@ -396,7 +406,11 @@
     "safeCriterionNo",
     "customerServicePhoneNumber"
    ],
-   "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product"
+   "field_source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
+   "field_notes": {
+    "packDateType": "공식 문서 스키마에 존재하지 않는 필드. 프로브에서 임의 문자열을 넣어도 API 가 무시함을 실증. 2026-08-05 제거. packDate/packDateText XOR 쌍은 유지. (이 타입 필드 목록에서 제거됨 — 23→21건)",
+    "expirationDateType": "공식 문서 스키마에 존재하지 않는 필드. 프로브에서 임의 문자열을 넣어도 API 가 무시함을 실증. 2026-08-05 제거. expirationDate/expirationDateText XOR 쌍은 유지. (이 타입 필드 목록에서 제거됨 — 23→21건)"
+   }
   },
   {
    "type": "BIOCIDAL",

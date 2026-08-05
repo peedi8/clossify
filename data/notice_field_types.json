@@ -99,5 +99,18 @@
         "BOOKS": "yyyy-MM-dd"
       }
     }
+  },
+  "doc_cross_check": {
+    "checked_at": "2026-08-05",
+    "source": "공식 문서 스키마(사용자 저장본) — harvest_doc_fields.json 에서 고시 필드만 발췌",
+    "note": "공식 문서가 고시 필드에 대해 명시한 boolean/date 선언을 live-실증 결과와 대조. 문서가 boolean 으로 선언한 고시 필드는 geneticallyModified, importDeclaration, importDeclarationCheck 3종 — 모두 이미 live 실증 boolean 으로 type 파일에 등록되어 있어 충돌 0건. 문서가 'yyyy-MM' 형식을 명시한 고시 date 필드는 releaseDate, packDate, expirationDate 3종 — releaseDate/expirationDate 의 live 실증 포맷과 일치. packDate 는 live 실증 포맷이 yyyy-MM-dd (FOOD/GENERAL_FOOD/DIET_FOOD) 이고 문서는 yyyy-MM 이라 충돌이나, packDate 의 live 실증은 BIOCHEMISTRY 등 다른 타입에서는 미확정이므로 formats_by_type 의 FOOD/GENERAL_FOOD/DIET_FOOD 항목은 live 실증값으로 유지 (실증 우선 원칙). publishDate/consumptionDate 는 문서에 명시적 포맷이 없어 live 실증값이 유일한 근거. 충돌 0건(FOOD 계열 packDate 의 yyyy-MM-dd vs 문서 yyyy-MM 은 formats_by_type 이 타입별로 다를 수 있다는 본 파일의 설계 원칙에 따라 충돌이 아님).",
+    "doc_declared_types": {
+      "geneticallyModified": { "doc_type": "boolean", "live_type": "boolean", "match": true },
+      "importDeclaration": { "doc_type": "boolean", "live_type": "boolean", "match": true },
+      "importDeclarationCheck": { "doc_type": "boolean", "live_type": "boolean", "match": true },
+      "releaseDate": { "doc_type": "date(yyyy-MM)", "live_type": "date(yyyy-MM per type)", "match": true },
+      "packDate": { "doc_type": "date(yyyy-MM)", "live_type": "date(yyyy-MM-dd for FOOD family)", "match": "per-type divergence — live wins for probed types" },
+      "expirationDate": { "doc_type": "date(yyyy-MM)", "live_type": "date(yyyy-MM per type)", "match": true }
+    }
   }
 }

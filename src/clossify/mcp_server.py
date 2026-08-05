@@ -247,10 +247,13 @@ _NOTICE_LABELS_PATH = os.path.join(
 # 1회 캐시 — 매 호출마다 디스크를 읽지 않는다. None 은 "로드 시도 전",
 # dict 는 "로드 결과(성공 시 항목, 실패 시 빈 dict → 폴백)" 을 뜻한다.
 _notice_labels_cache: dict[str, tuple[str, str]] | None = None
+# 타입별 오버라이드 캵: {TYPE: {field: label}}. labels_by_type 과 동일 모양.
+# formats_by_type 패턴과 동일한 구조 문제(같은 필드가 타입마다 다른 이름을 가짐).
+_notice_labels_by_type_cache: dict[str, dict[str, str]] | None = None
 
 
 def _load_notice_field_labels() -> dict[str, tuple[str, str]]:
-    """data/notice_field_labels.json 을 1회 로드해 캐싱한다.
+    """data/notice_field_labels.json 의 필드 단독 라벨을 1회 로드해 캐싱한다.
 
     파일이 없거나 깨졌을 때: 조용히 죽지 않고 기존 폴백(필드명 그대로 +
     "이 카테고리 고시 필수 항목입니다")으로 떨어지되, 그 사실이 stderr 에
@@ -258,6 +261,11 @@ def _load_notice_field_labels() -> dict[str, tuple[str, str]]:
     이 필드명 폴백을 적용하도록 한다. 예외를 밖으로 던지지 않는다 —
     needs_user 조립 경로가 컴플라이언스 게이트 안에서 호출되므로, 예외 전파는
     등록 차단(fail-closed 게이트의 오작동)으로 이어진다.
+
+    타입별 라벨(labels_by_type)은 본 함수에서 로드하지 않는다.
+    ``_load_notice_field_labels_by_type`` 이 별도로 담당한다. 필드 단독 층과
+    타입별 층을 한 번에 로드하면 어느 쪽 결함이 다른 쪽 폴백까지 끌어내릴 수
+    있다 — 독립 로드/독립 캐싱한다.
     """
     global _notice_labels_cache
     if _notice_labels_cache is not None:
@@ -288,11 +296,70 @@ def _load_notice_field_labels() -> dict[str, tuple[str, str]]:
     return loaded
 
 
-def _notice_field_label(field: str) -> tuple[str, str]:
+def _load_notice_field_labels_by_type() -> dict[str, dict[str, str]]:
+    """data/notice_field_labels.json 의 labels_by_type 을 1회 로드해 캐싱한다.
+
+    반환 형태: ``{TYPE: {field: label}}``.
+    파일이 없거나 labels_by_type 키가 없으면 빈 dict 를 캐싱한다(조용한 폴백).
+    이 층이 비어도 _notice_field_label 은 필드 단독 라벨로 정상 동작한다.
+    """
+    global _notice_labels_by_type_cache
+    if _notice_labels_by_type_cache is not None:
+        return _notice_labels_by_type_cache
+    loaded: dict[str, dict[str, str]] = {}
+    try:
+        with open(_NOTICE_LABELS_PATH, encoding="utf-8") as f:
+            doc = json.load(f)
+        by_type = doc.get("labels_by_type") if isinstance(doc, dict) else None
+        if isinstance(by_type, dict):
+            for type_name, field_map in by_type.items():
+                if not isinstance(field_map, dict):
+                    continue
+                clean: dict[str, str] = {}
+                for fname, text in field_map.items():
+                    if isinstance(text, str):
+                        clean[fname] = text
+                if clean:
+                    loaded[str(type_name)] = clean
+    except (OSError, ValueError) as exc:
+        import sys
+
+        print(
+            f"[clossify] notice_field_labels.json labels_by_type 로드 실패 — "
+            f"타입별 라벨 없이 진행: {exc}",
+            file=sys.stderr,
+        )
+    _notice_labels_by_type_cache = loaded
+    return loaded
+
+
+def _notice_field_label(field: str, notice_type: str | None = None) -> tuple[str, str]:
     """고시 필드명에 대한 (라벨, 사유) 반환. 매핑 없으면 필드명 그대로.
 
+    ``notice_type`` 이 주어지면 타입별 오버라이드 층(labels_by_type)을 먼저
+    조회한다. 같은 필드가 타입마다 다른 한국어 라벨을 가질 수 있다(예:
+    COSMETIC.expirationDate = "사용기한 또는 개봉 후 사용기간",
+    BIOCIDAL.expirationDate = "유통기한"). 타입별 라벨이 있으면 그것이
+    우선한다. 없으면 기존 폴백 순서(필드 단독 라벨 → 필드명 그대로).
+
     반환 형태 ``(라벨, 사유)`` 는 호출자가 의존하므로 변경하지 않는다.
+    타입별 라벨이 사용된 경우에도 사유는 필드 단독 hint 를 유지한다 —
+    hint 는 "이 카테고리 고시 필수 항목입니다" 와 같이 필드 성질을 설명하며
+    타입이 바뀌어도 의미가 동일하다.
     """
+    # 타입별 오버라이드 층을 먼저 본다.
+    if notice_type:
+        by_type = _load_notice_field_labels_by_type()
+        type_map = by_type.get(notice_type)
+        if isinstance(type_map, dict):
+            type_label = type_map.get(field)
+            if isinstance(type_label, str) and type_label:
+                # 사유는 필드 단독 hint 를 우선하고, 없으면 기본 사유.
+                labels = _load_notice_field_labels()
+                _label_only, hint = labels.get(field, (field, ""))
+                if not hint:
+                    hint = "이 카테고리 고시 필수 항목입니다"
+                return (type_label, hint)
     labels = _load_notice_field_labels()
     return labels.get(field, (field, "이 카테고리 고시 필수 항목입니다"))
 
@@ -532,13 +599,19 @@ def _run_compliance_gate(
         detail_text = str(row.get("detail") or "")
         if rule_name == "고시 필수필드":
             # detail 형태: "고시 타입 WEAR 필수 필드 누락: material, size, color"
+            # 고시 타입을 추출해 타입별 라벨을 우선 적용(같은 필드가 타입마다
+            # 다른 한국어 라벨을 가질 수 있다 — §2 labels_by_type).
+            gate_notice_type = ""
+            if detail_text.startswith("고시 타입 "):
+                _rest = detail_text[len("고시 타입 ") :]
+                gate_notice_type = _rest.split(" ", 1)[0].strip().upper()
             if "누락:" in detail_text:
                 after = detail_text.split("누락:", 1)[1]
                 for field in after.split(","):
                     field = field.strip()
                     if field and field not in seen_fields:
                         seen_fields.add(field)
-                        label, why = _notice_field_label(field)
+                        label, why = _notice_field_label(field, gate_notice_type)
                         answer_shape = _notice_field_answer_shape(field)
                         needs_user.append(
                             {
