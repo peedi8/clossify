@@ -243,6 +243,132 @@ def _config_enable_local_approval() -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# 최초 설정 폼 — check_config 가 설정이 비어 있을 때 폼 HTML 을 생성하고 경로를 반환.
+#
+# 사용자 노선: "익숙해지면 대화보다 클릭이 빠르다." 설정값을 채팅으로 하나씩
+# 주고받는 것은 느리고 값이 대화 기록에 남는다. 브라우저 폼에서 채우고 저장이 옳다.
+#
+# 폼 서버(config_form_server) 는 approval_server 와 **별도 모듈**이며 동등한 방어를
+# 갖는다. 승인 서버의 "product_key 1건 승인" 범위 제한을 깨지 않기 위해 분리됐다.
+#
+# 기본값은 보수적으로 OFF — ``enable_config_form`` 설정으로 켠다. 단, **경로는
+# 항상 반환**한다(프롬프트가 사용자에게 파일 열기를 안내할 수 있으면 충분).
+# 자동 브라우저 오픈은 하지 않는다.
+# ---------------------------------------------------------------------------
+def _config_enable_config_form() -> bool:
+    """config 의 ``enable_config_form`` 설정을 읽는다.
+
+    기본값은 ``False`` (끔). 이 기능은 로컬 포트를 여는 편의 기능이므로
+    명시적으로 켜야 폼 서버가 동작한다. config 에 키가 없거나 값이 bool 이
+    아니면 기본값(False) 을 반환한다 — 조용히 켜지지 않는다.
+    """
+    cfg_path = naver_client.config_path()
+    try:
+        with open(cfg_path, encoding="utf-8-sig") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        return False
+    value = cfg.get("enable_config_form")
+    if isinstance(value, bool):
+        return value
+    return False
+
+
+def _config_form_html_path() -> str:
+    """설정 폼 HTML 파일 경로(.local/config_form.html).
+
+    STATE_DIR(.local) 하위에 둔다 — 설정 파일(config.json) 과 같은 디렉터리.
+    """
+    return os.path.join(str(common.STATE_DIR), "config_form.html")
+
+
+def _config_set_status(cfg: dict[str, Any]) -> dict[str, bool]:
+    """각 폼 필드의 현재 설정 여부(값 아님)를 ``{필드명: bool}`` 로 반환.
+
+    check_config 가 폼 HTML 을 생성할 때 넘겨주어 폼에 "(설정됨)/(미설정)" 배지를
+    표시하게 한다. 값 자체는 절대 반환하지 않는다(비밀값 비노출 계약).
+    """
+    # config_form_server 의 화이트리스트를 사용해 경로를 찾는다.
+    from . import config_form_server as _cfs
+
+    status: dict[str, bool] = {}
+    for field_name, config_path_tuple, _sensitive in _cfs._ALLOWED_FIELDS:
+        value = _cfg_value_at(cfg, config_path_tuple)
+        status[field_name] = _is_policy_value_present(value)
+    return status
+
+
+def _generate_config_form(
+    result: dict[str, Any],
+    cfg: dict[str, Any],
+    cfg_path: str,
+    *,
+    missing: list[str] | None = None,
+    placeholders: list[str] | None = None,
+) -> None:
+    """check_config 의 결과 dict 에 폼 HTML 경로/서버 상태를 채운다.
+
+    설정이 불완전(missing/placeholders 가 있거나 naver 섹션 자체가 없음)하면
+    폼 HTML 을 생성하고 경로를 ``result["config_form_path"]`` 에 넣는다.
+    ``enable_config_form`` 이 켜져 있으면 폼 서버를 띄워 ``result["config_form_open"]``
+    을 ``True`` 로 한다. 기본 OFF.
+
+    기존 result 키의 의미를 변경하지 않는다 — 새 키만 추가한다.
+    """
+    result["config_form_path"] = None
+    result["config_form_open"] = False
+    needs_form = bool(missing or placeholders)
+    if not needs_form:
+        return
+    try:
+        from . import approval_server as _as
+        from . import config_form_server as _cfs
+
+        config_form_token = _as.new_token()
+        html_path = _config_form_html_path()
+        set_status = _config_set_status(cfg)
+        # 먼저 임시 포트(0)로 HTML 을 생성 — 경로를 반환하기 위함.
+        _cfs.write_config_form_html(
+            html_path,
+            token=config_form_token,
+            port=0,
+            config_set_status=set_status,
+        )
+        result["config_form_path"] = html_path
+        # enable_config_form 켜짐이면 폼 서버를 띄워 포트를 확정하고 HTML 갱신.
+        if _config_enable_config_form():
+            srv = _cfs.ConfigFormServer(
+                config_path=cfg_path,
+                token=config_form_token,
+            )
+            port = srv.start()
+            # 포트가 확정된 HTML 로 다시 쓴다.
+            _cfs.write_config_form_html(
+                html_path,
+                token=config_form_token,
+                port=port,
+                config_set_status=set_status,
+            )
+            result["config_form_open"] = True
+            # 서버는 백그라운드에서 대기. 좀비 포트를 막기 위해 daemon thread
+            # 에서 wait() 하도록 예약한다 — TTL(10분) 후 자동 종료.
+            import threading as _threading
+
+            def _wait_and_close(_srv: Any) -> None:
+                try:
+                    _srv.wait()
+                except Exception:
+                    _srv.close()
+
+            t = _threading.Thread(target=_wait_and_close, args=(srv,), daemon=True)
+            t.start()
+    except Exception:
+        # 폼 생성 실패는 진단 키에 영향을 주지 않는다 (부분 실패 허용).
+        # 경로/토큰은 None/빈 문자열로 둔다.
+        pass
+
+
+# --------------------------------------------------------------------------- #
 # 로컬 승인 다리: 승인된 수정 필드 반영.
 #
 # 브라우저의 [수정 후 승인] 버튼이 보낸 edits dict 를 register_product 의
@@ -1158,6 +1284,8 @@ def check_config(read_existing: bool = False) -> dict[str, Any]:
             f"config 파일이 없습니다: {cfg_path}. "
             "config.example.json 을 .local/config.json 으로 복사한 뒤 실제 값으로 채우세요."
         )
+        result["config_form_path"] = None
+        result["config_form_open"] = False
         return result
 
     try:
@@ -1165,11 +1293,20 @@ def check_config(read_existing: bool = False) -> dict[str, Any]:
             cfg = json.load(f)
     except (OSError, ValueError) as exc:
         result["error"] = _sanitize_text(f"config 파일을 읽거나 파싱할 수 없습니다: {exc}")
+        result["config_form_path"] = None
+        result["config_form_open"] = False
         return result
 
     naver = cfg.get("naver")
     if not isinstance(naver, dict):
         result["error"] = "config 의 'naver' 섹션이 객체가 아닙니다."
+        # naver 섹션이 없어도 폼 HTML 을 생성한다 — 사용자가 폼으로 채울 수 있게.
+        _generate_config_form(
+            result,
+            cfg,
+            cfg_path,
+            missing=["naver.client_id", "naver.client_secret", "naver.store_url_slug"],
+        )
         return result
 
     missing: list[str] = []
@@ -1257,6 +1394,22 @@ def check_config(read_existing: bool = False) -> dict[str, Any]:
     result["suggested_from_existing"] = suggested
     result["drift_from_existing"] = drift
     result["existing_read_error"] = existing_read_error
+
+    # ------------------------------------------------------------------ #
+    # 최초 설정 폼 생성.
+    #
+    # 설정이 비어 있을 때(키 3종 중 하나라도 missing/placeholder) 폼 HTML 을
+    # 생성하고 경로를 반환한다. 사용자가 브라우저에서 폼을 열어 채우고 [저장]을
+    # 누르면 설정 폼 서버(config_form_server) 가 설정 파일에 기록한다.
+    #
+    # **경로는 항상 반환**한다(프롬프트가 사용자에게 파일 열기를 안내할 수 있게).
+    # 폼 서버를 실제로 띄울지(enable_config_form)는 별도 설정 — 기본 OFF.
+    # 자동 브라우저 오픈은 하지 않는다.
+    #
+    # 기존 반환 키(ok/present/missing/placeholders/...)의 의미를 변경하지 않는다 —
+    # 새 키(config_form_path/config_form_open)만 추가한다.
+    # ------------------------------------------------------------------ #
+    _generate_config_form(result, cfg, cfg_path, missing=missing, placeholders=placeholders)
 
     result["ok"] = not missing and not placeholders
     return result
