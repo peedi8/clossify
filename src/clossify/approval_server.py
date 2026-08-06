@@ -51,6 +51,7 @@
 
 from __future__ import annotations
 
+import html
 import http.client
 import http.server
 import json
@@ -58,6 +59,7 @@ import secrets
 import socketserver
 import threading
 import time
+import urllib.parse
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -167,6 +169,95 @@ def origin_referer_ok(headers: http.client.HTTPMessage) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# 폼 본문 파싱 헬퍼.
+#
+# 브라우저 폼 POST 의 ``application/x-www-form-urlencoded`` 본문을 핸들러가
+# 다루기 쉬운 ``dict`` 로 정규화한다. 토큰과 product_key 는 단일 값이고,
+# 수정 필드는 ``edits[<field>]`` 키 컨벤션으로 여러 개가 올 수 있다.
+#
+# 설계:
+#   - ``token`` / ``product_key`` 는 첫 번째 값.
+#   - ``edits[<field>]`` 폼 키는 ``body["edits"][<field>]`` 로 펼친다.
+#     같은 field 가 여러 번 오면 마지막 값(폼의 일반적 동작).
+#   - ``edits`` 자체에는 ``dict`` 만 넣는다(핸들러가 ``isinstance(dict)`` 로 검사).
+# ---------------------------------------------------------------------------
+_FORM_EDITS_PREFIX = "edits["
+
+
+def _form_pairs_to_body(pairs: list[tuple[str, str]]) -> dict[str, Any]:
+    """``parse_qsl`` 결과 리스트를 핸들러 본문 dict 로 정규화.
+
+    - ``token=...``        → ``body["token"]``
+    - ``product_key=...``  → ``body["product_key"]``
+    - ``edits[a]=1``       → ``body["edits"]["a"] = "1"``
+    - 그 외 키(예: 숨겨진 보조 필드)는 무시하지 않고 body 최상위로 올린다
+      (악의적 임의 키가 들어와도 토큰/product_key/edits 외에는 승인 본문에
+      영향을 주지 않으므로 안전).
+    """
+    body: dict[str, Any] = {}
+    edits: dict[str, str] = {}
+    seen_multi: set[str] = set()
+    for key, value in pairs:
+        k = str(key or "")
+        if not k:
+            continue
+        if k.startswith(_FORM_EDITS_PREFIX) and k.endswith("]"):
+            field = k[len(_FORM_EDITS_PREFIX) : -1]
+            if field:
+                edits[field] = value
+                continue
+        if k in ("token", "product_key"):
+            # 단일 값 필드. 첫 번째를 쓴다(폼의 일반적 규약).
+            if k not in seen_multi:
+                body[k] = value
+                seen_multi.add(k)
+            continue
+        # 그 외 키도 body 에 올리되, 중복 시 마지막 값.
+        body[k] = value
+    if edits:
+        body["edits"] = edits
+    return body
+
+
+def _approval_result_page(*, ok: bool, status_text: str, detail: str) -> str:
+    """승인 처리 결과를 사람이 읽을 수 있는 HTML 페이지로 조립.
+
+    ``ok=True`` 면 접수 성공, ``ok=False`` 면 거부/오류. detail 은 이미
+    ``html.escape`` 된 문자열이어야 한다(호출자 책임). 외부 CSS/JS/폰트 참조
+    없는 인라인 HTML 이다(미리보기 페이지와 같은 규율).
+    """
+    title = "승인 접수 완료" if ok else "승인 거부"
+    banner_cls = "ok" if ok else "err"
+    return (
+        "<!DOCTYPE html>\n"
+        '<html lang="ko"><head><meta charset="utf-8" />'
+        '<meta name="viewport" content="width=device-width, initial-scale=1" />'
+        f"<title>{html.escape(title)}</title>"
+        "<style>"
+        "body{margin:0;padding:32px;background:#f5f5f5;"
+        'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,'
+        '"Helvetica Neue",Arial,sans-serif;color:#222}'
+        ".wrap{max-width:640px;margin:0 auto;background:#fff;"
+        "padding:32px;border-radius:8px;"
+        "box-shadow:0 1px 4px rgba(0,0,0,0.08)}"
+        ".banner{padding:16px 18px;border-radius:8px;font-size:18px;"
+        "font-weight:700;margin-bottom:16px}"
+        ".banner.ok{background:#e6f4ea;color:#137333;border:2px solid #137333}"
+        ".banner.err{background:#fce8e6;color:#a50e0e;border:2px solid #a50e0e}"
+        ".detail{color:#444;line-height:1.6;font-size:14px;word-break:break-word}"
+        ".note{margin-top:20px;padding:12px;background:#eef6ff;border-radius:6px;"
+        "color:#1a4d8f;font-size:12px;line-height:1.6}"
+        "</style></head><body>"
+        '<div class="wrap">'
+        f'<div class="banner {banner_cls}">{html.escape(status_text)}</div>'
+        f'<div class="detail">{detail}</div>'
+        '<div class="note">이 페이지는 로컬 승인 다리의 처리 결과입니다. '
+        "승인 결과에 따라 채팅에서 최종 등록 결과를 확인하세요.</div>"
+        "</div></body></html>"
+    )
+
+
+# ---------------------------------------------------------------------------
 # 핵심: ApprovalHandler. http.server.BaseHTTPRequestHandler 서브클래스.
 #
 # 설계상 결정:
@@ -179,9 +270,15 @@ def origin_referer_ok(headers: http.client.HTTPMessage) -> bool:
 class _ApprovalHandler(http.server.BaseHTTPRequestHandler):
     """단일 product_key 승인을 받는 HTTP 핸들러.
 
-    응답은 항상 JSON 이며, 허용되는 헤더만 내보낸다. CORS 헤더는 절대
-    내보내지 않는다(방어 6). 로그에 토큰이 찍히지 않도록 ``log_message`` 를
-    덮어쓴다(방어 10).
+    두 가지 본문 형식을 받는다:
+
+    - ``application/json`` (레거시/소켓 테스트 경로). JSON 응답. 기존 동작 유지.
+    - ``application/x-www-form-urlencoded`` (브라우저 폼 POST 경로). **사람이 읽을
+      HTML 결과 페이지**로 응답. 이 경로가 실제 브라우저에서 [승인] 버튼이
+      작동하게 만드는 경로다 — 폼 POST 는 CORS 프리플라이트를 유발하지 않으므로.
+
+    **CORS 헤더는 어느 경로에서도 절대 내보내지 않는다** (방어 6). 로그에 토큰이
+    찍히지 않도록 ``log_message`` 를 덮어쓴다 (방어 10).
     """
 
     # ``server_version``/``sys_version`` 노출을 최소화 — 서버 지문을 줄인다.
@@ -227,13 +324,13 @@ class _ApprovalHandler(http.server.BaseHTTPRequestHandler):
 
         # 1. 만료 검사 (방어 4). 만료된 서버는 더 이상 승인을 받지 않는다.
         if srv.is_expired():
-            self._reject(410, "expired", "승인 대기 시간이 만료되었습니다.")
+            self._respond_pre_body(410, "expired", "승인 대기 시간이 만료되었습니다.")
             srv.shutdown_from_request()
             return
 
         # 2. Origin/Referer 검사 (방어 5).
         if not origin_referer_ok(self.headers):
-            self._reject(403, "bad_origin", "허용되지 않은 Origin/Referer 입니다.")
+            self._respond_pre_body(403, "bad_origin", "허용되지 않은 Origin/Referer 입니다.")
             return
 
         # 3. 본문 읽기 (크기 제한).
@@ -245,45 +342,78 @@ class _ApprovalHandler(http.server.BaseHTTPRequestHandler):
             self._reject(413, "too_large", "요청 본문이 너무 큽니다.")
             return
         raw = self.rfile.read(length)
-        try:
-            body = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, ValueError):
-            self._reject(400, "bad_json", "JSON 본문이 필요합니다.")
-            return
-        if not isinstance(body, dict):
-            self._reject(400, "bad_json", "본문은 JSON 객체여야 합니다.")
+
+        # 4. Content-Type 으로 본문 파싱 분기.
+        #    - application/json                          -> 기존 JSON 경로.
+        #    - application/x-www-form-urlencoded         -> 폼 POST (브라우저 경로).
+        #    - 그 외                                      -> 기존처럼 거부.
+        ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+        wants_html = False
+        body: dict[str, Any]
+        if ctype == "application/json":
+            try:
+                parsed = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                self._reject(400, "bad_json", "JSON 본문이 필요합니다.")
+                return
+            if not isinstance(parsed, dict):
+                self._reject(400, "bad_json", "본문은 JSON 객체여야 합니다.")
+                return
+            body = parsed
+        elif ctype == "application/x-www-form-urlencoded":
+            # 폼 POST 경로. 브라우저 폼 본문을 dict 로 파싱하고 HTML 로 응답한다.
+            # 이 경로는 CORS preflight 를 유발하지 않아 실제 브라우저에서 작동한다.
+            wants_html = True
+            try:
+                form_pairs = urllib.parse.parse_qsl(
+                    raw.decode("utf-8"),
+                    keep_blank_values=True,
+                    strict_parsing=False,
+                )
+            except (UnicodeDecodeError, ValueError):
+                self._respond_error(400, "bad_form", "폼 본문이 올바르지 않습니다.")
+                return
+            body = _form_pairs_to_body(form_pairs)
+        else:
+            # 알 수 없는 Content-Type. 기존 호환을 위해 본문이 비어있으면 JSON 폼백
+            # 을 시도하지 않고 거부한다 (방어 — 모호한 입력 허용 금지).
+            self._reject(415, "unsupported_media_type", "지원하지 않는 Content-Type 입니다.")
             return
 
-        # 4. 토큰 검증 (방어 2, 3).
+        # 5. 토큰 검증 (방어 2, 3).
         #    토큰은 헤더 또는 본문 어느 쪽이든 제시될 수 있다.
         presented = self._extract_token(body)
         if not presented:
-            self._reject(401, "no_token", "승인 토큰이 필요합니다.")
+            self._respond_error_tpl(wants_html, 401, "no_token", "승인 토큰이 필요합니다.")
             return
         # 토큰이 이미 소진되었는지 먼저 검사 (방어 3: 1회 소진). 이 검사가
         # 토큰 비교보다 먼저여야, 같은 토큰으로 재시도하는 경로를 막는다.
         if srv.is_consumed():
-            self._reject(410, "already_used", "이미 사용된 토큰입니다.")
+            self._respond_error_tpl(wants_html, 410, "already_used", "이미 사용된 토큰입니다.")
             return
         # secrets.compare_digest 로 일정 시간 비교 (방어 2).
         if not tokens_match(srv.token, presented):
-            self._reject(403, "bad_token", "승인 토큰이 일치하지 않습니다.")
+            self._respond_error_tpl(wants_html, 403, "bad_token", "승인 토큰이 일치하지 않습니다.")
             return
 
-        # 5. product_key 일치 검사 (방어 7: 범위 제한). 본문의 product_key 는
+        # 6. product_key 일치 검사 (방어 7: 범위 제한). 본문의 product_key 는
         #    **필수**며 서버가 대기 중인 product_key 와 정확히 같아야 한다.
-        #    과거에는 ``if body_pkey and ...`` 였다 — product_key 가
-        #    *없으면* 조용히 통과했다. 올바른 토큰만 있으면 어떤 상품의 승인
-        #    이든 덮어쓸 수 있었다. 이제 product_key 누락 자체를 거부한다.
         body_pkey = str(body.get("product_key") or "").strip()
         if not body_pkey:
-            self._reject(400, "missing_product_key", "product_key 는 필수입니다.")
+            self._respond_error_tpl(
+                wants_html, 400, "missing_product_key", "product_key 는 필수입니다."
+            )
             return
         if body_pkey != srv.product_key:
-            self._reject(403, "wrong_product", "다른 상품의 승인은 처리할 수 없습니다.")
+            self._respond_error_tpl(
+                wants_html,
+                403,
+                "wrong_product",
+                "다른 상품의 승인은 처리할 수 없습니다.",
+            )
             return
 
-        # 6. 승인 확정. 결과를 서버에 기록하고 토큰을 폐기한다 (방어 3).
+        # 7. 승인 확정. 결과를 서버에 기록하고 토큰을 폐기한다 (방어 3).
         edits = body.get("edits")
         srv.consume(
             Outcome(
@@ -292,10 +422,13 @@ class _ApprovalHandler(http.server.BaseHTTPRequestHandler):
             )
         )
 
-        # 7. 응답. CORS 헤더 절대 없음 (방어 6).
-        self._respond(200, {"ok": True, "approved": True})
+        # 8. 응답. CORS 헤더 절대 없음 (방어 6).
+        if wants_html:
+            self._respond_html_ok(srv.product_key)
+        else:
+            self._respond(200, {"ok": True, "approved": True})
 
-        # 8. 서버 종료 예약 (방어 9). 처리 후 좀비 포트 금지.
+        # 9. 서버 종료 예약 (방어 9). 처리 후 좀비 포트 금지.
         srv.shutdown_from_request()
 
     # ------------------------------------------------------------------ #
@@ -316,6 +449,71 @@ class _ApprovalHandler(http.server.BaseHTTPRequestHandler):
 
     def _reject(self, status: int, code: str, detail: str) -> None:
         self._respond(status, {"ok": False, "approved": False, "code": code, "detail": detail})
+
+    # ------------------------------------------------------------------ #
+    # 폼 POST 경로용 응답 헬퍼.
+    #
+    # 폼 전송은 브라우저를 결과 페이지로 **이동**시킨다. 따라서 응답은 사람이
+    # 읽을 수 있는 HTML 이어야 하며, 승인 접수·거부 사유 등 **실제 상태를 그대로**
+    # 보여준다. 이 구조 자체가 "아무것도 안 갔는데 갔다고 말하는" 거짓 성공을
+    # 불가능하게 만든다 — 사용자는 서버가 반환한 사실을 직접 본다.
+    #
+    # CORS 헤더는 이 경로에서도 절대 내보내지 않는다 (방어 6).
+    # ------------------------------------------------------------------ #
+    def _is_form_request(self) -> bool:
+        """요청의 Content-Type 이 폼 인코딩인지 (브라우저 폼 POST 경로 판별)."""
+        ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+        return ctype == "application/x-www-form-urlencoded"
+
+    def _respond_pre_body(self, status: int, code: str, detail: str) -> None:
+        """본문을 파싱하기 전의 거부(만료·Origin 등).
+
+        Content-Type 으로 어느 경로인지 판별할 수 있으므로, 폼 경로면 HTML,
+        JSON/그 외 경로면 JSON 응답을 보낸다. 기존 JSON 호출자의 회귀를 막는다.
+        """
+        if self._is_form_request():
+            self._respond_html_error(status, code, detail)
+        else:
+            self._reject(status, code, detail)
+
+    def _respond_error_tpl(self, wants_html: bool, status: int, code: str, detail: str) -> None:
+        """본문을 파싱한 뒤의 거부. 폼 경로면 HTML, JSON 경로면 JSON."""
+        if wants_html:
+            self._respond_html_error(status, code, detail)
+        else:
+            self._reject(status, code, detail)
+
+    def _respond_html_ok(self, product_key: str) -> None:
+        """승인 접수 성공 HTML 페이지. 사용자가 직접 눈으로 확인한다."""
+        page = _approval_result_page(
+            ok=True,
+            status_text="승인이 접수되었습니다.",
+            detail=f"product_key: {html.escape(product_key)} 의 승인이 처리되었습니다. "
+            "등록 결과는 채팅에서 확인하세요.",
+        )
+        self._write_html(200, page)
+
+    def _respond_html_error(self, status: int, code: str, detail: str) -> None:
+        """거부/오류 HTML 페이지. 사유를 사람이 읽을 수 있게 표시한다."""
+        page = _approval_result_page(
+            ok=False,
+            status_text=f"거부됨 (HTTP {status}, {html.escape(code)})",
+            detail=html.escape(detail),
+        )
+        self._write_html(status, page)
+
+    def _write_html(self, status: int, page: str) -> None:
+        body = page.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        # 의도적으로 Access-Control-Allow-Origin 은 보내지 않는다 (방어 6).
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     # ------------------------------------------------------------------ #
     # 토큰 추출. 헤더 우선, 없으면 본문.

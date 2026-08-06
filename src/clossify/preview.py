@@ -495,26 +495,36 @@ _PREVIEW_EDIT_SCRIPT = r"""<script>
 
 
 # ---------------------------------------------------------------------------
-# 로컬 승인 다리 스크립트.
+# 로컬 승인 다리: 순수 HTML 폼 POST.
 #
-# [승인] / [수정 후 승인] 버튼이 ``http://127.0.0.1:<port>/`` 로 POST 요청을
-# 보낸다. 토큰은 ``X-Approval-Token`` 헤더로 전달 — URL 에 넣으면 브라우저
-# 기록·서버 로그에 남을 수 있다. 헤더가 더 안전하다.
+# **이전 설계의 결함**: ``fetch`` 로 ``Content-Type: application/json`` +
+# 커스텀 헤더 ``X-Approval-Token`` 을 보냈다. 브라우저가 **CORS 프리플라이트
+# (OPTIONS)** 를 먼저 보내고, 서버가 OPTIONS 를 거부하므로 본 요청이 발송되지
+# 않았다. 더 나쁜 것은 fetch 의 성공 콜백과 실패 콜백이 **모두** "승인 요청을
+# 보냈습니다" 를 표시했다 — 아무것도 안 갔는데 갔다고 말하는 조용한 거짓 성공.
 #
-# [수정 후 승인] 은 _PREVIEW_EDIT_SCRIPT 의 collectChanges() 와 같은 로직으로
-# 바뀐 필드만 수집해 body.edits 로 보낸다. 명시값 우선 원칙은 서버 쪽에서
-# 처리한다 — 이 스크립트는 "바뀐 필드"만 보낼 뿐 덮어쓰기 판단은 하지 않는다.
+# **현재 설계**: ``<form method="POST" action="http://127.0.0.1:<port>/">``
+# + ``<button type="submit">``. ``enctype`` 은 기본값
+# (``application/x-www-form-urlencoded``) 을 그대로 써서 **CORS 프리플라이트를
+# 유발하지 않는다**. 커스텀 헤더는 일절 쓰지 않는다(프리플라이트를 부르는
+# 조건). 토큰은 헤더가 아니라 **hidden 필드** ``<input name="token">`` 로 보낸다
+# (서버의 ``_extract_token`` 본문 폴백 규약에 맞춤). ``product_key`` 도 hidden.
 #
-# POST 이기 때문에 CORS preflight 가 발생할 수 있으나, 서버가 CORS 헤더를
-# 내보내지 않으므로 브라우저가 응답을 읽을 수 없다(nopaque response). 이것은
-# 의도된 동작이다 — 서버는 요청을 *처리* 하되 응답을 *숨긴다*. 성공/실패는
-# 응답 본문이 아니라 네트워크 오류 여부(reject)로만 대략 알 수 있다.
-# 토큰 검증 실패 등은 서버가 4xx 를 주지만 CORS 차단으로 페이지가 본문을 읽지
-# 못한다 — 이것도 의도된 것이다. 사용자는 "승인 요청을 보냈습니다" 라는
-# 안내만 보고, 실제 등록 결과는 채팅에서 확인한다.
+# **전송 자체는 JS 없이 성립한다.** [승인] 버튼은 순수 ``<button type="submit">``
+# 이고 JS 가 없어도 폼이 전송된다. JS 는 [수정 후 승인] 의 편집값을 hidden
+# ``edits[<field>]`` 입력으로 채우는 용도로만 쓴다 — 그것도 실패하면 폼 전송을
+# 막지 않고 그냥 빈 상태로 전송된다(사용자는 결과 페이지에서 확인).
+#
+# 결과 페이지는 서버가 직접 렌더한다(승인 접수/거부/만료/사유). 브라우저가
+# 그 페이지로 이동하므로 미리보기 쪽 상태 문구는 불필요하다 — "전송 중" 수준
+# 의 최소 안내만 남긴다. **결과를 모르면서 "보냈다"고 단정하는 문구는 없다.**
+# ---------------------------------------------------------------------------
 _PREVIEW_APPROVAL_SCRIPT = r"""<script>
 (function(){
   "use strict";
+  // [수정 후 승인] 버튼: contenteditable 의 바뀐 값만 hidden 입력으로 만들어
+  // 폼에 끼워넣은 뒤 폼을 제출한다. 전송 자체는 순수 폼 POST (이 스크립트가
+  // 실패해도 폼 제출 자체는 일어난다 — form.submit() 이 아닌 submit 버튼 클릭).
   function normalizeText(s){return String(s==null?"":s).replace(/\s+/g," ").trim();}
   function fieldText(el){
     var em=el.querySelector("em");
@@ -533,54 +543,31 @@ _PREVIEW_APPROVAL_SCRIPT = r"""<script>
     }
     return changed;
   }
-  function showStatus(msg){
-    var st=document.getElementById("approval-status");
-    if(st){st.textContent=msg;}
-  }
-  function disableButtons(){
-    var b1=document.getElementById("approval-btn");
-    var b2=document.getElementById("approval-btn-edit");
-    if(b1){b1.disabled=true;}
-    if(b2){b2.disabled=true;}
-  }
-  function sendApproval(includeEdits){
-    var btn=document.getElementById("approval-btn");
-    if(!btn){return;}
-    var token=btn.getAttribute("data-token")||"";
-    var port=parseInt(btn.getAttribute("data-port")||"0",10);
-    var productKey=btn.getAttribute("data-product-key")||"";
-    if(!token||!port){
-      showStatus("승인 정보가 없습니다. 미리보기를 다시 여세요.");
-      return;
+  function fillEditsIntoForm(form){
+    // 이전에 채워둔 edits 입력이 있으면 모두 지운다(재사용 대비).
+    var old=form.querySelectorAll('input[name^="edits["]');
+    for(var i=0;i<old.length;i++){old[i].parentNode.removeChild(old[i]);}
+    var changes=collectChanges();
+    for(var field in changes){
+      if(!Object.prototype.hasOwnProperty.call(changes,field)){continue;}
+      var inp=document.createElement("input");
+      inp.type="hidden";
+      inp.name="edits["+field+"]";
+      inp.value=changes[field];
+      form.appendChild(inp);
     }
-    var body={"token":token,"product_key":productKey};
-    if(includeEdits){
-      var edits=collectChanges();
-      body["edits"]=edits;
-    }
-    showStatus("승인 요청을 보내는 중...");
-    disableButtons();
-    // fetch 는 no-cors 모드를 쓰지 않는다 — 서버가 CORS 헤더를 주지 않으므로
-    // 브라우저가 응답을 차단한다(reject). 이것은 의도된 동작이다: 서버는
-    // 요청을 처리하되 응답을 숨긴다.
-    fetch("http://127.0.0.1:"+port+"/",{
-      method:"POST",
-      headers:{"Content-Type":"application/json","X-Approval-Token":token},
-      body:JSON.stringify(body)
-    }).then(function(){
-      showStatus("승인 요청을 보냈습니다. 등록 결과는 채팅에서 확인하세요.");
-    },function(){
-      // CORS 차단으로 reject 되더라도 서버는 요청을 처리했을 수 있다.
-      // 에러를 "실패" 로 단정하지 않는다 — 사용자에게 "요청을 보냄" 으로
-      // 안내하고 결과는 채팅에서 확인하라고 한다.
-      showStatus("승인 요청을 보냈습니다. 등록 결과는 채팅에서 확인하세요.");
-    });
+  }
+  function onApproveEdit(ev){
+    var form=document.getElementById("approval-form");
+    if(!form){return;}
+    fillEditsIntoForm(form);
+    // 폼의 기본 제출을 막지 않는다 — hidden 입력이 채워진 상태로 폼이 전송된다.
+    // (여기서 form.submit() 을 부르면 폼의 submit 이벤트가 아니라 직접 제출이라
+    //  브라우저의 기본 폼 제출 UX 와 다를 수 있다. submit 버튼의 기본 동작에 맡긴다.)
   }
   function init(){
-    var b1=document.getElementById("approval-btn");
     var b2=document.getElementById("approval-btn-edit");
-    if(b1){b1.addEventListener("click",function(){sendApproval(false);});}
-    if(b2){b2.addEventListener("click",function(){sendApproval(true);});}
+    if(b2){b2.addEventListener("click",onApproveEdit);}
   }
   if(document.readyState==="loading"){
     document.addEventListener("DOMContentLoaded",init);
@@ -814,25 +801,31 @@ def render_preview_html(
     # 않는다. 기존 클립보드 경로(수정사항 복사)는 그대로 동작한다.
     if approval_token and approval_port:
         safe_token = html.escape(str(approval_token), quote=True)
-        # data-* 속성으로 token/port/product_key 를 페이지에 심는다.
-        # 스크립트는 이 값들을 읽어 POST / 로 승인을 보낸다.
+        # 순수 HTML 폼 POST. enctype 생략 = application/x-www-form-urlencoded
+        # (CORS 프리플라이트를 유발하지 않는 "simple request" 조건). 커스텀
+        # 헤더는 일절 없다 — 토큰은 hidden 필드로 본문에 보낸다.
+        # [승인] 은 type="submit" 이고 JS 가 없어도 폼이 전송된다. [수정 후 승인]
+        # 도 type="submit" 이며 JS 가 hidden edits[...] 필드를 채운 뒤 폼이 전송된다.
+        action = f"http://127.0.0.1:{int(approval_port)}/"
         parts.append(
             '<div class="approval-bar">'
             '<span class="approval-bar-note">'
             "<strong>[승인] 버튼을 누르면 이 상품이 등록됩니다.</strong><br />"
             "[수정 후 승인] 은 페이지에서 바꾼 값을 함께 보냅니다. "
-            "10분 안에 누르지 않으면 자동 만료됩니다."
+            "10분 안에 누르지 않으면 자동 만료됩니다. "
+            "결과 페이지가 열리며, 서버가 처리한 실제 결과를 표시합니다."
             "</span>"
-            '<button type="button" id="approval-btn" '
-            f'class="approval-btn approval-btn-approve" '
-            f'data-token="{safe_token}" data-port="{int(approval_port)}" '
-            f'data-product-key="{safe_pkey}">'
+            f'<form id="approval-form" method="POST" action="{action}">'
+            f'<input type="hidden" name="token" value="{safe_token}" />'
+            f'<input type="hidden" name="product_key" value="{safe_pkey}" />'
+            '<button type="submit" id="approval-btn" '
+            'class="approval-btn approval-btn-approve">'
             "승인</button>"
-            '<button type="button" id="approval-btn-edit" '
-            f'class="approval-btn approval-btn-approve-edit" '
-            f'data-token="{safe_token}" data-port="{int(approval_port)}" '
-            f'data-product-key="{safe_pkey}">'
+            '<button type="submit" id="approval-btn-edit" '
+            'class="approval-btn approval-btn-approve-edit" '
+            'formaction="' + action + '">'
             "수정 후 승인</button>"
+            "</form>"
             '<span id="approval-status" class="approval-status"></span>'
             "</div>"
         )
