@@ -693,3 +693,378 @@ class TestDeferredAllowlistRejection:
 
         assert result["ok"] is True, f"allowlist 내 키는 통과해야 함: {result}"
         assert len(naver_calls) == 1
+
+
+# --------------------------------------------------------------------------- #
+# 7. 고시 5공통필드 미루기 값 분기 — `"1"` vs `"상세페이지 참조"`.
+#
+# 2026-08-06 실측(실스토어 상품 20건): 고시 35종에 공통인 5필드
+# (returnCostReason · noRefundReason · qualityAssuranceStandard ·
+# compensationProcedure · troubleShootingContents)는 미루기 시 값이 `"1"` 이었고,
+# 그 외 고시 필드는 `"상세페이지 참조"` 였다 (섞임 0건).
+#
+# 본 절은 계약 (a)-(f) 를 검증한다:
+#   (a) 5공통필드 미루기 → 페이로드 값이 ``"1"``.
+#   (b) 비공통 필드 미루기 → ``"상세페이지 참조"`` (회귀).
+#   (c) 공통·비공통 동시 미루기 → 각각 올바른 값.
+#   (d) 원산지 필드는 여전히 미루기 거부 (회귀).
+#   (e) 5필드 목록이 ``notice_types.json`` 교집합에서 유도됨 (비하드코딩).
+#   (f) 미루기 선택 없으면 자동 채움 없음 (회귀).
+# --------------------------------------------------------------------------- #
+
+# 5공통필드를 **config 에서 채우지 않은** notice config — 공통필드가 빈 자리여야
+# 미루기 대상이 될 수 있다. 기존 _NOTICE_CFG_WITH_ORIGIN 은 5공통필드를 config
+# 에서 제공하므로, 미루기 테스트에는 이 축소본을 쓴다.
+_NOTICE_CFG_NO_COMMON = {
+    "origin_area_code": "04",
+    "origin_content": "중국",
+    "as_tel": "070-1234-5678",
+    "manufacturer": "테스트제조사",
+    # 5공통필드(return_cost_reason 등) 의도적 누락 — 빈 자리 = 미루기 대상.
+}
+
+# 5공통필드 전체(알파벳순) — 테스트 파라미터화에 쓴다.
+_COMMON_5 = sorted(
+    [
+        "returnCostReason",
+        "noRefundReason",
+        "qualityAssuranceStandard",
+        "compensationProcedure",
+        "troubleShootingContents",
+    ]
+)
+
+
+class TestCommonNoticeDeferredValue:
+    """고시 5공통필드 미루기 시 전송값이 ``"1"`` 인지 검증 (계약 a-c)."""
+
+    @pytest.mark.parametrize("field", _COMMON_5)
+    def test_a_common_field_deferred_gets_one(self, field):
+        """(a) 5공통필드 각각을 미루기로 선택 → 페이로드 값이 ``"1"``."""
+        naver_calls: list[dict] = []
+        # 해당 공통필드만 빼고 나머지는 채운 notice 본문을 만든다.
+        all_common = {
+            "returnCostReason": "반품비 테스트값",
+            "noRefundReason": "환불불가 테스트값",
+            "qualityAssuranceStandard": "품질보증 테스트값",
+            "compensationProcedure": "보상절차 테스트값",
+            "troubleShootingContents": "고장대처 테스트값",
+        }
+        # 테스트 대상 필드만 빈 문자열로 만든다 (미루기 대상 = 빈 자리).
+        all_common[field] = ""
+        notice_override = _wear_notice_without_material(extra={"material": "면 100%", **all_common})
+        with mock.patch.object(naver_client, "_notice_config", return_value=_NOTICE_CFG_NO_COMMON):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                with mock.patch.object(common, "cfg", return_value=_common_cfg_origin()):
+                    with mock.patch.object(
+                        naver_client,
+                        "register_product",
+                        side_effect=_mock_naver_register_called_recorder(naver_calls),
+                    ):
+                        result = mcp_server.register_product(
+                            name="테스트니트",
+                            price=30000,
+                            image_urls=["http://cdn/x.png"],
+                            category_id=_CLOTHING_CATEGORY,
+                            detail_html="<html><body>상세</body></html>",
+                            notice=notice_override,
+                            preview_confirmed=True,
+                            deferred_notice_fields=[field],
+                        )
+
+        assert result["ok"] is True, f"등록 실패 ({field}): {result}"
+        assert len(naver_calls) == 1
+        payload = naver_calls[0]["args"][0]
+        notice = (
+            payload.get("originProduct", {})
+            .get("detailAttribute", {})
+            .get("productInfoProvidedNotice")
+        )
+        body = _notice_body(notice)
+        assert body.get(field) == qa_agents.DEFERRED_COMMON_NOTICE_VALUE, (
+            f"{field} 값이 DEFERRED_COMMON_NOTICE_VALUE({qa_agents.DEFERRED_COMMON_NOTICE_VALUE!r}) "
+            f"이어야 함: {body.get(field)!r}"
+        )
+
+    def test_b_non_common_field_deferred_gets_placeholder(self):
+        """(b) 비공통 필드(material) 미루기 → ``"상세페이지 참조"`` (회귀)."""
+        naver_calls: list[dict] = []
+        notice_override = _wear_notice_without_material()
+        # _NOTICE_CFG_WITH_ORIGIN 은 5공통필드를 config 에서 제공 — 게이트 통과.
+        with mock.patch.object(
+            naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
+        ):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                with mock.patch.object(common, "cfg", return_value=_common_cfg_origin()):
+                    with mock.patch.object(
+                        naver_client,
+                        "register_product",
+                        side_effect=_mock_naver_register_called_recorder(naver_calls),
+                    ):
+                        result = mcp_server.register_product(
+                            name="테스트니트",
+                            price=30000,
+                            image_urls=["http://cdn/x.png"],
+                            category_id=_CLOTHING_CATEGORY,
+                            detail_html="<html><body>상세</body></html>",
+                            notice=notice_override,
+                            preview_confirmed=True,
+                            deferred_notice_fields=["material"],
+                        )
+
+        assert result["ok"] is True, f"등록 실패: {result}"
+        payload = naver_calls[0]["args"][0]
+        notice = (
+            payload.get("originProduct", {})
+            .get("detailAttribute", {})
+            .get("productInfoProvidedNotice")
+        )
+        body = _notice_body(notice)
+        assert (
+            body.get("material") == qa_agents.DEFERRED_NOTICE_PLACEHOLDER
+        ), f"material 값이 DEFERRED_NOTICE_PLACEHOLDER 이어야 함: {body.get('material')!r}"
+        # 동시에 "1" 이 아니어야 한다.
+        assert body.get("material") != qa_agents.DEFERRED_COMMON_NOTICE_VALUE
+
+    def test_c_mixed_common_and_non_common_deferred(self):
+        """(c) 공통(returnCostReason) + 비공통(material) 동시 미루기 → 각각 올바른 값."""
+        naver_calls: list[dict] = []
+        # 5공통필드 전부 빈 칸으로. material 도 빈 칸.
+        # 미루기로 material(비공통) + 5공통필드 전부를 올림 — 게이트 통과.
+        all_common_empty = {f: "" for f in _COMMON_5}
+        notice_override = _wear_notice_without_material(extra={"material": "", **all_common_empty})
+        deferred = ["material"] + _COMMON_5
+        with mock.patch.object(naver_client, "_notice_config", return_value=_NOTICE_CFG_NO_COMMON):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                with mock.patch.object(common, "cfg", return_value=_common_cfg_origin()):
+                    with mock.patch.object(
+                        naver_client,
+                        "register_product",
+                        side_effect=_mock_naver_register_called_recorder(naver_calls),
+                    ):
+                        result = mcp_server.register_product(
+                            name="테스트니트",
+                            price=30000,
+                            image_urls=["http://cdn/x.png"],
+                            category_id=_CLOTHING_CATEGORY,
+                            detail_html="<html><body>상세</body></html>",
+                            notice=notice_override,
+                            preview_confirmed=True,
+                            deferred_notice_fields=deferred,
+                        )
+
+        assert result["ok"] is True, f"등록 실패: {result}"
+        payload = naver_calls[0]["args"][0]
+        notice = (
+            payload.get("originProduct", {})
+            .get("detailAttribute", {})
+            .get("productInfoProvidedNotice")
+        )
+        body = _notice_body(notice)
+        # material 은 비공통 → "상세페이지 참조".
+        assert body.get("material") == qa_agents.DEFERRED_NOTICE_PLACEHOLDER
+        # returnCostReason 은 공통 → "1".
+        assert body.get("returnCostReason") == qa_agents.DEFERRED_COMMON_NOTICE_VALUE
+        # 두 값이 서로 달라야 한다 (분기가 실제로 일어남).
+        assert body.get("material") != body.get("returnCostReason")
+        # 반환 보고에 material 과 5공통필드 모두 포함되어야 한다.
+        reported = result.get("deferred_notice_fields")
+        assert "material" in reported
+        assert "returnCostReason" in reported
+        assert sorted(reported) == sorted(deferred), f"미루기 적용 필드가 정확해야 함: {reported!r}"
+
+    def test_common_field_real_value_wins_over_one(self):
+        """공통필드에 실값이 있으면 `"1"` 이 아닌 실값이 전송된다 (실값 우선)."""
+        naver_calls: list[dict] = []
+        # 모든 필드를 실값으로 채운다 — 빈 자리가 없음.
+        notice_override = _wear_notice_without_material(
+            extra={
+                "material": "면 100%",
+                "returnCostReason": "실제 반품비 정책",
+            }
+        )
+        # _NOTICE_CFG_WITH_ORIGIN 은 나머지 4공통필드를 config 에서 제공.
+        with mock.patch.object(
+            naver_client, "_notice_config", return_value=_NOTICE_CFG_WITH_ORIGIN
+        ):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                with mock.patch.object(common, "cfg", return_value=_common_cfg_origin()):
+                    with mock.patch.object(
+                        naver_client,
+                        "register_product",
+                        side_effect=_mock_naver_register_called_recorder(naver_calls),
+                    ):
+                        result = mcp_server.register_product(
+                            name="테스트니트",
+                            price=30000,
+                            image_urls=["http://cdn/x.png"],
+                            category_id=_CLOTHING_CATEGORY,
+                            detail_html="<html><body>상세</body></html>",
+                            notice=notice_override,
+                            preview_confirmed=True,
+                            # returnCostReason 을 미루기로 올리지만 실값이 있음.
+                            deferred_notice_fields=["returnCostReason"],
+                        )
+
+        assert result["ok"] is True, f"등록 실패: {result}"
+        payload = naver_calls[0]["args"][0]
+        notice = (
+            payload.get("originProduct", {})
+            .get("detailAttribute", {})
+            .get("productInfoProvidedNotice")
+        )
+        body = _notice_body(notice)
+        # 실값이 우선 — "1" 이 아님.
+        assert body.get("returnCostReason") == "실제 반품비 정책"
+        assert body.get("returnCostReason") != qa_agents.DEFERRED_COMMON_NOTICE_VALUE
+        # 보고에서도 제외되어야 함 (실값 있으면 미루기 적용 안 됨).
+        reported = result.get("deferred_notice_fields")
+        assert reported == [], f"실값이 있으면 미루기에서 제외: {reported!r}"
+
+
+class TestCommonNoticeDerivationFromData:
+    """(e) 5필드 목록이 ``notice_types.json`` 교집합에서 유도됨 (비하드코딩)."""
+
+    def test_e_derived_set_is_exactly_5_fields(self):
+        """``_common_notice_deferred_fields`` 가 정확히 5개 필드를 반환."""
+        common = qa_agents._common_notice_deferred_fields()
+        assert isinstance(common, frozenset)
+        assert (
+            len(common) == 5
+        ), f"공통 필드가 정확히 5개여야 함 (현재 {len(common)}개): {sorted(common)}"
+
+    def test_e_derived_set_matches_observed_5(self):
+        """유도된 5필드가 실측 관측 결과와 일치함."""
+        common = qa_agents._common_notice_deferred_fields()
+        expected = frozenset(_COMMON_5)
+        assert common == expected, (
+            f"유도된 교집합이 실측 5필드와 다름:\n"
+            f"  유도됨: {sorted(common)}\n"
+            f"  실측:   {sorted(expected)}"
+        )
+
+    def test_e_derived_from_notice_types_json_not_hardcoded(self):
+        """교집합이 데이터 파일의 35종 각 fields 배열에서 계산됨을 독립 검증."""
+        import json
+
+        path = _PROJECT_ROOT / "src" / "clossify" / "data" / "notice_types.json"
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+        verified = doc.get("verified")
+        assert isinstance(verified, list) and verified
+        # 35종 각각의 fields 배열의 교집합을 독립 계산.
+        field_sets = []
+        for entry in verified:
+            if not isinstance(entry, dict):
+                continue
+            fields = entry.get("fields")
+            if not isinstance(fields, list):
+                continue
+            names = {str(n).strip() for n in fields if isinstance(n, str) and n.strip()}
+            if names:
+                field_sets.append(names)
+        independent_common = set.intersection(*field_sets) if field_sets else set()
+        # 함수 반환값과 독립 계산값이 일치해야 함.
+        assert independent_common == set(
+            qa_agents._common_notice_deferred_fields()
+        ), "함수 반환값과 데이터 파일 독립 계산값이 불일치 — 캐시 오염 가능성"
+
+    def test_e_branch_function_uses_derived_set(self):
+        """``_deferred_value_for_field`` 가 유도된 교집합을 기준으로 분기함."""
+        common = qa_agents._common_notice_deferred_fields()
+        for field in common:
+            assert qa_agents._deferred_value_for_field(field) == (
+                qa_agents.DEFERRED_COMMON_NOTICE_VALUE
+            ), f"공통필드 {field} 가 COMMON_VALUE 로 분기하지 않음"
+        # allowlist 에서 공통이 아닌 필드 하나를 골라 비공통 분기 확인.
+        non_common = "material"
+        assert non_common not in common, "전제: material 은 공통필드가 아님"
+        assert qa_agents._deferred_value_for_field(non_common) == (
+            qa_agents.DEFERRED_NOTICE_PLACEHOLDER
+        ), f"비공통필드 {non_common} 가 PLACEHOLDER 로 분기하지 않음"
+
+
+class TestSentinelDetection:
+    """``_is_deferred_sentinel_value`` 가 두 토큰 모두 인식하는지 검증."""
+
+    def test_recognizes_placeholder(self):
+        assert qa_agents._is_deferred_sentinel_value(qa_agents.DEFERRED_NOTICE_PLACEHOLDER) is True
+
+    def test_recognizes_common_value(self):
+        assert qa_agents._is_deferred_sentinel_value(qa_agents.DEFERRED_COMMON_NOTICE_VALUE) is True
+
+    def test_rejects_real_value(self):
+        assert qa_agents._is_deferred_sentinel_value("면 100%") is False
+
+    def test_rejects_none(self):
+        assert qa_agents._is_deferred_sentinel_value(None) is False
+
+    def test_rejects_empty_string(self):
+        assert qa_agents._is_deferred_sentinel_value("") is False
+
+
+class TestDeferredCommonValueRegression:
+    """(d, f) 기존 계약 회귀 — 분기 도입으로 기존 동작이 깨지지 않음."""
+
+    def test_d_origin_field_still_refused(self):
+        """(d) 원산지 필드는 공통필드 도입 후에도 여전히 미루기 거부."""
+        naver_calls: list[dict] = []
+        notice_override = _wear_notice_without_material(extra={"material": "면 100%"})
+        with mock.patch.object(naver_client, "_notice_config", return_value=_NOTICE_CFG_NO_COMMON):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                with mock.patch.object(common, "cfg", return_value=_common_cfg_origin()):
+                    with mock.patch.object(
+                        naver_client,
+                        "register_product",
+                        side_effect=_mock_naver_register_called_recorder(naver_calls),
+                    ):
+                        result = mcp_server.register_product(
+                            name="테스트니트",
+                            price=30000,
+                            image_urls=["http://cdn/x.png"],
+                            category_id=_CLOTHING_CATEGORY,
+                            detail_html="<html><body>상세</body></html>",
+                            notice=notice_override,
+                            preview_confirmed=True,
+                            deferred_notice_fields=["madeIn"],
+                        )
+
+        assert result["ok"] is False
+        assert result.get("blocked_by") == "origin_field_not_deferrable"
+        assert len(naver_calls) == 0
+
+    def test_f_no_deferral_no_autofill_common(self):
+        """(f) 미루기 선택 없으면 공통필드 빈 칸에 자동채움 없음 (차단)."""
+        naver_calls: list[dict] = []
+        # 5공통필드를 빈 칸으로 두고 미루기 선택 없이 등록 시도.
+        notice_override = _wear_notice_without_material(
+            extra={
+                "material": "면 100%",
+                "returnCostReason": "",
+                "noRefundReason": "",
+                "qualityAssuranceStandard": "",
+                "compensationProcedure": "",
+                "troubleShootingContents": "",
+            }
+        )
+        with mock.patch.object(naver_client, "_notice_config", return_value=_NOTICE_CFG_NO_COMMON):
+            with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
+                with mock.patch.object(
+                    naver_client,
+                    "register_product",
+                    side_effect=_mock_naver_register_called_recorder(naver_calls),
+                ):
+                    result = mcp_server.register_product(
+                        name="테스트니트",
+                        price=30000,
+                        image_urls=["http://cdn/x.png"],
+                        category_id=_CLOTHING_CATEGORY,
+                        detail_html="<html><body>상세</body></html>",
+                        notice=notice_override,
+                        preview_confirmed=True,
+                        # deferred_notice_fields 생략 — 빈 칸은 차단.
+                    )
+
+        assert result["ok"] is False, "공통필드 빈 칸인데 미루기 없으면 차단되어야 함"
+        assert result.get("blocked_by") == "compliance"
+        assert len(naver_calls) == 0

@@ -1586,12 +1586,13 @@ def _fill_deferred_notice_fields(notice, deferred_notice_fields):
                 break
     if not isinstance(body, dict):
         return notice
-    placeholder = qa_agents.DEFERRED_NOTICE_PLACEHOLDER
     for field in deferred:
         raw = body.get(field)
         # 빈 값/placeholder 인 자리만 채운다. 실값이 있으면 건드리지 않는다.
+        # 필드별 값 분기: 고시 35종 공통 5필드는 "1", 그 외는 "상세페이지 참조".
+        # 분기 단일 지점은 qa_agents._deferred_value_for_field 이다.
         if qa_agents._is_placeholder_value(raw):
-            body[field] = placeholder
+            body[field] = qa_agents._deferred_value_for_field(field)
     return notice
 
 

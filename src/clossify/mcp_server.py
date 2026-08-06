@@ -2162,8 +2162,10 @@ def register_product(
     # 선택한(원산지 필터 통과) 필드명 리스트다. 그 중 실값이 있어 미루기가
     # 적용되지 않은 필드는 반환에서 제외한다 (조용한 적용 금지 — 판매자가
     # "이 필드를 미뤘다" 고 믿는데 실제로는 실값이 전송되면 잘못 신고다).
-    # 적용 여부는 페이로드의 notice 본문에서 해당 필드값이
-    # ``DEFERRED_NOTICE_PLACEHOLDER`` 인지로 판정한다.
+    # 적용 여부는 페이로드의 notice 본문에서 해당 필드값이 미루기 sentinel 값
+    # (``DEFERRED_NOTICE_PLACEHOLDER`` 또는 ``DEFERRED_COMMON_NOTICE_VALUE``) 인지로
+    # 판정한다 — 고시 35종 공통 5필드는 ``"1"`` 이, 그 외는 ``"상세페이지 참조"``
+    # 가 채워진다. 두 값을 모두 sentinel 로 인식해야 미루기 보고가 누락되지 않는다.
     _deferred_report: list[str] = []
     if _deferred_clean:
         try:
@@ -2187,9 +2189,8 @@ def register_product(
         except (AttributeError, TypeError):
             _body_node = None
         if isinstance(_body_node, dict):
-            _placeholder = qa_agents.DEFERRED_NOTICE_PLACEHOLDER
             for _f in _deferred_clean:
-                if _body_node.get(_f) == _placeholder:
+                if qa_agents._is_deferred_sentinel_value(_body_node.get(_f)):
                     _deferred_report.append(_f)
         else:
             # notice 본문을 못 읽었면 미루기가 적용되었을 리 없다 — 빈 리스트로

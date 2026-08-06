@@ -693,6 +693,27 @@ def _is_placeholder_value(raw):
 # ---------------------------------------------------------------------------
 DEFERRED_NOTICE_PLACEHOLDER = "상세페이지 참조"
 
+# ---------------------------------------------------------------------------
+# 고시 35종에 공통으로 등장하는 5개 필드(returnCostReason · noRefundReason ·
+# qualityAssuranceStandard · compensationProcedure · troubleShootingContents) 를
+# 미룰 때 naver_client 가 채우는 **둘째 표준 문구**.
+#
+# 관측 사실만 기록한다 — 의미는 단정하지 않는다:
+#   2026-08-06 실측(오케스트레이터, 실스토어 상품 20건) — 이 5필드는 값이
+#   ``"1"`` 이었고, 그 외 고시 필드(manufacturer · modelName · color 등)은
+#   ``"상세페이지 참조"`` 였다. 두 방식은 필드별로 완전히 갈렸다(섞임 0건).
+#   공식 문서에서 ``"1"`` 이 무엇을 의미하는지는 **확인된 바 없다** (가설:
+#   네이버 UI 가 이 5필드에 제공하는 법정 표준 문구의 선택 코드로 추정).
+#
+# 본 상수는 **자리**(common notice field)를 가리키는 이름이다 — 값의 의미를
+# 단정하지 않는다. ``"1"`` 이 우리 해석과 다를 가능성이 남아 있으므로, 한 곳
+# (``_deferred_value_for_field``)만 고치면 되돌릴 수 있다.
+#
+# 이 5필드는 **하드코딩하지 않는다** — ``_common_notice_deferred_fields`` 가
+# ``notice_types.json`` 35종의 교집합에서 유도한다(현재 정확히 5개).
+# ---------------------------------------------------------------------------
+DEFERRED_COMMON_NOTICE_VALUE = "1"
+
 # 원산지(origin) 필드는 법적 선언이므로 판매자가 미루기를 선택해도 거부한다.
 # originAreaInfo.content / made_in / countryOfOrigin 등 고시 본문의 원산지 자리는
 # 게이트가 *항상* 실값을 요구한다. 이름이 바뀌어도 이 집합에 등록된 필드명은
@@ -781,6 +802,113 @@ def _deferrable_notice_fields() -> frozenset[str]:
                 names.add(name.strip())
     _DEFERRABLE_NOTICE_FIELDS_CACHE = frozenset(names)
     return _DEFERRABLE_NOTICE_FIELDS_CACHE
+
+
+# ---------------------------------------------------------------------------
+# 고시 35종 전체에 **공통으로 등장하는** 필드 — 교집합에서 유도.
+#
+# 2026-08-06 실측: 이 교집합은 정확히 5개다 (returnCostReason · noRefundReason ·
+# qualityAssuranceStandard · compensationProcedure · troubleShootingContents).
+# 실스토어 상품 20건에서 이 5필드는 값이 ``"1"`` 이었고, 그 외 고시 필드는
+# ``"상세페이지 참조"`` 였다. 본 집합은 그 5필드에 ``DEFERRED_COMMON_NOTICE_VALUE``
+# 를 적용할지 판정하는 데 쓴다 (하드코딩 아님 — 데이터가 바뀌면 따라감).
+# ---------------------------------------------------------------------------
+_COMMON_NOTICE_DEFERRED_FIELDS_CACHE: frozenset[str] | None = None
+
+
+def _common_notice_deferred_fields() -> frozenset[str]:
+    """고시 35종 전체에 공통으로 등장하는 고시 필드명의 교집합을 반환.
+
+    **수동 목록이 아니다** — ``data/notice_types.json`` 의 35종 각각의 ``fields``
+    배열의 **교집합**(intersection)을 계산한다. 모든 타입에 등장하는 필드만 반환.
+
+    2026-08-06 현재 이 교집합은 정확히 5개다:
+
+        ``{compensationProcedure, noRefundReason, qualityAssuranceStandard,
+           returnCostReason, troubleShootingContents}``
+
+    이 5필드는 네이버 UI 가 법정 표준 문구를 기본 제공하며, 판매자 대부분이
+    그대로 둬서 실스토어 상품에서 ``"1"`` 값으로 관측된다(별도 실측).
+    본 함수는 "의미" 를 단정하지 않는다 — **데이터에서 유도되는 자리 집합**이다.
+
+    Returns:
+        35종 전체에 공통인 고시 필드명 ``frozenset``. 데이터가 바뀌면 자동으로
+        따라간다.
+
+    Raises:
+        RuntimeError: ``notice_types.json`` 부재/손상 (fail-closed — 이미
+            ``_load_notice_types`` 가 같은 파일을 검증하므로 정상 설치 시 발생
+            하지 않는다).
+    """
+    global _COMMON_NOTICE_DEFERRED_FIELDS_CACHE
+    if _COMMON_NOTICE_DEFERRED_FIELDS_CACHE is not None:
+        return _COMMON_NOTICE_DEFERRED_FIELDS_CACHE
+    field_sets: list[set[str]] = []
+    for entry in _load_notice_types():
+        if not isinstance(entry, dict):
+            continue
+        fields = entry.get("fields")
+        if not isinstance(fields, list):
+            continue
+        names = {str(name).strip() for name in fields if isinstance(name, str) and name.strip()}
+        if names:
+            field_sets.append(names)
+    # 교집합 계산. 타입이 1개 이상이어야 의미가 있다(빈 교집합 방어).
+    common: set[str] = set.intersection(*field_sets) if field_sets else set()
+    _COMMON_NOTICE_DEFERRED_FIELDS_CACHE = frozenset(common)
+    return _COMMON_NOTICE_DEFERRED_FIELDS_CACHE
+
+
+def _deferred_value_for_field(field: str) -> str:
+    """필드별 미루기(deferred) 전송값을 반환 — **단일 분기 지점**.
+
+    본 함수가 **유일한** 분기 지점이다 — 한 곳만 고치면 되돌릴 수 있다:
+      - 고시 35종에 공통인 5필드(``_common_notice_deferred_fields``) →
+        ``DEFERRED_COMMON_NOTICE_VALUE`` (현재 ``"1"``).
+      - 그 외 모든 고시 필드 → ``DEFERRED_NOTICE_PLACEHOLDER``
+        (현재 ``"상세페이지 참조"``).
+
+    관측 사실(2026-08-06): 실스토어 상품 20건에서 5 공통필드는 ``"1"``,
+    그 외 필드는 ``"상세페이지 참조"`` 였다 (섞임 0건). ``"1"`` 의 의미는
+    공식 문서에서 확인된 바 없다 (가설: 법정 표준 문구 선택 코드).
+
+    Args:
+        field: 고시 필드명(camelCase).
+
+    Returns:
+        해당 필드를 미루기로 선택했을 때 naver_client 가 전송값으로 채울 문자열.
+        원산지 필드는 본 함수에 들어오지 않는다(호출자가 ``_reject_origin_deferred``
+        로 이미 걸렀다).
+    """
+    target = str(field or "").strip()
+    if target and target in _common_notice_deferred_fields():
+        return DEFERRED_COMMON_NOTICE_VALUE
+    return DEFERRED_NOTICE_PLACEHOLDER
+
+
+# 미루기 전송값 토큰 두 개를 모두 인식하는 집합 — 보고(mcp_server) 에서
+# "이 필드가 미루기로 채워졌는가" 를 판정할 때 쓴다. 두 토큰 중 하나와
+# 정확히 일치하면 True. 새 토큰이 추가되면 이 집합에도 추가한다(정본인
+# DEFERRED_NOTICE_PLACEHOLDER / DEFERRED_COMMON_NOTICE_VALUE 에서 자동 파생이
+# 아니라 — 아직 2개뿐이라 명시적 열거가 더 안전하다).
+_DEFERRED_SENTINEL_VALUES = frozenset({DEFERRED_NOTICE_PLACEHOLDER, DEFERRED_COMMON_NOTICE_VALUE})
+
+
+def _is_deferred_sentinel_value(value) -> bool:
+    """``value`` 가 미루기 전송 토큰(``"상세페이지 참조"`` 또는 ``"1"``) 인지 판정.
+
+    mcp_server 의 미루기 적용 보고 로직이 쓴다 — 페이로드 본문에서 특정 필드값이
+    미루기 토큰 중 하나와 일치하면 "이 필드는 미루기로 적용되었다" 고 본다.
+    본 함수는 **문자열 전체 일치**로만 판정한다 (placeholder 판정처럼 정규화하지
+    않는다 — 미루기 토큰은 시스템이 정확히 그대로 채워 넣은 값이다).
+
+    Args:
+        value: 페이로드 본문의 필드값.
+
+    Returns:
+        ``True`` = ``value`` 가 두 미루기 토큰 중 하나와 정확히 일치.
+    """
+    return value in _DEFERRED_SENTINEL_VALUES
 
 
 def _partition_deferred_by_allowlist(
@@ -1655,6 +1783,7 @@ def qa_gate(payload):
 
 
 __all__ = [
+    "DEFERRED_COMMON_NOTICE_VALUE",
     "DEFERRED_NOTICE_PLACEHOLDER",
     "FAIL",
     "ORIGIN_FIELDS_NOT_DEFERRABLE",
@@ -1662,12 +1791,15 @@ __all__ = [
     "PENDING",
     "WARN",
     "_clamp_verdict",
+    "_common_notice_deferred_fields",
     "_compliance_code_check",
     "_copy_code_check",
     "_deferrable_notice_fields",
+    "_deferred_value_for_field",
     "_field_is_deferred",
     "_field_missing_with_deferred",
     "_infer_notice_type",
+    "_is_deferred_sentinel_value",
     "_is_placeholder_value",
     "_load_notice_field_relations",
     "_load_notice_field_types",
