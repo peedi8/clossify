@@ -498,6 +498,280 @@ def _save_store(store: dict[str, Any]) -> tuple[Path, str]:
 
 
 # ---------------------------------------------------------------------------
+# 등록된 상품(API 응답) → 템플릿 입력 모양 변환.
+#
+# 이것이 본 작업의 핵심 이음매다. ``get_product`` 는 **네이버 API 모양**으로
+# 돌려주고, ``save_template`` 은 **우리 입력 모양**을 받는다. 그대로 넘기면
+# 조용히 빈 템플릿이 만들어진다(상단 티켓 배경 참조).
+#
+# 경로 차이는 앞부분뿐이고 노드 아래 구조는 동일하다:
+#
+#     API  originProduct.detailAttribute.productInfoProvidedNotice.<노드>.<필드>
+#     우리 product.notice.<노드>.<필드>  + top-level common 키
+#
+# 본 변환 함수는 ``originProduct`` 까지의 경로를 걷어내어, ``save_template``
+# 이 읽을 수 있는 ``product`` dict 을 만든다. 동시에 AS·원산지·배송비·제조사
+# 도 우리 입력 키(as_tel/origin_code/...) 로 옮긴다.
+#
+# **조용한 실패 금지** (티켓 1항): 응답에서 경로가 하나라도 없으면 빈 결과를
+# 내지 않고 사유(reason) 를 결과에 담는다.
+#
+# **고시 타입은 응답에서 읽는다** (티켓 1항): 호출자가 따로 주지 않아도 된다.
+# 응답에 없으면 추측하지 않고 사유를 반환한다(규제값 창작 금지).
+# ---------------------------------------------------------------------------
+
+
+def _notice_type_fields_for(notice_type: str) -> tuple[str, ...]:
+    """정본(``data/notice_types.json``) 에서 해당 고시 타입의 필드 목록을 반환.
+
+    변환 단계에서 완전성 보고(읽어온 N 개가 정본 M 개 중 몇 개인지) 를 위해
+    쓴다. 타입을 모르면 빈 튜플(호출자가 완전성 비교를 생략).
+    """
+    try:
+        from . import naver_client as _nc
+
+        spec = _nc._notice_type_spec(notice_type)
+    except Exception:
+        return ()
+    if not isinstance(spec, dict):
+        return ()
+    fields = spec.get("fields")
+    if not isinstance(fields, list):
+        return ()
+    return tuple(str(f) for f in fields if isinstance(f, str) and f.strip())
+
+
+def transform_product_to_template_input(
+    product_body: dict[str, Any],
+) -> dict[str, Any]:
+    """네이버 API 응답(originProduct 형태) 을 ``save_template`` 이 받는
+    우리 입력 모양으로 변환한다.
+
+    변환은 **명시적**이다 — ``save_template`` 이 읽을 자리로 값을 옮긴다:
+      - ``detailAttribute.productInfoProvidedNotice.<node>.*`` → ``notice.<node>.*``
+      - ``detailAttribute.afterServiceInfo.afterServiceTelephoneNumber`` → ``as_tel``
+      - ``detailAttribute.afterServiceInfo.afterServiceGuideContent`` → ``as_guide``
+      - ``detailAttribute.originAreaInfo.originAreaCode`` → ``origin_code``
+      - ``detailAttribute.originAreaInfo.content`` → ``origin_content``
+      - ``detailAttribute.originAreaInfo.importer`` → ``importer``
+      - ``originProduct.deliveryInfo.claimDeliveryInfo.returnDeliveryFee``
+        → ``return_delivery_fee``
+      - ``originProduct.deliveryInfo.claimDeliveryInfo.exchangeDeliveryFee``
+        → ``exchange_delivery_fee``
+
+    **조용한 실패 금지** (티켓 1항): ``originProduct``/``detailAttribute``/
+    ``productInfoProvidedNotice`` 가 없거나 고시 필드가 0개면 빈 product 와
+    함께 사유(reason) 를 결과에 담는다. 빈 템플릿이 조용히 만들어지지 않는다.
+
+    **고시 타입은 응답에서 읽는다** (티켓 1·4항):
+    ``detailAttribute.productInfoProvidedNotice.productInfoProvidedNoticeType``
+    에서 읽는다. 호출자가 따로 주지 않아도 된다. 응답에 없으면 추측하지 않고
+    사유(reason) 를 결과에 담는다(규제값 창작 금지).
+
+    Returns:
+        변환 결과 메타::
+
+            {"ok": bool,
+             "notice_type": str,        # 응답에서 읽은 고시 타입(없으면 "")
+             "product": dict,           # save_template 용 입력 모양(얕은 복사 가능)
+             "reason": str | None,      # 변환 거부/부분 사유(None 이면 정상)
+             "notice_field_count": int, # 변환된 고시 본문 필드 수(0 이면 의심)
+             "completeness": {          # 정본 대비 완전성(티켓 4항)
+                 "filled_count": int,      # 응답에서 읽은 고시 본문 필드 수
+                 "type_field_total": int,  # 정본의 해당 타입 필드 수
+                 "missing_fields": [...]   # 정본엔 있는데 응답에 없는 필드명
+             }}
+
+        ``ok=False`` 면 ``product`` 는 빈 dict 이고 ``reason`` 에 사유가 있다.
+        이때 호출자는 저장을 진행하지 않아야 한다(조용한 빈 템플릿 금지).
+
+    Note:
+        본 함수는 값을 *옮길 뿐*이다. 값의 진위를 판별하지 않고, 새 값을
+        지어내지 않는다(규제값 창작 금지).
+    """
+    if not isinstance(product_body, dict):
+        return {
+            "ok": False,
+            "notice_type": "",
+            "product": {},
+            "reason": "product_body 가 dict 가 아닙니다 (네이버 API 응답 형태가 아님).",
+            "notice_field_count": 0,
+            "completeness": {
+                "filled_count": 0,
+                "type_field_total": 0,
+                "missing_fields": [],
+            },
+        }
+
+    origin = product_body.get("originProduct")
+    if not isinstance(origin, dict):
+        return {
+            "ok": False,
+            "notice_type": "",
+            "product": {},
+            "reason": (
+                "응답에 originProduct 노드가 없습니다 — 고시를 읽을 수 없습니다. "
+                "네이버 API 응답 형태(originProduct.detailAttribute...)인지 확인하세요."
+            ),
+            "notice_field_count": 0,
+            "completeness": {
+                "filled_count": 0,
+                "type_field_total": 0,
+                "missing_fields": [],
+            },
+        }
+
+    detail = origin.get("detailAttribute")
+    if not isinstance(detail, dict):
+        return {
+            "ok": False,
+            "notice_type": "",
+            "product": {},
+            "reason": ("응답에 detailAttribute 노드가 없습니다 — 고시를 읽을 수 없습니다."),
+            "notice_field_count": 0,
+            "completeness": {
+                "filled_count": 0,
+                "type_field_total": 0,
+                "missing_fields": [],
+            },
+        }
+
+    notice = detail.get("productInfoProvidedNotice")
+    if not isinstance(notice, dict):
+        return {
+            "ok": False,
+            "notice_type": "",
+            "product": {},
+            "reason": (
+                "응답에 productInfoProvidedNotice 노드가 없습니다 — 등록된 상품에 "
+                "고시 본문이 없거나 응답이 잘렸습니다."
+            ),
+            "notice_field_count": 0,
+            "completeness": {
+                "filled_count": 0,
+                "type_field_total": 0,
+                "missing_fields": [],
+            },
+        }
+
+    # 고시 타입은 응답에서 읽는다 (호출자가 주지 않아도 됨). 없으면 추측 금지.
+    raw_type = str(notice.get("productInfoProvidedNoticeType") or "").strip().upper()
+    if not raw_type:
+        return {
+            "ok": False,
+            "notice_type": "",
+            "product": {},
+            "reason": (
+                "응답의 productInfoProvidedNotice.productInfoProvidedNoticeType 이 "
+                "비어 있습니다 — 고시 타입을 추측하지 않습니다(규제값 창작 금지). "
+                "상품이 실제로 고시 대상인지 확인하세요."
+            ),
+            "notice_field_count": 0,
+            "completeness": {
+                "filled_count": 0,
+                "type_field_total": 0,
+                "missing_fields": [],
+            },
+        }
+
+    # 고시 본문 노드(etc/wear/...) 들을 우리 입력 모양(product.notice.<node>) 으로.
+    # productInfoProvidedNoticeType 노드 키 자체는 메타이므로 product.notice 의
+    # 동명 키로 옮긴다(naver_client._merge_notice 가 읽는 구조와 동일).
+    our_notice: dict[str, Any] = {"productInfoProvidedNoticeType": raw_type}
+    field_count = 0
+    for node_key, node_value in notice.items():
+        if node_key == "productInfoProvidedNoticeType":
+            continue
+        if not isinstance(node_value, dict):
+            continue
+        copied: dict[str, Any] = {}
+        for field, value in node_value.items():
+            # itemName/상품명/타입 키는 save_template 의 _extract_notice_body 가
+            # 어차피 _NOTICE_BODY_SKIP_KEYS 로 빼지만, 변환 단계에서도 동일하게
+            # 빼지 않는다 — save_template 의 단일 진실 공급원을 존중한다. 빈
+            # 값(None/공백) 도 옮기지 않는다(조용한 빈 값 누적 방지).
+            if value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+            copied[str(field)] = value
+            field_count += 1
+        if copied:
+            our_notice[str(node_key)] = copied
+
+    if field_count == 0:
+        return {
+            "ok": False,
+            "notice_type": raw_type,
+            "product": {},
+            "reason": (
+                f"productInfoProvidedNotice 의 노드({raw_type}) 에서 고시 필드를 "
+                "0개 읽었습니다 — 본문이 비어 있거나 응답이 잘렸습니다. "
+                "조용히 빈 템플릿을 만들지 않습니다."
+            ),
+            "notice_field_count": 0,
+            "completeness": {
+                "filled_count": 0,
+                "type_field_total": len(_notice_type_fields_for(raw_type)),
+                "missing_fields": list(_notice_type_fields_for(raw_type)),
+            },
+        }
+
+    # AS·원산지·배송비 는 save_template 이 top-level common 키로 읽는다.
+    # ``_extract_policy_values_from_product`` (mcp_server) 와 동일 경로/필드명.
+    our_product: dict[str, Any] = {"notice": our_notice}
+    as_info = detail.get("afterServiceInfo")
+    if isinstance(as_info, dict):
+        if _has_text(as_info.get("afterServiceTelephoneNumber")):
+            our_product["as_tel"] = as_info.get("afterServiceTelephoneNumber")
+        if _has_text(as_info.get("afterServiceGuideContent")):
+            our_product["as_guide"] = as_info.get("afterServiceGuideContent")
+    origin_info = detail.get("originAreaInfo")
+    if isinstance(origin_info, dict):
+        if _has_text(origin_info.get("originAreaCode")):
+            our_product["origin_code"] = origin_info.get("originAreaCode")
+        if _has_text(origin_info.get("content")):
+            our_product["origin_content"] = origin_info.get("content")
+        if _has_text(origin_info.get("importer")):
+            our_product["importer"] = origin_info.get("importer")
+    # 배송비(반품/교환) — claimDeliveryInfo.
+    delivery = origin.get("deliveryInfo")
+    if isinstance(delivery, dict):
+        claim = delivery.get("claimDeliveryInfo")
+        if isinstance(claim, dict):
+            if _has_text(claim.get("returnDeliveryFee")):
+                our_product["return_delivery_fee"] = claim.get("returnDeliveryFee")
+            if _has_text(claim.get("exchangeDeliveryFee")):
+                our_product["exchange_delivery_fee"] = claim.get("exchangeDeliveryFee")
+
+    # 정본 대비 완전성 — 응답에서 읽은 고시 본문 필드 집합 vs 정본의 해당
+    # 타입 필드 집합. 조용한 누락 금지(티켓 4항).
+    type_fields = _notice_type_fields_for(raw_type)
+    skip_keys = _NOTICE_BODY_SKIP_KEYS
+    filled_set: set[str] = set()
+    for node_body in our_notice.values():
+        if isinstance(node_body, dict):
+            for f in node_body:
+                if f not in skip_keys:
+                    filled_set.add(str(f))
+    type_field_set = {f for f in type_fields if f not in skip_keys}
+    missing = sorted(type_field_set - filled_set)
+
+    return {
+        "ok": True,
+        "notice_type": raw_type,
+        "product": our_product,
+        "reason": None,
+        "notice_field_count": field_count,
+        "completeness": {
+            "filled_count": len(filled_set & type_field_set) if type_field_set else len(filled_set),
+            "type_field_total": len(type_field_set),
+            "missing_fields": missing,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
 # 공개 API: 저장·조회·적용.
 # ---------------------------------------------------------------------------
 
@@ -507,6 +781,7 @@ def save_template(
     name: str,
     notice_type: str,
     product: dict[str, Any],
+    source: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """상품 입력에서 안전한 필드만 뽑아 템플릿으로 저장한다.
 
@@ -520,10 +795,25 @@ def save_template(
     같은 이름의 템플릿이 있으면 **덮어쓴다**(사용자가 이름으로 지목한 갱신).
     이때도 쓰기 전 백업을 남긴다.
 
+    **출처 기록 (티켓 3항 — 규제값이므로 필수):** ``source`` 가 주어지면
+    저장 엔트리에 *어느 상품에서 읽었는지*를 남긴다(상품번호·읽은 시각).
+    이것이 "값을 창작하지 않았다" 는 증거다. ``source`` 는::
+
+        {"origin_product_no": str,   # 필수 — 어느 상품에서 읽었는지
+         "read_at": str,             # 선택 — 읽은 시각(ISO 8601 UTC).
+         # transform_product_to_template_input 의 completeness/reason/notice_type
+         # 도 함께 담겨도 좋다 — 모두 출처·완전성 증거다.
+        }
+
+    ``source`` 가 ``None`` 이면 출처를 기록하지 않는다(사용자가 직접 입력한
+    상품에서 저장하는 기존 경로 — 회귀 없음).
+
     Args:
         name: 템플릿 이름. 비어있거나 허용 문자 집합을 벗어나면 ``TemplateNameError``.
         notice_type: 고시 타입(ETC/WEAR/...). 상품군 축으로 저장된다.
         product: 상품 입력 dict. 여기서 안전한 필드만 뽑는다.
+        source: 등록된 상품에서 읽었을 때 출처 메타. ``origin_product_no`` 가
+            비어있지 않은 문자열이면 저장 엔트리의 ``source`` 블록에 기록된다.
 
     Returns:
         결과 메타 dict::
@@ -536,6 +826,8 @@ def save_template(
                  "candidate_total": int,    # 정본 후보 총수(120 etc.)
                  "filled_fields": [...]     # 채워진 필드명(값 아님)
              },
+             "completeness": {...} | None,  # 정본 대비 완전성(source 가 줄 때만)
+             "source_recorded": bool,       # 출처가 엔트리에 기록됐는지
              "path": str, "backup_path": str, "created_at": str}
 
         ``saved_keys`` / ``skipped_keys`` / ``filled_fields`` 는 섹션/키/필드
@@ -620,13 +912,41 @@ def save_template(
     store = _load_store()  # 손상시 TemplateStoreError 전파(조용한 덮어쓰기 금지).
     templates = list(store.get("templates") or [])
 
+    # 출처 블록 — 등록된 상품에서 읽었을 때 *어느 상품인지*를 엔트리에 남긴다
+    # (티켓 3항 — 규제값이므로 출처가 있어야 "값을 창작하지 않았다" 는 증거가 됨).
+    # ``origin_product_no`` 가 비어있지 않은 문자열일 때만 기록한다. 그 외
+    # (source None / origin_product_no 빈값) 는 기존 경로(회귀 없음).
+    source_block: dict[str, Any] | None = None
+    source_completeness: dict[str, Any] | None = None
+    if isinstance(source, dict):
+        src_no = str(source.get("origin_product_no") or "").strip()
+        if src_no:
+            source_block = {
+                "origin_product_no": src_no,
+                "read_at": str(source.get("read_at") or _utc_now_iso()),
+            }
+            # transform_product_to_template_input 의 completeness/reason 도
+            # 출처·완전성 증거로 같이 담는다(값이 있을 때만).
+            if isinstance(source.get("completeness"), dict):
+                comp = source["completeness"]
+                source_block["completeness"] = {
+                    "filled_count": int(comp.get("filled_count") or 0),
+                    "type_field_total": int(comp.get("type_field_total") or 0),
+                    "missing_fields": list(comp.get("missing_fields") or []),
+                }
+                source_completeness = source_block["completeness"]
+            if source.get("reason"):
+                source_block["reason"] = str(source["reason"])
+
     created_at = _utc_now_iso()
-    entry = {
+    entry: dict[str, Any] = {
         "name": sane_name,
         "notice_type": sane_type,
         "created_at": created_at,
         "fields": fields,
     }
+    if source_block is not None:
+        entry["source"] = source_block
     # 같은 이름 갱신 — 리스트에서 제거 후 append(순서는 의미 없음).
     replaced = False
     for i, existing in enumerate(templates):
@@ -653,6 +973,12 @@ def save_template(
             "candidate_total": notice_candidate_total,
             "filled_fields": notice_filled_names,
         },
+        # 정본 대비 완전성 — source.completeness 가 줄 때만(등록된 상품에서
+        # 읽은 경로). 사용자 직접 입력 경로(source=None) 에서는 None — 완전성
+        # 비교의 기준이 "응답에서 읽은 N 개" 이므로.
+        "completeness": source_completeness,
+        # 출처가 엔트리에 기록됐는지(호출자가 "출처가 남았다" 확인 가능).
+        "source_recorded": source_block is not None,
         "path": str(path),
         "backup_path": backup_path,
         "created_at": created_at,
@@ -930,4 +1256,5 @@ __all__ = [
     "list_templates",
     "save_template",
     "templates_path",
+    "transform_product_to_template_input",
 ]

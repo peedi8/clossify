@@ -2933,22 +2933,47 @@ def register_product(
 
 
 @mcp.tool()
-def get_product(origin_product_no: str) -> dict[str, Any]:
+def get_product(
+    origin_product_no: str,
+    save_as_template: str = "",
+) -> dict[str, Any]:
     """등록된 상품을 origin product 기준으로 조회한다.
+
+    상품군별 템플릿 지원 (티켓 — 등록된 상품에서 고시를 읽어 템플릿으로):
+        - ``save_as_template``: 빈 문자열이 아닌 이름이 주어지면, 응답에서 고시
+          본문·AS·원산지·배송비를 뽑아 이 이름으로 템플릿을 저장한다.
+
+          **이음매 주의**: ``get_product`` 가 돌려주는 응답은 **네이버 API 모양**
+          (``originProduct.detailAttribute.productInfoProvidedNotice.<node>.<field>``)
+          이고, ``save_template`` 이 받는 모양(**우리 입력 모양**) 과 다르다.
+          그래서 응답을 그대로 ``save_template`` 에 넘기면 **조용히 빈 템플릿**이
+          만들어진다. 본 도구는 ``listing_templates.transform_product_to_template_input``
+          로 모양을 먼저 바꾼 뒤 저장한다 — 빈 템플릿이 조용히 만들어지지 않는다.
+
+          변환 실패(경로 누락/고시 필드 0개/고시 타입 없음) 는 ``template_saved``
+          의 ``reason`` 으로 사유가 드러난다. ``save_as_template`` 가 비어있으면
+          저장하지 않는다(기존 조회 동작 회귀 없음). 응답에서 읽은 고시 필드 수와
+          정본 대비 완전성(N of M, M 은 ``data/notice_types.json`` 의 해당 타입
+          필드 수) 도 ``template_saved`` 에 드러난다 — 조용한 누락 금지.
 
     Args:
         origin_product_no: 네이버 커머스 API 의 origin product 번호.
             (``register_product`` 반환의 ``origin_product_no`` 와 동일.)
+        save_as_template: 조회 성공 후 템플릿으로 저장할 이름. 빈 문자열(기본) →
+            저장하지 않는다(기존 동작 회귀 없음).
 
     Returns:
-        ``{"ok": bool, "status_code": int, "product": Any, "error": str | None}``
-        ``ok`` 는 HTTP 200 일 때만 ``True``.
+        ``{"ok": bool, "status_code": int, "product": Any,
+        "template_saved": {...} | None, "error": str | None}``
+        ``ok`` 는 HTTP 200 일 때만 ``True``. ``template_saved`` 는
+        ``save_as_template`` 가 비어있지 않고 조회가 성공했을 때만 채워진다.
     """
     if not isinstance(origin_product_no, str) or not origin_product_no.strip():
         return {
             "ok": False,
             "status_code": None,
             "product": None,
+            "template_saved": None,
             "error": "origin_product_no 는 비어있지 않은 문자열이어야 합니다.",
         }
 
@@ -2959,15 +2984,80 @@ def get_product(origin_product_no: str) -> dict[str, Any]:
             "ok": False,
             "status_code": None,
             "product": None,
+            "template_saved": None,
             "error": f"조회 중 오류: {_sanitize_error(exc)}",
         }
 
     ok = isinstance(status_code, int) and status_code == 200
     exposed_body = body if ok else _sanitize_body(body)
+
+    # --- 템플릿 저장 (조회 성공 + 이름 명시됐을 때만) ---
+    # 이음매 처리(티켓 1항): 응답은 API 모양이라 save_template 에 그대로 넘기면
+    # 조용히 빈 템플릿이 된다. ``transform_product_to_template_input`` 가 모양을
+    # 바꾼다 — 변환 실패(reason) 시 조용히 넘기지 않고 사유를 결과에 싣는다.
+    template_saved: dict[str, Any] | None = None
+    save_name = str(save_as_template or "").strip()
+    if save_name and ok:
+        transformed = _templates_mod.transform_product_to_template_input(body)
+        if not transformed.get("ok"):
+            # 변환 거부 — 빈 템플릿을 만들지 않는다. 사유를 결과에 드러낸다.
+            template_saved = {
+                "ok": False,
+                "name": save_name,
+                "reason": transformed.get("reason")
+                or "응답을 템플릿 입력으로 변환하지 못했습니다.",
+                "notice_type": transformed.get("notice_type") or "",
+                "notice_field_count": int(transformed.get("notice_field_count") or 0),
+                "completeness": transformed.get("completeness")
+                or {
+                    "filled_count": 0,
+                    "type_field_total": 0,
+                    "missing_fields": [],
+                },
+            }
+        else:
+            notice_type = str(transformed.get("notice_type") or "")
+            try:
+                template_saved = _templates_mod.save_template(
+                    name=save_name,
+                    notice_type=notice_type,
+                    product=transformed["product"],
+                    source={
+                        "origin_product_no": origin_product_no.strip(),
+                        "completeness": transformed.get("completeness"),
+                        "reason": transformed.get("reason"),
+                    },
+                )
+            except _templates_mod.TemplateStoreError as exc:
+                template_saved = {
+                    "ok": False,
+                    "name": save_name,
+                    "reason": (
+                        f"템플릿 저장소가 손상되어 저장할 수 없습니다: {exc}. "
+                        "조용히 넘기지 않습니다 — 저장소 파일을 점검하세요."
+                    ),
+                }
+            except _templates_mod.TemplateNameError as exc:
+                template_saved = {
+                    "ok": False,
+                    "name": save_name,
+                    "reason": (
+                        f"템플릿 저장을 거부했습니다(이름 형식 오류): {exc}. "
+                        "조용히 넘기지 않습니다."
+                    ),
+                }
+            except ValueError as exc:
+                template_saved = {
+                    "ok": False,
+                    "name": save_name,
+                    "reason": _sanitize_text(str(exc)),
+                }
+
     return {
         "ok": ok,
         "status_code": status_code,
         "product": exposed_body if ok else None,
+        "template_saved": template_saved,
         "error": None if ok else _sanitize_text(f"API 반환 상태 {status_code}: {body}"),
     }
 
