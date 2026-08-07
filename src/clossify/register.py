@@ -1489,6 +1489,22 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None):
         "qa": qa_result,
         "status": d.get("status") or "SALE",
     }
+    # deferred_notice_fields: 판매자가 "상세페이지 참조" 로 미루기로 *준비 단계에서*
+    # 명시적으로 선택한 고시 필드명 리스트. 등록 단계(register_product) 가 이 값을
+    # 받아 컴플라이언스 게이트의 "고시 필수필드 누락" 위반에서 제외한다.
+    #
+    # 준비 단계에서는 **저장만** 한다. 원산지 필터·allowlist 검증은 등록 단계가
+    # 한다(그 단계의 검증을 우회하지 않는다 — 본 값은 그대로 다시 검증기를 통과한다).
+    # 여기서 임의로 정제하면 "판매자가 미뤘다" 고 믿은 값이 등록 게이트에서 차단되는
+    # 조용한 실패가 된다. 비문자열·빈 문자열 항목은 저장하지 않되, 사용자가 준
+    # 형태를 보존한다.
+    deferred = d.get("deferred_notice_fields")
+    if isinstance(deferred, list):
+        sane_deferred = [
+            str(item).strip() for item in deferred if isinstance(item, str) and item.strip()
+        ]
+        if sane_deferred:
+            payload["deferred_notice_fields"] = sane_deferred
     if image_generation_meta is not None:
         payload["image_generation"] = image_generation_meta
     if overwrite_warning is not None:

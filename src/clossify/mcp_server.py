@@ -1574,6 +1574,111 @@ def upload_images(paths: list[str]) -> dict[str, Any]:
     }
 
 
+def _validate_deferred_notice_fields(
+    deferred_notice_fields: list[str] | None,
+    *,
+    dry_run: bool,
+) -> tuple[bool, list[str], dict[str, Any] | None]:
+    """``deferred_notice_fields`` 입력을 검증하고 정제한다.
+
+    호출자가 넘긴 값과 prepared payload 에서 복원한 값 모두 **같은 검증 경로**를
+    통과하게 한다 — prepared 가 검증을 우회하는 뒷문이 되면 안 된다. 규제 신고값
+    (원산지·고시) 은 prepared 가 우리가 만든 산출물이더라도 정본 검증기를 거친다.
+
+    검증 내용 (1761 줄 주석 참조):
+      - 문자열 리스트 여부, 비문자열/빈 문자열 항목 거부.
+      - 원산지 필드(made_in, originAreaInfo.* 등)는 법적 선언이므로 어떤 요청이든
+        거부. 부분 적용 금지.
+      - allowlist 검증 — 고시 정의(35종 fields 합집합)에 없는 키는 거부.
+        대소문자 변형·오타·별칭이 네이버에 임의 키로 딸려 나가는 것을 막는다.
+
+    Args:
+        deferred_notice_fields: 검증할 리스트(None 또는 빈 리스트면 통과).
+        dry_run: 실패 응답에 실을 dry_run 플래그.
+
+    Returns:
+        ``(ok, clean_list, error_dict)`` —
+          - ``ok``: 검증 통과 여부.
+          - ``clean_list``: 통과 시 정제된 리스트. 실패 시 빈 리스트.
+          - ``error_dict``: 실패 시 거부 응답 dict. 통과 시 ``None``.
+    """
+    _empty_clean: list[str] = []
+    if deferred_notice_fields is None:
+        return True, _empty_clean, None
+    if not isinstance(deferred_notice_fields, list):
+        return (
+            False,
+            _empty_clean,
+            _fail(
+                "deferred_notice_fields 는 문자열 리스트여야 합니다.",
+                dry_run=dry_run,
+            ),
+        )
+    normalized: list[str] = []
+    for item in deferred_notice_fields:
+        if not isinstance(item, str) or not item.strip():
+            return (
+                False,
+                _empty_clean,
+                _fail(
+                    "deferred_notice_fields 의 각 원소는 비어있지 않은 문자열이어야 합니다.",
+                    dry_run=dry_run,
+                ),
+            )
+        normalized.append(item.strip())
+    rejected = qa_agents._reject_origin_deferred(normalized)
+    origin_hits = [f for f in normalized if f not in rejected]
+    if origin_hits:
+        _err = {
+            "ok": False,
+            "status_code": None,
+            "origin_product_no": None,
+            "channel_product_no": None,
+            "missing_channel_no": True,
+            "name_truncated": False,
+            "raw": None,
+            "seller_tags": None,
+            "blocked_by": "origin_field_not_deferrable",
+            "filled_from_prepared": [],
+            "prepared_lookup": {},
+            "notice_filled_from_config": [],
+            "deferred_notice_fields": [],
+            "dry_run": dry_run,
+            "message": (
+                "원산지 필드는 법적 선언이므로 '상세페이지 참조' 로 미룰 수 없다: "
+                + ", ".join(origin_hits)
+            ),
+            "error": None,
+        }
+        return False, _empty_clean, _err
+    allowed_keys, off_list_keys = qa_agents._partition_deferred_by_allowlist(rejected)
+    if off_list_keys:
+        _err = {
+            "ok": False,
+            "status_code": None,
+            "origin_product_no": None,
+            "channel_product_no": None,
+            "missing_channel_no": True,
+            "name_truncated": False,
+            "raw": None,
+            "seller_tags": None,
+            "blocked_by": "deferred_field_not_in_allowlist",
+            "filled_from_prepared": [],
+            "prepared_lookup": {},
+            "notice_filled_from_config": [],
+            "deferred_notice_fields": [],
+            "dry_run": dry_run,
+            "message": (
+                "deferred_notice_fields 중 고시 필드 정의에 없는 키가 있다 "
+                "(대소문자 변형·별칭·오타 포함 — 네이버에 임의 키로 "
+                "'상세페이지 참조' 가 전송되는 것을 막는다): " + ", ".join(off_list_keys)
+            ),
+            "error": None,
+        }
+        return False, _empty_clean, _err
+    return True, allowed_keys, None
+
+
 @mcp.tool()
 def register_product(
     name: str,
@@ -1603,11 +1708,18 @@ def register_product(
     ``image_urls`` 와 ``detail_html`` 은 생략 가능하다(기본값 ``None``). 둘 중
     하나라도 비어 있으면, ``name``+``price`` 에서 product_key 를 유도해
     prepared payload(``prepare_listing`` 이 저장한 결과)를 조회하고, **거기에
-    저장된 값으로 채운다**. 명시적으로 준 값이 항상 우선하며, prepared 가
-    덮어쓰지 않는다. 채운 뒤에도 기존 검증(원본 이미지 진입 게이트, prepared
-    QA 게이트)은 전부 그대로 통과해야 한다 — 이 경로가 검증을 우회하는 뒷문이
-    되면 안 된다. 둘 다 비어 있고 prepared payload 도 없으면 거부한다(무동작·
-    빈 등록 금지).
+    저장된 값으로 채운다**. 같은 규칙이 ``notice`` · ``tags`` · ``options`` ·
+    ``option_groups`` · ``deferred_notice_fields`` 에도 적용된다 — 호출자가 명시적으로
+    넘기지 않은 인자는 prepared payload 에 저장된 값으로 채운다. **명시적으로 준
+    값이 항상 우선하며, prepared 가 덮어쓰지 않는다.** 채운 뒤에도 기존 검증(원본
+    이미지 진입 게이트, prepared QA 게이트, 컴플라이언스 게이트, option_groups 축
+    수 일치 검증, deferred_notice_fields 원산지/allowlist 검증) 은 전부 그대로
+    통과해야 한다 — 이 경로가 검증을 우회하는 뒷문이 되면 안 된다. 모두 비어 있고
+    prepared payload 도 없으면 거부한다(무동작·빈 등록 금지).
+
+    복원은 **prepared 에 실제로 있는 항목만** 일어난다. 없는 값을 지어내지 않는다.
+    복원한 항목은 전부 반환의 ``filled_from_prepared`` 에 기록된다 — 조용히 흐르면
+    안 된다(무엇이 어디서 왔는지 드러나야 한다).
 
     Args:
         name: 상품명 (네이버 정책상 길이 제한이 있음, naver_client 가 50자 컷).
@@ -1664,8 +1776,12 @@ def register_product(
         - ``ok``: HTTP 상태가 2xx(성공)인지.
         - ``raw``: API 응답 본문 (에러 메시지 포함 가능).
         - ``seller_tags``: 제한어 자동 제거 메타가 있을 때만 존재.
-        - ``filled_from_prepared``: prepared payload 에서 채운 항목 리스트
-          (``"detail_html"``/``"image_urls"``). 직접 준 값은 포함되지 않는다.
+        - ``filled_from_prepared``: prepared payload 에서 채운 항목 리스트.
+          가능한 항목: ``"detail_html"`` · ``"image_urls"`` · ``"notice"`` ·
+          ``"tags"`` · ``"options"`` · ``"option_groups"`` ·
+          ``"deferred_notice_fields"``. prepared 에 실제로 있고 호출자가 명시적으로
+          넘기지 않은 인자만 이 리스트에 들어간다. 직접 준 값은 포함되지 않는다
+          (조용한 흐름 금지 — 복원은 항상 보고된다).
         - ``prepared_key_used``: 실제로 prepared 조회에 쓴 product_key.
           유도한 키를 썼을 때와 달리 어디서 가져왔는지 드러낸다 (조용한
           치환 방지).
@@ -1779,74 +1895,11 @@ def register_product(
     # 유도한다(수동 목록 아님). allowlist 밖의 키는 거부하고 사유를 반환한다 —
     # 조용히 무시하지도, 전송하지도 않는다.
     _deferred_clean: list[str] = []
-    if deferred_notice_fields is not None:
-        if not isinstance(deferred_notice_fields, list):
-            return _fail(
-                "deferred_notice_fields 는 문자열 리스트여야 합니다.",
-                dry_run=_dry_run,
-            )
-        normalized: list[str] = []
-        for item in deferred_notice_fields:
-            if not isinstance(item, str) or not item.strip():
-                return _fail(
-                    "deferred_notice_fields 의 각 원소는 비어있지 않은 문자열이어야 합니다.",
-                    dry_run=_dry_run,
-                )
-            normalized.append(item.strip())
-        # 원산지 필드가 섞여 있으면 거부 — 사유에 어느 필드가 문제인지 명시.
-        rejected = qa_agents._reject_origin_deferred(normalized)
-        origin_hits = [f for f in normalized if f not in rejected]
-        if origin_hits:
-            return {
-                "ok": False,
-                "status_code": None,
-                "origin_product_no": None,
-                "channel_product_no": None,
-                "missing_channel_no": True,
-                "name_truncated": False,
-                "raw": None,
-                "seller_tags": None,
-                "blocked_by": "origin_field_not_deferrable",
-                "filled_from_prepared": [],
-                "prepared_lookup": {},
-                "notice_filled_from_config": [],
-                "deferred_notice_fields": [],
-                "dry_run": _dry_run,
-                "message": (
-                    "원산지 필드는 법적 선언이므로 '상세페이지 참조' 로 미룰 수 없다: "
-                    + ", ".join(origin_hits)
-                ),
-                "error": None,
-            }
-        # allowlist 검증 — 고시 정의(35종 fields 합집합)에 없는 키는 거부.
-        # 대소문자 변형·오타·별칭이 네이버에 임의 키로 딸려 나가는 것을 막는다.
-        # 부분 적용 금지 — 하나라도 allowlist 밖이면 전체 요청을 거부하고 어느
-        # 키가 문제인지 사유에 드러낸다.
-        allowed_keys, off_list_keys = qa_agents._partition_deferred_by_allowlist(rejected)
-        if off_list_keys:
-            return {
-                "ok": False,
-                "status_code": None,
-                "origin_product_no": None,
-                "channel_product_no": None,
-                "missing_channel_no": True,
-                "name_truncated": False,
-                "raw": None,
-                "seller_tags": None,
-                "blocked_by": "deferred_field_not_in_allowlist",
-                "filled_from_prepared": [],
-                "prepared_lookup": {},
-                "notice_filled_from_config": [],
-                "deferred_notice_fields": [],
-                "dry_run": _dry_run,
-                "message": (
-                    "deferred_notice_fields 중 고시 필드 정의에 없는 키가 있다 "
-                    "(대소문자 변형·별칭·오타 포함 — 네이버에 임의 키로 "
-                    "'상세페이지 참조' 가 전송되는 것을 막는다): " + ", ".join(off_list_keys)
-                ),
-                "error": None,
-            }
-        _deferred_clean = allowed_keys
+    _deferred_ok, _deferred_clean, _deferred_err = _validate_deferred_notice_fields(
+        deferred_notice_fields, dry_run=_dry_run
+    )
+    if not _deferred_ok:
+        return _deferred_err  # type: ignore[return-value]
 
     # product_key 결정 — 명시 인자가 있으면 그것을, 없으면 이름+가격으로
     # 후보를 찾는다. 같은 이름·가격의 SKU 가 여러 개일 때(색상만 다른 옵션
@@ -2109,17 +2162,46 @@ def register_product(
         preview_confirmed = True
 
     # ------------------------------------------------------------------ #
-    # prepared payload 로부터 image_urls / detail_html 채우기.
+    # prepared payload 로부터 값 채우기.
     #
-    # 명시적으로 준 값이 항상 우선한다. prepared 가 덮어쓰지 않는다. 채운 뒤에도
-    # 아래 진입 게이트(원본 이미지 검사)와 prepared QA 게이트가 그대로 실행된다
-    # — 이 경로가 검증을 우회하는 뒷문이 되면 안 된다.
+    # **이 결함 수정의 본질**: 과거에는 detail_html · image_urls 딱 2개만 복원했다.
+    # prepare 단계에서 채운 값(notice · tags · options · option_groups ·
+    # deferred_notice_fields) 이 등록에 도달하지 못했다 — 템플릿 기능이 무력화되고
+    # "준비했는데 왜 또 넣어야 하지?" 를 겪게 됐다. 이제 prepared 에 실제로 있는
+    # 항목만, 명시 인자가 없을 때만 복원한다.
+    #
+    # 규칙 (detail_html · image_urls 와 동일 — 기존 관례 존중):
+    #   1. **명시적으로 준 값이 이긴다.** 호출자가 그 인자를 넘겼으면 그것을 쓰고
+    #      prepared 가 덮지 않는다.
+    #   2. **prepared 에 실제로 있는 것만 복원한다.** 없는 걸 지어내지 않는다.
+    #   3. **복원한 항목은 전부 filled_from_prepared 에 기록한다.** 조용히 흐르면
+    #      안 된다 — 무엇이 어디서 왔는지 반환에 드러나야 한다.
+    #
+    # 채운 뒤에도 아래 진입 게이트(원본 이미지 검사)와 prepared QA 게이트가 그대로
+    # 실행된다 — 이 경로가 검증을 우회하는 뒷문이 되면 안 된다. 규제값(notice ·
+    # deferred_notice_fields) 은 prepared 가 우리가 만든 산출물이더라도 그대로
+    # 검증기를 통과한다 (``resolve_prepared_for_register`` 의 무결성 검증 + 본
+    # 함수의 컴플라이언스 게이트).
     # ------------------------------------------------------------------ #
     _need_images = image_urls is None
     _need_detail = detail_html is None
+    _need_notice = notice is None
+    _need_tags = tags is None
+    _need_options = options is None
+    _need_option_groups = option_groups is None
+    _need_deferred = deferred_notice_fields is None
     filled_from_prepared: list[str] = []
 
-    if (_need_images or _need_detail) and _resolved_payload is not None:
+    _needs_any = (
+        _need_images
+        or _need_detail
+        or _need_notice
+        or _need_tags
+        or _need_options
+        or _need_option_groups
+        or _need_deferred
+    )
+    if _needs_any and _resolved_payload is not None:
         _fill_pkey = _product_key
         _fill_prepared = _resolved_payload
 
@@ -2141,11 +2223,19 @@ def register_product(
                 "name": _retrieved_name,
                 "salePrice": _retrieved_price,
             }
+
+        # prepared 의 product block — notice/tags/options/option_groups 가 산다.
+        _fp_product = (
+            _fill_prepared.get("product") if isinstance(_fill_prepared.get("product"), dict) else {}
+        )
+
+        # detail_html: top-level 필드.
         if _need_detail:
             _prepared_html = _fill_prepared.get("detail_html")
             if isinstance(_prepared_html, str) and _prepared_html.strip():
                 detail_html = _prepared_html
                 filled_from_prepared.append("detail_html")
+        # image_urls: prepared.images.listing_urls — 정본 검증기 통과(filter-not-fix).
         if _need_images:
             _images_block = (
                 _fill_prepared.get("images")
@@ -2177,6 +2267,117 @@ def register_product(
                 if _prepared_urls:
                     image_urls = _prepared_urls
                     filled_from_prepared.append("image_urls")
+        # notice: prepared.product.notice (규제 신고값 — 복원해도 컴플라이언스
+        # 게이트를 그대로 통과한다). dict 가 아니면 복원하지 않는다.
+        if _need_notice:
+            _prepared_notice = _fp_product.get("notice")
+            if isinstance(_prepared_notice, dict) and _prepared_notice:
+                notice = _prepared_notice
+                filled_from_prepared.append("notice")
+        # tags: prepared.product.tags. SEO 카피값.
+        if _need_tags:
+            _prepared_tags = _fp_product.get("tags")
+            if isinstance(_prepared_tags, list) and _prepared_tags:
+                tags = list(_prepared_tags)
+                filled_from_prepared.append("tags")
+        # options: prepared.product.options. 옵션 조합 목록.
+        if _need_options:
+            _prepared_options = _fp_product.get("options")
+            if isinstance(_prepared_options, list) and _prepared_options:
+                options = list(_prepared_options)
+                filled_from_prepared.append("options")
+        # option_groups: prepared.product.option_groups. 다축 옵션 그룹 이름.
+        if _need_option_groups:
+            _prepared_groups = _fp_product.get("option_groups")
+            if isinstance(_prepared_groups, list) and _prepared_groups:
+                option_groups = list(_prepared_groups)
+                filled_from_prepared.append("option_groups")
+        # deferred_notice_fields: prepared payload top-level 키(준비 단계에서
+        # 판매자가 명시적으로 "상세페이지 참조" 로 미루기로 선택한 고시 필드).
+        # **규제 신고값** 이므로 복원하더라도 호출자가 준 값과 같은 검증 경로를
+        # 거친다(아래 _validate_deferred_notice_fields 재호출). 우회 금지.
+        if _need_deferred:
+            _prepared_deferred = _fill_prepared.get("deferred_notice_fields")
+            if isinstance(_prepared_deferred, list) and _prepared_deferred:
+                deferred_notice_fields = list(_prepared_deferred)
+                filled_from_prepared.append("deferred_notice_fields")
+
+    # ------------------------------------------------------------------ #
+    # 복원 후 재검증 — prepared 가 검증을 우회하는 뒷문이 되면 안 된다.
+    #
+    # option_groups: 복원된 options/option_groups 가 축 수에서 어긋나면 거부한다
+    # (조용한 절삭/조용한 보충 금지). 호출자가 명시적으로 줬으면 위 검증이 잡았고,
+    # prepared 에서 복원됐으면 여기서 잡는다. naver_client._build_option_info 가
+    # 조용히 잘라내거나 번호 이름으로 채우는 것을 막는다.
+    # ------------------------------------------------------------------ #
+    if option_groups is not None:
+        if (
+            not isinstance(option_groups, list)
+            or not (1 <= len(option_groups) <= 3)
+            or any(not isinstance(item, str) or not item.strip() for item in option_groups)
+        ):
+            return _fail(
+                "prepared 에서 복원한 option_groups 가 길이 1~3 의 비어있지 않은 "
+                "문자열 리스트가 아닙니다 (filter-not-fix).",
+                filled_from_prepared=filled_from_prepared,
+                prepared_lookup=prepared_lookup,
+                dry_run=_dry_run,
+            )
+        _normalized_groups = [str(n).strip() for n in option_groups]
+        _unique: set[str] = set()
+        _dup_groups = [n for n in _normalized_groups if n in _unique or _unique.add(n)]
+        if _dup_groups:
+            return _fail(
+                "prepared 에서 복원한 option_groups 에 중복 이름이 있다 "
+                "(네이버에서 축 구분이 안 됨): " + ", ".join(_dup_groups),
+                filled_from_prepared=filled_from_prepared,
+                prepared_lookup=prepared_lookup,
+                dry_run=_dry_run,
+            )
+        if options:
+            if not isinstance(options, list):
+                return _fail(
+                    "prepared 에서 복원한 options 가 dict 리스트가 아닙니다.",
+                    filled_from_prepared=filled_from_prepared,
+                    prepared_lookup=prepared_lookup,
+                    dry_run=_dry_run,
+                )
+            try:
+                _restored_axis = naver_client._option_width(options)
+            except Exception as _exc:
+                return _fail(
+                    f"prepared 에서 복원한 option 축 수 계산 실패: {_exc}",
+                    filled_from_prepared=filled_from_prepared,
+                    prepared_lookup=prepared_lookup,
+                    dry_run=_dry_run,
+                )
+            if len(_normalized_groups) != _restored_axis:
+                return _fail(
+                    f"prepared 에서 복원한 option_groups 개수"
+                    f"({len(_normalized_groups)})가 옵션 축 수({_restored_axis})와 "
+                    f"일치하지 않습니다. 조용한 절삭/조용한 보충 금지.",
+                    filled_from_prepared=filled_from_prepared,
+                    prepared_lookup=prepared_lookup,
+                    dry_run=_dry_run,
+                )
+        # 정규화된 값을 반영(공백 제거). option_groups 변수는 아래 product
+        # dict 구성에서 그대로 쓰인다.
+        option_groups = _normalized_groups
+
+    # deferred_notice_fields: 복원됐으면 호출자가 준 값과 같은 정본 검증을 거친다.
+    # ``deferred_notice_fields`` 가 None 이면(호출자·prepared 모두 안 줌) 통과.
+    # 위 검증 블록에서 ``deferred_notice_fields`` 를 복원했으면 ``_deferred_clean``
+    # 를 다시 계산한다. 우회 금지 — prepared 가 산출물이어도 검증은 그대로.
+    if "deferred_notice_fields" in filled_from_prepared:
+        _def_ok, _deferred_clean, _def_err = _validate_deferred_notice_fields(
+            deferred_notice_fields, dry_run=_dry_run
+        )
+        if not _def_ok:
+            # 거부 사유를 prepared_lookup/filled_from_prepared 와 함께 반환.
+            _def_err_merged = dict(_def_err or {})
+            _def_err_merged["filled_from_prepared"] = filled_from_prepared
+            _def_err_merged["prepared_lookup"] = prepared_lookup
+            return _def_err_merged  # type: ignore[return-value]
 
     # 진입 게이트: 단순 길이검사가 아니라 내용검사로 교체.
     # 빈 문자열·공백·None·비문자열 항목이 섞이면 거부한다 (조용한 필터링 금지).
