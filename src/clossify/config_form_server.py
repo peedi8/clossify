@@ -63,7 +63,7 @@ from . import approval_server
 # ---------------------------------------------------------------------------
 TTL_SECONDS = approval_server.TTL_SECONDS  # 10분. 만료 후 서버는 종료된다.
 
-# POST 본문 최대 크기. 양식1 은 10개 필드 + 토큰. 충분한 여유치.
+# POST 본문 최대 크기. 양식1 은 키 3개 + 토큰. 충분한 여유치.
 _MAX_BODY_BYTES = 128 * 1024
 
 # 백업 파일 접미사. 타임스탬프와 함께 저장.
@@ -107,62 +107,31 @@ class Outcome:
 # 및 naver_client._notice_defaults / mcp_server._POLICY_CONFIG_KEYS 에서 읽은
 # 실제 필드들이다. 새 필드를 추가하려면 먼저 그 소스들이 인식하는지 확인해야 한다.
 #
-# **양식1 = "최초 1회로 끝나는 항목만" (BACKLOG N7 정정).**
-# 직전 산출은 mcp_server._POLICY_CONFIG_KEYS(상품 등록 시점의 전체 정책 집합)를
-# 그대로 폼에 올렸다. 그 결과 **상품마다 달라지는 값**(원산지·제조사·수입사·모델명)
-# 이 최초 1회 폼에 들어가, 중국산·국내산을 같이 파는 판매자가 조용히 잘못 신고되는
-# 경로가 됐다. 고시 필드 120종/35타입 전수 집계 결과 **35/35 전 타입 공통은 정확히
-# 5개**(returnCostReason·noRefundReason·qualityAssuranceStandard·
-# compensationProcedure·troubleShootingContents)이며, manufacturer 는 25/35라
-# 공통처럼 보이지만 10개 타입엔 없고 사입처가 바뀌면 달라진다 → 폼1 관할이 아니다.
-# origin_area_code 는 고시 필드가 아닌 별도 원산지 신고이므로 역시 폼2 관할이다.
+# **양식1 = "한 번만 넣으면 다시 넣을 필요 없는 것" = 계정 자격증명 3개.**
+# 직전 산출(BACKLOG N7)은 고시 35/35 공통 5필드 + AS 연락처 2필드(=10필드)를
+# 양식1 에 올렸다. 재검토 결과:
+#   - 고시 5필드: 네이버가 법정 표준 문구 기본 제공 + [상품상세 참조]/[직접입력]
+#     선택지를 주며 대량등록 양식에서도 비필수. 검색 1위 상품 2건 모두 상세참조로
+#     미룬다. → 판매자가 법조문 5문단을 타이핑할 이유가 없다. 상세참조 기본(D35,
+#     별건 티켓) 또는 기존 상품에서 추출(별건 티켓)로 해결된다.
+#   - AS 2필드: 실측 결과 afterServiceDirector 22/35 타입, customerServicePhoneNumber
+#     13/35 타입으로 공통이 아니며(XOR 관계), detailAttribute.afterServiceInfo
+#     별도 노드에도 존재해 상품군 문맥이 필요 → 양식2(상품 등록 시점) 관할.
 #
-# 따라서 양식1 의 정책 영역은 **공통 5 + AS 연락처 1** 만 남긴다. 상품별 값은
-# 양식2(상품 등록 시점)에서 다룬다 — 저장 로직에서도 여기에 한해 화이트리스트를
-# 좁힌다(폼에서만 감추고 서버가 계속 쓰면 의미 없다).
+# 따라서 양식1 은 **정확히 3개**만 남긴다. 고시·AS 는 상품 등록 단계에서
+# 상품에 맞는 항목만 요청한다 (양식2). 저장 로직의 화이트리스트도 이 3개로
+# 좁힌다 — 폼에서만 감추고 서버가 계속 쓰면 의미 없다.
 #
 # 각 항목: (폼 필드명, config 내 키 경로 튜플, 민감여부).
 #   - 민감 필드(client_secret)는 결과 페이지에서 설정됨/미설정만 표시하고 값을
 #     출력하지 않는다.
 # ---------------------------------------------------------------------------
-# (A) 계정 자격증명 — 키 3종 (naver 섹션).
-_KEY_FIELDS: tuple[tuple[str, tuple[str, ...], bool], ...] = (
+# 양식1 전체 허용 필드 = 계정 자격증명 3종 (naver 섹션).
+_ALLOWED_FIELDS: tuple[tuple[str, tuple[str, ...], bool], ...] = (
     ("client_id", ("naver", "client_id"), False),
     ("client_secret", ("naver", "client_secret"), True),
     ("store_url_slug", ("naver", "store_url_slug"), False),
 )
-
-# (B) 스토어 공통 정책 — 고시 35/35 공통 5필드 (smartstore_notice_defaults 섹션).
-# 상품마다 달라지지 않는 "한 번 넣으면 끝" 의 정확한 경계. naver_client 가
-# _notice_defaults → _common_notice_defaults 경로로 이 5개를 모든 상품에 싣는다.
-_POLICY_COMMON5_FIELDS: tuple[tuple[str, tuple[str, ...], bool], ...] = (
-    ("returnCostReason", ("smartstore_notice_defaults", "returnCostReason"), False),
-    ("noRefundReason", ("smartstore_notice_defaults", "noRefundReason"), False),
-    ("qualityAssuranceStandard", ("smartstore_notice_defaults", "qualityAssuranceStandard"), False),
-    ("compensationProcedure", ("smartstore_notice_defaults", "compensationProcedure"), False),
-    ("troubleShootingContents", ("smartstore_notice_defaults", "troubleShootingContents"), False),
-)
-
-# (C) 스토어 대표 연락처 — AS 전화번호 + AS 안내문.
-# as_tel  → smartstore_notice_defaults.as_tel  (정본 전화번호).
-# as_tel_comment(폼 필드명) → smartstore_notice_defaults.as_guide (정본 config 키).
-#   naver_client._notice_defaults 가 cfg_notice.get("as_guide") 를 읽어
-#   afterServiceGuideContent 에 싣는, 이미 검증된 유일한 config 키다.
-#   config.example.json 의 "as_tel_comment" 문자열 키는 설명 문구용이며
-#   코드가 읽지 않는다 — 폼 필드명으로 재사용하되 *저장 경로*는 코드가 읽는
-#   as_guide 로 매핑한다(필드를 창작하지 않는다).
-_CONTACT_FIELDS: tuple[tuple[str, tuple[str, ...], bool], ...] = (
-    ("as_tel", ("smartstore_notice_defaults", "as_tel"), False),
-    ("as_tel_comment", ("smartstore_notice_defaults", "as_guide"), False),
-)
-
-# 양식1 전체 허용 필드 (A3 + B5 + C2 = 10개).
-_POLICY_FIELDS: tuple[tuple[str, tuple[str, ...], bool], ...] = (
-    _POLICY_COMMON5_FIELDS + _CONTACT_FIELDS
-)
-
-# 전체 허용 필드.
-_ALLOWED_FIELDS: tuple[tuple[str, tuple[str, ...], bool], ...] = _KEY_FIELDS + _POLICY_FIELDS
 
 # 폼 필드명 → (config 경로, 민감여부) 조회 인덱스.
 _FIELD_INDEX: dict[str, tuple[tuple[str, ...], bool]] = {
@@ -876,6 +845,20 @@ body{margin:0;padding:24px;background:#f5f5f5;font-family:-apple-system,
 .form-note{margin-top:24px;padding:14px;background:#eef6ff;border-radius:6px;
   color:#1a4d8f;font-size:12px;line-height:1.7}
 .form-note strong{color:#0b3d7a}
+.guide-toggle{margin:8px 0 4px;font-size:12px}
+.guide-toggle summary{cursor:pointer;color:#1a4d8f;padding:4px 0;
+  list-style:none;display:inline-block}
+.guide-toggle summary::-webkit-details-marker{display:none}
+.guide-toggle[open] summary{color:#0b3d7a}
+.guide-panel{margin-top:8px;padding:12px;background:#f8f9fb;border:1px solid #e3e6ea;
+  border-radius:6px;font-size:12px;line-height:1.7;color:#333}
+.guide-panel .guide-row{margin:4px 0}
+.guide-panel .guide-row strong{color:#0b3d7a}
+.guide-panel .guide-trap{background:#fff8e1;padding:8px 10px;border-radius:4px;
+  margin-top:6px;color:#7a5a00}
+.guide-panel .guide-trap strong{color:#a87900}
+.guide-panel .guide-domain{color:#137333}
+.guide-panel code{background:#eef0f3;padding:1px 4px;border-radius:3px;font-size:11px}
 .submit-bar{margin-top:28px;padding-top:20px;border-top:1px solid #e0e0e0}
 .submit-btn{background:#137333;color:#fff;border:0;border-radius:6px;
   padding:12px 28px;font-size:15px;font-weight:600;cursor:pointer}
@@ -899,37 +882,10 @@ def _status_badge(is_set: bool) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 양식1 (B)(C) 영역 필드 스펙 — 렌더러 데이터.
-#
-# 각 항목: (폼 필드명, 화면 라벨, 필수여부, 안내문).
-# 안내문에는 값의 *형식/필수여부* 만 표기한다 — **예시값 금지**.
+# 양식1 은 이제 키 3개뿐이다 — (B)(C) 영역 필드 스펙은 제거됐다.
+# 고시 5필드·AS 연락처 2필드는 상품 등록 단계(양식2)에서 상품에 맞는 항목만
+# 요청한다. 여기서 받지 않는다.
 # ---------------------------------------------------------------------------
-_FORM_POLICY_FIELDS: tuple[tuple[str, str, bool, str], ...] = (
-    # (B) 고시 35/35 공통 5필드.
-    ("returnCostReason", "반품 배송비 사유", False, "[선택] 반품 배송비 부담 기준/사유 문구."),
-    ("noRefundReason", "환불 불가 사유", False, "[선택] 환불이 불가능한 경우/사유 문구."),
-    (
-        "qualityAssuranceStandard",
-        "품질 보증 기준",
-        False,
-        "[선택] 품질 보증 기준 및 관련 법령 문구.",
-    ),
-    ("compensationProcedure", "보상 절차", False, "[선택] 소비자 피해 보상 절차 문구."),
-    (
-        "troubleShootingContents",
-        "고장 대처",
-        False,
-        "[선택] 제품 고장 시 대처 방법 문구.",
-    ),
-    # (C) 스토어 대표 연락처.
-    ("as_tel", "AS 전화번호", False, "[선택] A/S 안내용 전화번호. 안내문구/플레이스홀더 불가."),
-    (
-        "as_tel_comment",
-        "AS 안내문",
-        False,
-        "[선택] A/S 안내 문구. 운영시간·이메일 등.",
-    ),
-)
 
 
 def render_config_form_html(
@@ -940,14 +896,17 @@ def render_config_form_html(
 ) -> str:
     """최초 설정 폼 HTML 문자열을 만든다.
 
-    **양식1 = "최초 1회로 끝나는 항목만" (10개)**. 세 덩어리로 보이게 한다:
-      (A) 계정 자격증명 3 — client_id / client_secret(password) / store_url_slug.
-      (B) 스토어 공통 정책 5 — 고시 35/35 공통 필드.
-      (C) 스토어 대표 연락처 2 — as_tel / as_tel_comment.
+    **양식1 = "한 번만 넣으면 다시 넣을 필요 없는 것" = 계정 자격증명 3개.**
+      (A) client_id / client_secret(password) / store_url_slug.
+
+    고시 5필드·AS 연락처 2필드는 키 3개를 넣는 *이* 화면에서 받지 않는다.
+    고시는 네이버가 법정 표준 문구 기본 제공 + [상품상세 참조] 선택지가 있고,
+    AS 연락처는 상품군마다 달라 상품 문맥이 필요하다. 둘 다 상품 등록 단계
+    (양식2)에서 상품에 맞는 항목만 요청한다.
 
     상품마다 달라지는 값(원산지·제조사·수입사·모델명·KC·검색광고·이미지 키)은
     **어디에도 등장하지 않는다** — 폼 HTML 본문·hidden 필드·data 속성·JS 에서
-    모두 빠진다. 저장 로직도 이 10개만 허용한다(_ALLOWED_FIELDS 화이트리스트).
+    모두 빠진다. 저장 로직도 이 3개만 허용한다(_ALLOWED_FIELDS 화이트리스트).
 
     Args:
         token: 일회용 폼 토큰(서버가 검증). ``<input type="hidden">`` 으로 싣는다.
@@ -964,9 +923,7 @@ def render_config_form_html(
 
     **JS 없는 정적 렌더**: 양식1 은 순수 HTML 폼 POST 만으로 성립한다.
     ``<button type="submit">`` 외에 JavaScript 를 전혀 쓰지 않는다(우측구이 정적
-    렌더 대응). 업로드로 채우기 기능은 실물 CSV 확보 후 양식2(상품별 고시) 에서
-    다시 만든다 — 양식1 은 API 키를 넣기 *전* 화면이므로, get_product 응답 JSON
-    (키 연결 후에야 얻는 파일) 을 올리라고 요구하는 것은 순서가 뒤집혀 있다.
+    렌더 대응).
     """
     status = config_set_status or {}
     safe_token = html.escape(str(token), quote=True)
@@ -987,11 +944,11 @@ def render_config_form_html(
         '<div class="form-wrap">',
     ]
 
-    # 헤더. "부분 저장이 가능함" 을 화면에 알린다(계약 5).
+    # 헤더. "부분 저장이 가능함" 을 화면에 알린다(계약 5). 3칸짜리 화면임이 드러나게.
     parts.append('<div class="form-header">')
     parts.append('<h1 class="form-title">클로시파이 최초 설정</h1>')
     parts.append(
-        '<p class="form-subtitle">첫 사용자를 위한 설정 폼입니다 — 항목 10개로 끝납니다. '
+        '<p class="form-subtitle">첫 사용자를 위한 설정 폼입니다 — 항목 3개로 끝납니다. '
         "필요한 항목만 채우고 [저장]을 누르세요. "
         "<strong>다 채우지 않아도 저장할 수 있습니다</strong> — 빈 칸은 기존 값을 "
         "지우지 않습니다. 10분 안에 저장하지 않으면 폼이 만료됩니다.</p>"
@@ -1003,13 +960,26 @@ def render_config_form_html(
     parts.append(f'<input type="hidden" name="token" value="{safe_token}" />')
 
     # ------------------------------------------------------------------ #
-    # (A) 계정 자격증명 — 키 3종.
+    # (A) 계정 자격증명 — 키 3종. 양식1 의 전부.
+    #
+    # 안내 문구 계약(이슈: "어디서 무엇을 받는지" 가 드러나야):
+    #   - 발급처는 "네이버 커머스API 센터" 이다. 검색·지도용 "네이버 개발자센터"
+    #     와 다른 곳이므로 명시적으로 구분한다.
+    #   - client_id/client_secret = 커머스API 센터 [애플리케이션 > 내스토어 애플리케이션]
+    #     에서 등록하면 발급되는 애플리케이션 ID·시크릿.
+    #   - store_url_slug = 스토어 주소 smartstore.naver.com/<이 부분>. 발급물이 아님.
+    #   - 사전 조건(통합매니저 권한) 과 함정(API 호출 IP 등록) 은 접기 패널에
+    #     한 덩어리로 둔다 — 본문 3칸 구조를 가리지 않게.
+    #   - 링크는 도메인까지만(apicenter.commerce.naver.com). 하위 경로는 확인되지
+    #     않았으므로 지어내지 않는다. 대신 메뉴명으로 안내한다.
     # ------------------------------------------------------------------ #
     parts.append('<div class="form-section">')
     parts.append("<h2>네이버 커머스 API 자격증명</h2>")
     parts.append(
-        '<p class="form-section-desc">스마트스토어 상품 등록에 필요한 API 키 3종입니다. '
-        "네이버 커머스 API 에서 발급받은 값을 입력하세요.</p>"
+        '<p class="form-section-desc">스마트스토어 상품 등록에 필요한 값 3개입니다. '
+        "발급처는 <strong>네이버 커머스API 센터</strong>입니다 "
+        '(검색·지도용인 "네이버 개발자센터"와 다른 곳입니다). '
+        '각 항목 아래 "어디서 가져오나?" 을 누르면 출처가 열립니다.</p>'
     )
 
     # client_id.
@@ -1021,7 +991,23 @@ def render_config_form_html(
     )
     parts.append(_status_badge(bool(status.get("client_id"))))
     parts.append(
-        '<div class="field-guide">네이버 커머스 API 의 애플리케이션 <code>Client ID</code> 입니다.</div>'
+        '<div class="field-guide">커머스API 센터에서 발급받는 '
+        "<code>애플리케이션 ID</code> 입니다.</div>"
+    )
+    parts.append(
+        '<details class="guide-toggle"><summary>어디서 가져오나?</summary>'
+        '<div class="guide-panel">'
+        '<div class="guide-row"><strong>발급처:</strong> '
+        '<span class="guide-domain">apicenter.commerce.naver.com</span> '
+        "(네이버 커머스API 센터). 메뉴 <strong>[애플리케이션] &gt; "
+        "[내스토어 애플리케이션]</strong> 에서 애플리케이션을 등록하면 "
+        "<strong>애플리케이션 ID</strong>가 발급됩니다 — 이 값이 Client ID 입니다."
+        "</div>"
+        '<div class="guide-trap"><strong>주의 — 다른 곳 아님:</strong> '
+        '검색·지도용 "네이버 개발자센터"의 Client ID 와 이름이 같지만 '
+        "<strong>전혀 다른 센터</strong>입니다. 커머스API 센터에서 받아야 합니다."
+        "</div>"
+        "</div></details>"
     )
     parts.append("</div>")
 
@@ -1034,9 +1020,19 @@ def render_config_form_html(
     )
     parts.append(_status_badge(bool(status.get("client_secret"))))
     parts.append(
-        '<div class="field-guide">네이버 커머스 API 의 <code>Client Secret</code> 입니다. '
+        '<div class="field-guide">같은 애플리케이션의 <code>시크릿</code> 입니다. '
         "비밀값이므로 화면에 다시 표시되지 않습니다. 입력해도 저장 전까지는 "
         "어디에도 기록되지 않습니다.</div>"
+    )
+    parts.append(
+        '<details class="guide-toggle"><summary>어디서 가져오나?</summary>'
+        '<div class="guide-panel">'
+        '<div class="guide-row"><strong>발급처:</strong> Client ID 와 같은 화면 — '
+        "커머스API 센터 <strong>[애플리케이션] &gt; [내스토어 애플리케이션]</strong>. "
+        "애플리케이션을 등록하면 <strong>애플리케이션 ID</strong>와 함께 "
+        "<strong>시크릿</strong>이 발급됩니다 — 이 값이 Client Secret 입니다."
+        "</div>"
+        "</div></details>"
     )
     parts.append("</div>")
 
@@ -1049,53 +1045,68 @@ def render_config_form_html(
     )
     parts.append(_status_badge(bool(status.get("store_url_slug"))))
     parts.append(
-        '<div class="field-guide">스마트스토어 관리자 URL 에서 확인하는 스토어 식별자(slug) 입니다. '
-        "예: 관리자 주소가 <code>https://sell.smartstore.naver.com/#/my/store/slug</code> "
-        "형태일 때 해당 부분.</div>"
+        '<div class="field-guide">스토어 주소 <code>smartstore.naver.com/&lt;이 부분&gt;</code> '
+        "의 그 부분입니다. <strong>발급받는 값이 아닙니다</strong> — 스토어 주소의 일부입니다."
+        "</div>"
+    )
+    parts.append(
+        '<details class="guide-toggle"><summary>어디서 가져오나?</summary>'
+        '<div class="guide-panel">'
+        '<div class="guide-row"><strong>확인처:</strong> 본인 스토어의 주소 '
+        "<code>https://smartstore.naver.com/<strong>이_부분</strong></code>. "
+        "이 값을 발급받는 게 아니라 스토어 주소에서 읽습니다."
+        "</div>"
+        '<div class="guide-trap"><strong>혼동 주의:</strong> '
+        "스토어 관리자 주소(<code>sell.smartstore.naver.com/.../#/my/store/slug</code>) "
+        "에도 slug 가 보이지만, 실제 스토어 주소의 그것과 같은지 반드시 "
+        "스토어 주소로 확인하세요."
+        "</div>"
+        "</div></details>"
     )
     parts.append("</div>")
 
+    # 사전 조건·함정 접기 패널 — 3칸 본문을 가리지 않게 한 덩어리로 접어둔다.
+    parts.append(
+        '<details class="guide-toggle"><summary>'
+        "키 발급 전/후에 꼭 봐야 할 사전 조건과 함정"
+        "</summary>"
+        '<div class="guide-panel">'
+        '<div class="guide-row"><strong>사전 조건 — 통합매니저 권한:</strong> '
+        "키를 발급·조회하려면 해당 스토어의 <strong>통합매니저 권한</strong>이 "
+        "필요합니다. 권한이 없으면 커머스API 센터에서 애플리케이션을 만들거나 "
+        "조회할 수 없습니다."
+        "</div>"
+        '<div class="guide-row"><strong>등록 시 — API 호출 IP:</strong> '
+        "애플리케이션을 만들 때 <strong>API 호출 IP 입력</strong> 항목이 있습니다. "
+        "이 IP 가 아니면 키가 있어도 호출이 막힙니다 — 원인이 화면에 명확히 "
+        "드러나지 않는 경우가 많으므로 발급 단계에서 반드시 챙기세요."
+        "</div>"
+        '<div class="guide-row"><strong>스토어당 1개:</strong> '
+        "스토어 하나당 만들 수 있는 애플리케이션은 <strong>최대 1개</strong>입니다. "
+        "이미 만들어둔 애플리케이션이 있으면 새로 만들지 말고 그 값을 쓰세요."
+        "</div>"
+        '<div class="guide-trap"><strong>다시 한 번 — 다른 센터 아님:</strong> '
+        '검색/지도 API 용 "네이버 개발자센터"가 아닙니다. '
+        '<span class="guide-domain">apicenter.commerce.naver.com</span> '
+        "(네이버 커머스API 센터) 입니다."
+        "</div>"
+        "</div></details>"
+    )
+
     parts.append("</div>")  # form-section (A)
 
-    # ------------------------------------------------------------------ #
-    # (B) 스토어 공통 정책 — 고시 35/35 공통 5필드.
-    # 규제 신고값 — 예시값 금지. 형식/필수여부만 표시.
-    # ------------------------------------------------------------------ #
-    parts.append('<div class="form-section">')
-    parts.append("<h2>스토어 공통 정책 (상품정보제공고시 공통 기본값)</h2>")
-    parts.append(
-        '<p class="form-section-desc">고시 35종 전 타입에 공통으로 들어가는 5개 필드입니다. '
-        "상품마다 달라지지 않는 \u201c한 번 넣으면 끝\u201d 의 항목입니다. "
-        "<strong>규제 신고값이므로 정확한 값을 직접 입력하세요.</strong> "
-        "빈 칸으로 두면 등록 단계에서 컴플라이언스 검사가 해당 항목 누락으로 "
-        "등록을 거부합니다.</p>"
-    )
-    # 공통 5필드만 (처음 5개).
-    for field_name, label, required, guide in _FORM_POLICY_FIELDS[:5]:
-        parts.append(_render_policy_field(field_name, label, required, guide, status))
-    parts.append("</div>")  # form-section (B)
-
-    # ------------------------------------------------------------------ #
-    # (C) 스토어 대표 연락처 — AS 전화번호 + AS 안내문.
-    # ------------------------------------------------------------------ #
-    parts.append('<div class="form-section">')
-    parts.append("<h2>스토어 대표 연락처</h2>")
-    parts.append(
-        '<p class="form-section-desc">고객 A/S 안내에 사용하는 전화번호와 안내문입니다. '
-        "스토어 공통값이며 상품별로 바뀌지 않습니다.</p>"
-    )
-    # 연락처 2개 (마지막 2개).
-    for field_name, label, required, guide in _FORM_POLICY_FIELDS[5:]:
-        parts.append(_render_policy_field(field_name, label, required, guide, status))
-    parts.append("</div>")  # form-section (C)
-
-    # 안내문 — 부분 저장이 가능함을 화면에 알린다(계약 5).
+    # 안내문 — 부분 저장이 가능함을 화면에 알린다(계약 5). 고시·AS 를 여기서 안
+    # 받는 이유를 한 줄로 안내한다. 절차 안내 수준이며 규제 약속 문구는 창작하지 않는다.
     parts.append('<div class="form-note">')
     parts.append(
         "<strong>저장:</strong> [저장]을 누르면 로컬 폼 서버가 설정 파일에 기록합니다. "
         "쓰기 전 기존 파일을 자동으로 백업합니다. "
         "<strong>다 채우지 않아도 저장할 수 있습니다</strong> — 빈 칸은 기존 값을 지우지 않습니다. "
         "<strong>비밀값(client_secret)은 결과 페이지에 다시 표시되지 않습니다.</strong>"
+    )
+    parts.append(
+        " 상품정보제공고시 항목과 A/S 정보는 이 폼에 없습니다 — "
+        "상품 등록 단계에서 해당 상품에 맞는 항목만 그때 요청합니다."
     )
     parts.append("</div>")
 
@@ -1110,26 +1121,6 @@ def render_config_form_html(
     parts.append("</body>")
     parts.append("</html>")
     return "\n".join(parts)
-
-
-def _render_policy_field(
-    field_name: str,
-    label: str,
-    required: bool,
-    guide: str,
-    status: dict[str, bool],
-) -> str:
-    """(B)(C) 영역의 단일 필드 HTML 조각을 만든다."""
-    snippet = ['<div class="field">']
-    snippet.append(_field_label(field_name, label, required))
-    snippet.append(
-        f'<input type="text" id="f-{html.escape(field_name)}" '
-        f'name="{html.escape(field_name)}" class="field-input" autocomplete="off" />'
-    )
-    snippet.append(_status_badge(bool(status.get(field_name))))
-    snippet.append(f'<div class="field-guide">{html.escape(guide)}</div>')
-    snippet.append("</div>")
-    return "".join(snippet)
 
 
 def write_config_form_html(

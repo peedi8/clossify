@@ -243,13 +243,14 @@ class TestFormPostSaves:
         finally:
             srv.close()
 
-    def test_form_post_policy_fields_saved(self, tmp_path):
-        """정책 필드도 폼 POST 로 저장된다.
+    def test_form_post_policy_fields_rejected(self, tmp_path):
+        """정책 필드는 이제 양식1 관할이 아니다 — 폼 POST 로 와도 저장 거부.
 
-        양식1 = "최초 1회로 끝나는 항목만"(BACKLOG N7 정정). 상품마다 달라지는
-        origin_area_code/origin_content/manufacturer/importer/modelName/kc_declaration
-        /naver_searchad/image_providers 는 **폼에서도, 화이트리스트에서도** 빠졌다.
-        여기서는 폼1 관할의 정책 필드(공통5 + 연락처2)가 저장되는지만 검증한다.
+        양식1 = "한 번만 넣으면 다시 넣을 필요 없는 것" = 계정 자격증명 3개.
+        고시 5필드·AS 연락처 2필드는 상품 등록 단계(양식2)에서 상품에 맞는
+        항목만 요청한다. 폼에서만 감추고 서버가 계속 쓰면 의미 없으므로,
+        **저장 로직의 화이트리스트에서도 빠진다** — 폼 POST 로 와도 skipped_keys
+        로 분류되어 config 에 기록되지 않는다.
         """
         config_file = tmp_path / "config.json"
         token = approval_server.new_token()
@@ -263,10 +264,12 @@ class TestFormPostSaves:
                 port,
                 fields={
                     "token": token,
+                    # 양식1 관할(키 3개) — 이것만 저장된다.
+                    "client_id": "key_three_only_id",
+                    # 아래는 전부 양식1 관할 밖 — 저장 로직에서도 거부되어야 한다.
                     "returnCostReason": "반품 배송비 안내문",
                     "as_tel": "1577-1234",
                     "as_tel_comment": "평일 09-18시 안내",
-                    # 폼1 관할 밖의 키 — 저장 로직에서도 거부되어야 한다(아래 단정).
                     "origin_area_code": "04",
                     "origin_content": "국산",
                     "manufacturer": "어떤 제조사",
@@ -276,11 +279,13 @@ class TestFormPostSaves:
             assert status == 200
             assert srv.outcome is not None
             assert srv.outcome.saved is True
-            assert "returnCostReason" in srv.outcome.saved_keys
-            assert "as_tel" in srv.outcome.saved_keys
-            assert "as_tel_comment" in srv.outcome.saved_keys
-            # 폼1 관할 밖의 키는 화이트리스트 밖이므로 skipped_keys 에 들어가야 한다.
+            # 키 3개만 saved_keys 에 들어가야 한다.
+            assert "client_id" in srv.outcome.saved_keys
+            # 양식1 관할 밖의 키는 화이트리스트 밖이므로 skipped_keys 에 들어가야 한다.
             for removed in (
+                "returnCostReason",
+                "as_tel",
+                "as_tel_comment",
                 "origin_area_code",
                 "origin_content",
                 "manufacturer",
@@ -294,17 +299,13 @@ class TestFormPostSaves:
 
         with open(config_file, encoding="utf-8") as f:
             saved_cfg = json.load(f)
-        # 폼1 관할 필드는 저장됨.
-        assert saved_cfg["smartstore_notice_defaults"]["returnCostReason"] == "반품 배송비 안내문"
-        assert saved_cfg["smartstore_notice_defaults"]["as_tel"] == "1577-1234"
-        # as_tel_comment 폼 필드명 → config 경로는 as_guide.
-        assert saved_cfg["smartstore_notice_defaults"]["as_guide"] == "평일 09-18시 안내"
-        # 폼1 관할 밖의 키는 저장되지 않음.
-        snd = saved_cfg.get("smartstore_notice_defaults", {})
-        assert "origin_area_code" not in snd
-        assert "origin_content" not in snd
-        assert "manufacturer" not in snd
-        assert "importer" not in snd
+        # 키 3개 중 채운 것만 저장됨.
+        assert saved_cfg["naver"]["client_id"] == "key_three_only_id"
+        # 양식1 관할 밖의 키는 저장되지 않음 (smartstore_notice_defaults 섹션 자체가 없어야 함).
+        assert "smartstore_notice_defaults" not in saved_cfg, (
+            "고시/AS 필드가 양식1 저장 로직을 거쳐 config 에 기록됨 — "
+            "화이트리스트가 좁혀지지 않았음"
+        )
 
     def test_form_post_whitelist_enforced(self, tmp_path):
         """화이트리스트에 없는 키는 무시된다 (임의 키 쓰기 방지)."""
@@ -925,23 +926,37 @@ class TestFormHtmlNoExampleValues:
         submit_btns = re.findall(r'<button[^>]*type="submit"[^>]*>([^<]*)</button>', html_str)
         assert any("저장" in b for b in submit_btns), "[저장] 버튼이 type=submit 이 아님"
 
-    def test_form_has_exactly_10_form1_fields(self):
-        """폼 HTML 이 양식1 10개 필드를 모두 포함한다 (BACKLOG N7 정정).
+    def test_form_has_exactly_3_form1_fields(self):
+        """폼 HTML 이 양식1 3개 필드를 정확히 갖춘다 (키 3개 정정).
 
-        상품마다 달라지는 값은 **어디에도 등장하지 않는다** — 폼 HTML 본문·hidden
-        필드·data 속성·JS 문자열에서 모두 빠진다. (계약 2.)
+        양식1 = "한 번만 넣으면 다시 넣을 필요 없는 것" = 계정 자격증명 3개.
+        고시 5필드·AS 연락처 2필드는 폼 HTML 본문·hidden·JS 어디에도
+        등장하지 않는다 (상품 등록 단계 양식2 관할).
         """
         html_str = self._render()
-        # 10개 폼1 필드의 name="..." 이 모두 있어야 한다.
+        # 3개 폼1 필드의 name="..." 이 모두 있어야 한다.
         for field_name in config_form_server.allowed_field_names():
             assert (
                 f'name="{field_name}"' in html_str
             ), f"양식1 필드 {field_name!r} 가 폼 HTML 에 없음"
 
     def test_form_html_has_no_removed_fields(self):
-        """폼 HTML 어디에도 제거 대상 필드가 없다 (본문·hidden·JS 포함)."""
+        """폼 HTML 어디에도 제거 대상 필드가 없다 (본문·hidden·JS 포함).
+
+        양식1 에서 제거된 7개 필드(고시 5 + AS 2)와 애초에 폼1 관할이 아니었던
+        상품별 값이 모두 빠진다.
+        """
         html_str = self._render()
         removed = [
+            # 이번에 양식1 에서 제거된 7개 (고시 5 + AS 2).
+            "returnCostReason",
+            "noRefundReason",
+            "qualityAssuranceStandard",
+            "compensationProcedure",
+            "troubleShootingContents",
+            "as_tel",
+            "as_tel_comment",
+            # 애초에 폼1 관할이 아니었던 상품별 값.
             "origin_area_code",
             "origin_content",
             "importer",
@@ -963,6 +978,144 @@ class TestFormHtmlNoExampleValues:
         html_str = self._render()
         # subtitle 또는 form-note 에 "다 채우지 않아도" 문구가 있어야 한다.
         assert "다 채우지 않아도" in html_str or "부분 저장" in html_str
+
+
+# --------------------------------------------------------------------------- #
+# (j) 양식1 안내 문구 — "어디서 무엇을 받는지" 가 화면에 드러난다.
+#
+# 사용자 평(경력자): "나는 경력자임에도 뭔지를 모르겠음. 어디 가서 확인해야 함?"
+# 3칸으로 줄인 효과가 안내가 비어 있어 무효화되는 것을 막기 위해, 각 칸이
+# 어디서 무엇을 가져오는지 안내한다. 발급처(네이버 커머스API 센터)가 검색·지도용
+# "네이버 개발자센터"와 다른 곳임도 명시한다.
+# --------------------------------------------------------------------------- #
+class TestFormGuideMentionsSource:
+    """(j) 양식1 안내가 발급처·사전조건·함정을 화면에 드러내는가.
+
+    계약(이슈):
+      (a) 폼 HTML 에 "커머스API" · "통합매니저" · "IP" 안내가 존재.
+      (b) 입력 필드는 여전히 정확히 3개(회귀).
+      (c) <script> 0개(회귀).
+      (d) 존재하지 않는 하위 경로 URL 을 만들어 넣지 않는다 — 링크는 도메인까지만.
+      (e) 비밀값 미출력·부분 저장·예시값 금지(회귀).
+    """
+
+    def _render(self) -> str:
+        return config_form_server.render_config_form_html(
+            token="dummy_token",
+            port=54321,
+            config_set_status={},
+        )
+
+    def test_guide_mentions_commerce_api(self):
+        """(a) '커머스API' 안내가 폼에 존재한다."""
+        html_str = self._render()
+        assert "커머스API" in html_str, "발급처(커머스API 센터) 안내가 폼에 없음"
+
+    def test_guide_mentions_integrated_manager(self):
+        """(a) '통합매니저' 사전조건 안내가 폼에 존재한다."""
+        html_str = self._render()
+        assert "통합매니저" in html_str, "통합매니저 권한 안내가 폼에 없음"
+
+    def test_guide_mentions_api_call_ip(self):
+        """(a) 'API 호출 IP' 함정 안내가 폼에 존재한다."""
+        html_str = self._render()
+        # "API 호출 IP" 또는 "호출 IP" 형태로 안내되어야 한다.
+        assert (
+            "API 호출 IP" in html_str or "호출 IP" in html_str
+        ), "API 호출 IP 등록 함정 안내가 폼에 없음"
+
+    def test_guide_distinguishes_commerce_from_dev_center(self):
+        """(a) 커머스API 센터가 '네이버 개발자센터'와 다름을 명시한다."""
+        html_str = self._render()
+        # 두 센터 이름이 모두 등장해야 구분이 성립한다.
+        assert "커머스API" in html_str
+        assert "네이버 개발자센터" in html_str, "'네이버 개발자센터가 아님' 구분 안내가 폼에 없음"
+
+    def test_guide_mentions_apicenter_domain(self):
+        """(d) 발급처 도메인(apicenter.commerce.naver.com) 이 폼에 나타난다."""
+        html_str = self._render()
+        assert "apicenter.commerce.naver.com" in html_str, "발급처 도메인 안내가 폼에 없음"
+
+    def test_guide_no_fabricated_subpath_url(self):
+        """(d) 확인되지 않은 하위 경로 URL 을 만들어 넣지 않았다.
+
+        apicenter.commerce.naver.com 도메인은 근거가 있으나 하위 경로는 확인되지
+        않았다 → 도메인 뒤에 '/' + 추가 경로가 오면 안 된다. 메뉴명(한글)으로
+        대신 안내한다.
+        """
+        html_str = self._render()
+        # 도메인 뒤에 슬래시로 시작하는 경로(예: /mypage/...) 가 이어지면 안 된다.
+        # 허용: 도메인만("apicenter.commerce.naver.com"), 또는 닫는 태그/따옴표로 끝.
+        forbidden_paths = [
+            "apicenter.commerce.naver.com/",
+            "apicenter.commerce.naver.com/#",
+            "apicenter.commerce.naver.com/apply",
+            "apicenter.commerce.naver.com/my",
+            "apicenter.commerce.naver.com/apps",
+        ]
+        for path in forbidden_paths:
+            assert path not in html_str, f"확인되지 않은 하위 경로 URL 이 폼에 있음: {path!r}"
+
+    def test_guide_uses_menu_names_not_only_domain(self):
+        """(d) 도메인과 함께 메뉴명([애플리케이션] > [내스토어 애플리케이션]) 이 있다."""
+        html_str = self._render()
+        # 하위 경로 URL 을 쓰지 않는 대신 메뉴명으로 안내한다.
+        assert "[애플리케이션]" in html_str
+        assert "[내스토어 애플리케이션]" in html_str
+
+    def test_guide_slug_is_not_issued_value(self):
+        """store_url_slug 안내가 '발급받는 값이 아님' 을 드러낸다."""
+        html_str = self._render()
+        assert (
+            "발급받는 값이 아닙니다" in html_str or "발급받는 게 아니라" in html_str
+        ), "store_url_slug 가 발급물이 아님을 안내하는 문구가 없음"
+        # 스토어 주소 형태도 안내한다.
+        assert "smartstore.naver.com" in html_str
+
+    def test_guide_exactly_three_input_fields_regression(self):
+        """(b) 입력 필드는 정확히 3개다 (회귀)."""
+        html_str = self._render()
+        allowed = list(config_form_server.allowed_field_names())
+        assert len(allowed) == 3, f"양식1 필드가 3개가 아님: {allowed}"
+        for name in allowed:
+            assert f'name="{name}"' in html_str
+
+    def test_guide_no_script_tag_regression(self):
+        """(c) <script> 태그가 0개다 (회귀)."""
+        html_str = self._render()
+        assert "<script" not in html_str.lower()
+        assert "</script>" not in html_str.lower()
+
+    def test_guide_no_secret_values_regression(self):
+        """(e) 폼 본문에 비밀값(실제 secret 형태) 이 없다 (회귀)."""
+        html_str = self._render()
+        # 폼은 빈 칸으로 시작하므로 비밀값 placeholder 가 있으면 안 된다.
+        # password 필드는 type="password" 이며 value 속성이 비어 있어야 한다.
+        # 실제 비밀값("dummy-secret" 등) 이 하드코딩되지 않았는지 확인.
+        for forbidden in ("dummy-secret", "REPLACE_WITH", "{CLIENT_SECRET}"):
+            assert forbidden not in html_str
+
+    def test_guide_partial_save_notice_regression(self):
+        """(e) 부분 저장 안내가 여전히 있다 (회귀)."""
+        html_str = self._render()
+        assert "다 채우지 않아도" in html_str or "부분 저장" in html_str
+
+    def test_guide_no_example_values_regression(self):
+        """(e) 규제 신고값 예시값 금지가 여전히 성립한다 (회귀)."""
+        html_str = self._render()
+        assert "예: 국산" not in html_str
+        assert "예: 1577-" not in html_str
+
+    def test_guide_collapsible_does_not_bloat_main_view(self):
+        """안내가 접기(<details>) 형태라 본문 3칸을 가리지 않는다.
+
+        본문이 다시 길어지면 안 된다 — 접기/작은 글씨 등으로 본문을 가리지 않게
+        배치한다(이슈 표현 규칙). 안내 패널이 <details> 로 기본 접혀있는지 확인.
+        """
+        html_str = self._render()
+        # 안내는 <details> 접기 요소로 들어간다.
+        assert "<details" in html_str, "접기(<details>) 형태의 안내가 없음"
+        assert "</details>" in html_str
 
 
 # --------------------------------------------------------------------------- #
@@ -1265,30 +1418,22 @@ class TestConfigFormServerSourceEvidence:
         assert "approval_server.TTL_SECONDS" in src
 
     def test_source_whitelist_exact_form1_fields(self):
-        """화이트리스트가 양식1 10개 필드와 정확히 일치한다 (BACKLOG N7 정정).
+        """화이트리스트가 양식1 3개 필드와 정확히 일치한다 (키 3개 정정).
 
-        상품마다 달라지는 값(origin_area_code/origin_content/manufacturer/importer/
-        modelName/kc_declaration/naver_searchad/image_providers)이 화이트리스트에
-        남아있으면, 폼 HTML 에서 감추더라도 **서버가 계속 그 키들을 받아 저장**하게
-        된다 — "폼에서만 감추고 서버가 계속 쓰면 의미 없다". 따라서 이 값들은
-        화이트리스트에서도 빠져야 한다.
+        양식1 = "한 번만 넣으면 다시 넣을 필요 없는 것" = 계정 자격증명 3개.
+        고시 5필드·AS 연락처 2필드는 폼에서만 감추는 게 아니라 **저장 로직의
+        화이트리스트에서도 빠진다** — 폼에서만 감추고 서버가 계속 쓰면 의미 없다.
+        상품별 값(origin_area_code 등)도 마찬가지로 화이트리스트에 없다.
         """
-        # 폼1 관할 = (A)3 + (B)5 + (C)2 = 10개.
+        # 폼1 관할 = (A) 키 3개.
         expected = {
             "client_id",
             "client_secret",
             "store_url_slug",
-            "returnCostReason",
-            "noRefundReason",
-            "qualityAssuranceStandard",
-            "compensationProcedure",
-            "troubleShootingContents",
-            "as_tel",
-            "as_tel_comment",
         }
         actual = set(config_form_server.allowed_field_names())
         assert actual == expected, (
-            f"양식1 허용 필드가 10개와 일치하지 않음.\n"
+            f"양식1 허용 필드가 3개와 일치하지 않음.\n"
             f"  expected={sorted(expected)}\n"
             f"  actual  ={sorted(actual)}\n"
             f"  extra   ={sorted(actual - expected)}\n"
@@ -1302,6 +1447,15 @@ class TestConfigFormServerSourceEvidence:
         # form_values 로 받아도 skipped_keys 로 분류한다(저장 거부).
         allowed = config_form_server.allowed_field_names()
         removed_form_fields = [
+            # 이번에 양식1 에서 제거된 7개 (고시 5 + AS 2).
+            "returnCostReason",
+            "noRefundReason",
+            "qualityAssuranceStandard",
+            "compensationProcedure",
+            "troubleShootingContents",
+            "as_tel",
+            "as_tel_comment",
+            # 애초에 폼1 관할이 아니었던 상품별 값.
             "origin_area_code",
             "origin_content",
             "importer",
