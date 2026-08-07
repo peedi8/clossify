@@ -45,6 +45,26 @@ if str(_SRC) not in sys.path:
 
 from clossify import approval_server, template_migration_form
 
+# 테스트 전역: 대표이미지 조달이 네이버 실업로드를 시도하지 않도록 캐시를
+# monkeypatch 한다. 개별 테스트에서 upload_fn/main_image_url 로 덮을 수 있다.
+_TEST_IMAGE_URL = "https://shop-phinf.pstatic.net/test_dummy_image.jpg"
+
+
+@pytest.fixture(autouse=True)
+def _stub_image_cache(monkeypatch):
+    """대표이미지 캐시를 테스트용 URL 로 대체한다.
+
+    generate_dummy_excel 이 네이버 실업로드를 시도하지 않게 한다.
+    실업로드/실패 경로는 별도 테스트(ContractImageResolve)에서 upload_fn 으로
+    직접 검증한다.
+    """
+    monkeypatch.setattr(
+        template_migration_form,
+        "_read_cached_image_url",
+        lambda: _TEST_IMAGE_URL,
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Mini-xlsx 픽스처 — 실제 A1 구조를 최소한으로 흉내낸 테스트용 엑셀.
 #
@@ -229,6 +249,11 @@ class TestFormHtmlStructure:
         """카테고리코드 필드가 있다 (선택)."""
         html_str = self._render()
         assert 'name="category_code"' in html_str
+
+    def test_has_main_image_url_field_optional(self):
+        """대표이미지 주소 필드가 있다 (선택)."""
+        html_str = self._render()
+        assert 'name="main_image_url"' in html_str
 
     def test_has_provisional_registration_notice(self):
         """가등록 고지 문구가 있다."""
@@ -805,19 +830,30 @@ class TestSourceEvidence:
         assert "import openpyxl" not in src
         assert "from openpyxl" not in src
 
+    def test_source_no_placehold_co(self):
+        """소스에 placehold.co 외부 서비스 참조가 없다 (주석 제외)."""
+        src = (_SRC / "clossify" / "template_migration_form.py").read_text(encoding="utf-8")
+        # 주석과 독스트링은 역사적 맥락으로 남아있을 수 있으므로 코드 라인만 검사.
+        for line in src.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            assert "placehold.co" not in line, f"placehold.co 참조가 코드에 남음: {line}"
+
     def test_source_uses_stdlib_only(self):
         """import 가 표준 라이브러리 + 내부 모듈만 있다."""
         src = (_SRC / "clossify" / "template_migration_form.py").read_text(encoding="utf-8")
         # import 문 추출. 상대 import(from . import ...)는 별도 처리.
         imports = re.findall(r"^(?:import|from)\s+([A-Za-z_]\S*)", src, re.MULTILINE)
         for imp in imports:
-            # 내부 모듈(. approval_server) 또는 stdlib 만 허용.
+            # 내부 모듈(. approval_server, . common) 또는 stdlib 만 허용.
             top = imp.lstrip(".").split(".")[0]
             assert top in (
                 "__future__",
                 "datetime",
                 "html",
                 "http",
+                "os",
                 "re",
                 "socketserver",
                 "threading",
@@ -828,12 +864,350 @@ class TestSourceEvidence:
                 "pathlib",
                 "typing",
                 "approval_server",
+                "common",
             ), f"예상치 못한 import: {imp}"
 
 
 # --------------------------------------------------------------------------- #
-# 실제 A1 통합 테스트 (환경 변수로 경로 제공된 경우만).
+# 대표이미지 조달 계약 (외부 서비스 의존 제거).
+#
+# (a) 생성 엑셀에 placehold.co 가 없다.
+# (b) 캐시 적중 시 upload_fn 이 호출되지 않는다 (네트워크 호출 0회).
+# (c) 업로드 실패(mock) → 엑셀 생성 거부 + 사유.
+# (d) 사용자 지정 대표이미지 주소가 우리 기본값을 덮지 않는다 (우선순위 1).
+# (e) 행 배분·열 매핑·원본 무변경 회귀 (기존 테스트 + 대표이미지 주소 확인).
+# (f) 패키지 자산 PNG 가 importlib.resources 로 읽힌다.
 # --------------------------------------------------------------------------- #
+class TestDummyImageContract:
+    """대표이미지 조달 계약 (a)-(f)."""
+
+    def test_a_no_placehold_in_generated_xlsx(self, mini_a1: Path, tmp_path: Path):
+        """(a) 생성된 엑셀의 sharedStrings 에 placehold.co 가 없다."""
+        dst = tmp_path / "output.xlsx"
+        outcome = template_migration_form.generate_dummy_excel(
+            src_xlsx=mini_a1,
+            dst_xlsx=dst,
+            notice_codes_raw="111",
+            shipping_codes_raw="",
+            as_codes_raw="",
+            origin_code="0001",
+        )
+        assert outcome.generated is True
+        with zipfile.ZipFile(dst, "r") as z:
+            ss = template_migration_form._load_shared_strings(z)
+        joined = "\n".join(ss)
+        assert "placehold.co" not in joined
+        # 대표이미지 URL 이 실제로 들어가 있다.
+        assert any("http" in s for s in ss), "대표이미지 URL 이 엑셀에 없음"
+
+    def test_b_cache_hit_zero_network_calls(self, mini_a1: Path, tmp_path: Path):
+        """(b) 캐시 적중 시 upload_fn 이 호출되지 않는다."""
+        call_count = [0]
+
+        def _fake_upload(paths):
+            call_count[0] += 1
+            return ["https://example.com/uploaded.png"]
+
+        # _stub_image_cache fixture 가 _read_cached_image_url 을 stub 하므로
+        # 캐시가 항상 적중한다. upload_fn 은 호출되지 않아야 한다.
+        dst = tmp_path / "output.xlsx"
+        outcome = template_migration_form.generate_dummy_excel(
+            src_xlsx=mini_a1,
+            dst_xlsx=dst,
+            notice_codes_raw="111",
+            shipping_codes_raw="",
+            as_codes_raw="",
+            origin_code="0001",
+            upload_fn=_fake_upload,
+        )
+        assert outcome.generated is True
+        assert call_count[0] == 0, "캐시 적중 시 upload_fn 이 호출되면 안 됨"
+
+    def test_c_upload_failure_rejects_generation(self, mini_a1: Path, tmp_path: Path, monkeypatch):
+        """(c) 업로드 실패(mock) → 엑셀 생성 거부 + 사유."""
+        # 캐시를 비워서 업로드 경로를 강제한다.
+        monkeypatch.setattr(template_migration_form, "_read_cached_image_url", lambda: "")
+
+        def _failing_upload(paths):
+            raise ConnectionError("network down (test)")
+
+        dst = tmp_path / "output.xlsx"
+        outcome = template_migration_form.generate_dummy_excel(
+            src_xlsx=mini_a1,
+            dst_xlsx=dst,
+            notice_codes_raw="111",
+            shipping_codes_raw="",
+            as_codes_raw="",
+            origin_code="0001",
+            upload_fn=_failing_upload,
+        )
+        assert outcome.generated is False
+        assert "대표이미지" in outcome.reason or "업로드" in outcome.reason
+        assert dst.exists() is False, "실패 시 엑셀 파일이 생성되면 안 됨"
+
+    def test_c_empty_upload_result_rejects(self, mini_a1: Path, tmp_path: Path, monkeypatch):
+        """(c) 업로드가 빈 결과를 반환해도 생성이 거부된다."""
+        monkeypatch.setattr(template_migration_form, "_read_cached_image_url", lambda: "")
+
+        def _empty_upload(paths):
+            return []
+
+        dst = tmp_path / "output.xlsx"
+        outcome = template_migration_form.generate_dummy_excel(
+            src_xlsx=mini_a1,
+            dst_xlsx=dst,
+            notice_codes_raw="111",
+            shipping_codes_raw="",
+            as_codes_raw="",
+            origin_code="0001",
+            upload_fn=_empty_upload,
+        )
+        assert outcome.generated is False
+        assert "빈 결과" in outcome.reason or "업로드" in outcome.reason
+
+    def test_d_user_image_url_used_over_default(self, mini_a1: Path, tmp_path: Path):
+        """(d) 사용자 지정 대표이미지 주소가 우리 기본값을 덮지 않는다."""
+        user_url = "https://my.cdn.example.com/user_specified.png"
+        call_count = [0]
+
+        def _should_not_call(paths):
+            call_count[0] += 1
+            return ["https://example.com/should_not_be_used.png"]
+
+        dst = tmp_path / "output.xlsx"
+        outcome = template_migration_form.generate_dummy_excel(
+            src_xlsx=mini_a1,
+            dst_xlsx=dst,
+            notice_codes_raw="111",
+            shipping_codes_raw="",
+            as_codes_raw="",
+            origin_code="0001",
+            main_image_url=user_url,
+            upload_fn=_should_not_call,
+        )
+        assert outcome.generated is True
+        assert call_count[0] == 0, "사용자 지정 URL 이 있을 때 upload 가 호출되면 안 됨"
+        # 생성된 엑셀에 사용자 지정 URL 이 들어가야 한다.
+        with zipfile.ZipFile(dst, "r") as z:
+            ss = template_migration_form._load_shared_strings(z)
+        assert any(user_url in s for s in ss), "사용자 지정 URL 이 엑셀에 없음"
+
+    def test_d_user_image_url_overrides_cache(self, mini_a1: Path, tmp_path: Path):
+        """(d) 사용자 지정 URL 은 캐시보다도 우선한다."""
+        user_url = "https://my.cdn.example.com/user_priority.png"
+        dst = tmp_path / "output.xlsx"
+        outcome = template_migration_form.generate_dummy_excel(
+            src_xlsx=mini_a1,
+            dst_xlsx=dst,
+            notice_codes_raw="111",
+            shipping_codes_raw="",
+            as_codes_raw="",
+            origin_code="0001",
+            main_image_url=user_url,
+        )
+        assert outcome.generated is True
+        with zipfile.ZipFile(dst, "r") as z:
+            ss = template_migration_form._load_shared_strings(z)
+        assert any(user_url in s for s in ss)
+        # 캐시 URL (_TEST_IMAGE_URL) 이 아니어야 한다.
+        assert all(_TEST_IMAGE_URL not in s for s in ss)
+
+    def test_e_row_distribution_unchanged_with_image_url(self, mini_a1: Path, tmp_path: Path):
+        """(e) 대표이미지 조달 변경 후에도 행 배분·열 매핑이 동일하다."""
+        dst = tmp_path / "output.xlsx"
+        outcome = template_migration_form.generate_dummy_excel(
+            src_xlsx=mini_a1,
+            dst_xlsx=dst,
+            notice_codes_raw="111\n222\n333",
+            shipping_codes_raw="444,555",
+            as_codes_raw="666",
+            origin_code="0001",
+            main_image_url="https://example.com/test.png",
+        )
+        assert outcome.generated is True
+        assert outcome.row_count == 3
+
+        # 열 매핑 확인 — W(대표이미지) 열에 URL 이 있다.
+        with zipfile.ZipFile(dst, "r") as z:
+            sheet = z.read("xl/worksheets/sheet1.xml").decode("utf-8")
+        ns = "{" + _NS_MAIN + "}"
+        root = ET.fromstring(sheet)
+        sd = root.find(f"{ns}sheetData")
+        rows = sd.findall(f"{ns}row")
+        data_rows = [r for r in rows if int(r.get("r", "0")) >= 7]
+        assert len(data_rows) == 3
+
+        # 각 행에 W 열 셀이 있는지.
+        for r in data_rows:
+            cells = r.findall(f"{ns}c")
+            refs = [c.get("r") for c in cells]
+            row_num = r.get("r")
+            assert f"W{row_num}" in refs, f"행 {row_num} 에 W 열(대표이미지) 이 없음"
+
+    def test_e_source_unchanged_with_image_resolution(self, mini_a1: Path, tmp_path: Path):
+        """(e) 대표이미지 조달 후에도 원본 A1 이 무변경이다."""
+        original = mini_a1.read_bytes()
+        dst = tmp_path / "output.xlsx"
+        template_migration_form.generate_dummy_excel(
+            src_xlsx=mini_a1,
+            dst_xlsx=dst,
+            notice_codes_raw="111",
+            shipping_codes_raw="",
+            as_codes_raw="",
+            origin_code="0001",
+            main_image_url="https://example.com/test.png",
+        )
+        assert original == mini_a1.read_bytes()
+
+    def test_f_dummy_image_asset_exists(self):
+        """(f) 패키지 자산 PNG 가 importlib.resources 로 읽힌다."""
+        from clossify import common
+
+        asset_path = common.package_data_path("dummy_main_image.png")
+        assert asset_path.exists(), f"패키지 자산이 없음: {asset_path}"
+        # PNG 시그니처 확인.
+        data = asset_path.read_bytes()
+        assert data[:8] == b"\x89PNG\r\n\x1a\n", "유효한 PNG 가 아님"
+        assert len(data) > 100, "PNG 가 너무 작음 (손상 의심)"
+
+    def test_upload_success_caches_url(self, mini_a1: Path, tmp_path: Path, monkeypatch):
+        """업로드 성공 시 CDN URL 이 캐시에 저장된다."""
+        monkeypatch.setattr(template_migration_form, "_read_cached_image_url", lambda: "")
+        cached_urls = []
+        monkeypatch.setattr(
+            template_migration_form,
+            "_write_cached_image_url",
+            lambda url: cached_urls.append(url),
+        )
+
+        cdn_url = "https://shop-phinf.pstatic.net/uploaded_123.jpg"
+
+        def _upload(paths):
+            return [cdn_url]
+
+        dst = tmp_path / "output.xlsx"
+        outcome = template_migration_form.generate_dummy_excel(
+            src_xlsx=mini_a1,
+            dst_xlsx=dst,
+            notice_codes_raw="111",
+            shipping_codes_raw="",
+            as_codes_raw="",
+            origin_code="0001",
+            upload_fn=_upload,
+        )
+        assert outcome.generated is True
+        assert len(cached_urls) == 1
+        assert cached_urls[0] == cdn_url
+
+
+# --------------------------------------------------------------------------- #
+# (업로드 실패 경로 정화) 템플릿 이관 폼의 업로드 실패 사유에서 사용자명·
+# 세션ID 가 노출되지 않는다 (실제 함수 호출로 검증).
+#
+# 과거 결함: ``common.sanitize_error`` 가 이중 역슬래시 경로(repr 형태)를
+# 놓쳤다. 파이썬 예외 메시지는 경로를 repr 형태로 담아 내보내므로, 실제로
+# 가장 자주 만나는 형태를 정확히 놓치고 있었다. ``_resolve_dummy_image_url``
+# 은 업로드 실패 시 이 정화기를 거쳐 ``ImageResolveError`` 사유를 만들고,
+# 그 사유가 결과 페이지에까지 흘러간다. 문자열 단위 테스트만으로는 이 결함을
+# 또 놓친다 — 실제 호출 경로를 끝까지 타야 잡힌다.
+# --------------------------------------------------------------------------- #
+class TestUploadFailurePathRedaction:
+    """업로드 실패 사유에서 절대경로(사용자명·세션ID)가 새어나가지 않는다.
+
+    upload_fn 이 FileNotFoundError-스타일 예외(절대경로 포함) 를 일으키면,
+    generate_dummy_excel → _resolve_dummy_image_url → sanitize_error →
+    Outcome.reason → 결과 페이지 로 사유가 흘러간다. 경로 값은 가려지고
+    사유(예외 타입·골격) 는 보여야 한다.
+    """
+
+    def test_filenotfounderror_username_not_leaked(
+        self, mini_a1: Path, tmp_path: Path, monkeypatch
+    ):
+        """FileNotFoundError(절대경로) 사유에 사용자명이 새어나가지 않는다."""
+        monkeypatch.setattr(template_migration_form, "_read_cached_image_url", lambda: "")
+
+        # 사용자명을 포함한 절대경로로 FileNotFoundError 를 일으킨다.
+        # 이것이 "실사용 노출" 경로다 — 업로드 대상 파일이 빠졌을 때 이런
+        # 예외가 발생하고, 그 사유가 결과 페이지에 실린다.
+        leaky_path = r"C:\Users\speedy\AppData\Local\Temp\missing_probe.png"
+
+        def _upload(paths):
+            open(leaky_path)  # FileNotFoundError 발생.
+
+        dst = tmp_path / "output.xlsx"
+        outcome = template_migration_form.generate_dummy_excel(
+            src_xlsx=mini_a1,
+            dst_xlsx=dst,
+            notice_codes_raw="111",
+            shipping_codes_raw="",
+            as_codes_raw="",
+            origin_code="0001",
+            upload_fn=_upload,
+        )
+        assert outcome.generated is False
+        # 사용자명(speedy) 이 사유에 새어나가면 안 된다.
+        assert "speedy" not in outcome.reason, f"사용자명이 사유에 노출됨: {outcome.reason!r}"
+        # 경로 전체도 새어나가면 안 된다.
+        assert "missing_probe.png" not in outcome.reason
+        assert "AppData" not in outcome.reason
+        # 사유 골격(예외 타입·이미지 업로드 언급)은 남는다 (조용한 실패 금지).
+        assert "FileNotFoundError" in outcome.reason or "업로드" in outcome.reason
+        assert "[REDACTED]" in outcome.reason
+
+    def test_filenotfounderror_sessionid_not_leaked(
+        self, mini_a1: Path, tmp_path: Path, monkeypatch
+    ):
+        """FileNotFoundError(세션ID 포함 경로) 사유에 세션ID 가 새지 않는다."""
+        monkeypatch.setattr(template_migration_form, "_read_cached_image_url", lambda: "")
+
+        # 세션ID 가 디렉토리명에 박힌 경로 — 네이버 업로드 임시 경로 흉내.
+        leaky_path = r"C:\Users\operator\AppData\Local\Temp\session-7f3a2b9c\img.png"
+
+        def _upload(paths):
+            open(leaky_path)
+
+        dst = tmp_path / "output.xlsx"
+        outcome = template_migration_form.generate_dummy_excel(
+            src_xlsx=mini_a1,
+            dst_xlsx=dst,
+            notice_codes_raw="111",
+            shipping_codes_raw="",
+            as_codes_raw="",
+            origin_code="0001",
+            upload_fn=_upload,
+        )
+        assert outcome.generated is False
+        assert "7f3a2b9c" not in outcome.reason
+        assert "operator" not in outcome.reason
+        assert "[REDACTED]" in outcome.reason
+
+    def test_posix_path_not_leaked_in_outcome(self, mini_a1: Path, tmp_path: Path, monkeypatch):
+        """POSIX 절대경로(/home/...) 도 사유에 새지 않는다 (리눅스 CI 대비)."""
+        monkeypatch.setattr(template_migration_form, "_read_cached_image_url", lambda: "")
+
+        def _upload(paths):
+            raise FileNotFoundError(
+                "[Errno 2] No such file or directory: '/home/ci-runner/missing.png'"
+            )
+
+        dst = tmp_path / "output.xlsx"
+        outcome = template_migration_form.generate_dummy_excel(
+            src_xlsx=mini_a1,
+            dst_xlsx=dst,
+            notice_codes_raw="111",
+            shipping_codes_raw="",
+            as_codes_raw="",
+            origin_code="0001",
+            upload_fn=_upload,
+        )
+        assert outcome.generated is False
+        assert "ci-runner" not in outcome.reason
+        assert "missing.png" not in outcome.reason
+        assert "[REDACTED]" in outcome.reason
+        # 사유 골격은 보인다.
+        assert "FileNotFoundError" in outcome.reason
+
+
 @pytest.mark.skipif(
     not os.environ.get("CLOSSIFY_A1_TEMPLATE"),
     reason="CLOSSIFY_A1_TEMPLATE 환경 변수가 설정되지 않음",

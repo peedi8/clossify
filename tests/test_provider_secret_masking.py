@@ -287,3 +287,146 @@ class TestSanitizationSingleSourceOfTruth:
     def test_common_sanitize_provider_response_is_alias(self):
         text = "invalid key sk-ABCD1234abcd5678"
         assert common.sanitize_provider_response(text) == common.sanitize_text(text)
+
+
+# =========================================================================== #
+# 예외 메시지 경로 정화 (이중 역슬래시 repr 형태 포함).
+#
+# 과거 결함: ``sanitize_error``/``sanitize_text`` 는 단일 역슬래시 Windows
+# 경로(`C:\Users\..`)만 매칭했다. 하지만 파이썬 예외 메시지는 경로를 repr
+# 형태(역슬래시 이중, 예: 'C:\\Users\\..')로 담아 내보내므로, 실제로 가장
+# 자주 만나는 형태를 정확히 놓치고 있었다 — 즉 "동작한다"는 착시.
+# =========================================================================== #
+class TestExceptionPathRedaction:
+    """예외 메시지 안의 절대경로도 가린다 (사유는 남긴다).
+
+    (a) 이중 역슬래시 Windows 경로가 가려진다.
+    (b) 단일 역슬래시 Windows 경로가 여전히 가려진다 (회귀).
+    (c) 실제 FileNotFoundError(존재하지 않는 절대경로 열기) 를 정화하면
+        경로가 안 보이고 예외 타입은 보인다.
+    (d) POSIX 절대경로(/home/..., /Users/...) 도 가려진다.
+    (e) https:// URL 은 가려지지 않는다 (과탐 방지 — URL 은 진단에 필요).
+    (f) 일반 한국어 문장이 훼손되지 않는다.
+    """
+
+    def test_a_double_backslash_windows_path_redacted(self):
+        """(a) 이중 역슬래시 Windows 경로(repr 형태) 가 가려진다.
+
+        주의: 파이썬 소스에서 ``"C:\\\\Users"`` 는 실제로 ``C:\\Users`` (역슬래시
+        2개) 로 인코딩된다. 이것이 ``str(FileNotFoundError)`` 가 내보내는
+        형태와 동일하다 — 결함 있던 단일-역슬래시 패턴은 이 형태를 놓쳤다.
+        ``"C:\\Users"`` (역슬래시 1개) 로 테스트하면 결함을 잡아내지 못한다.
+        """
+        # 실제 문자열에 역슬래시가 2개씩 들어간 형태 (repr 형태).
+        text = "file at C:\\\\Users\\\\speedy\\\\secret.png"
+        # 전제 검증: 실제로 역슬래시가 6개(구분자 3개 x 2) 있어야 한다.
+        assert text.count("\\") == 6, f"테스트 픽스처가 잘못됨: {text!r}"
+        masked = common.sanitize_text(text)
+        assert "speedy" not in masked, f"사용자명이 새어나감: {masked!r}"
+        assert "secret.png" not in masked
+        assert "[REDACTED]" in masked
+
+    def test_a_double_backslash_in_quoted_repr_form(self):
+        """(a) repr 인용 형태('C:\\\\Users\\\\...')도 가려진다.
+
+        실제 FileNotFoundError str() 은 인용부호로 경로를 감싸고 역슬래시를
+        이중으로 인코딩한다. 이 형태가 가장 자주 노출되는 실전 형태다.
+        """
+        # str(e) 형태: 'C:\\\\Users\\\\alice\\\\no.png' (역슬래시 6개).
+        text = "[Errno 2] No such file or directory: 'C:\\\\Users\\\\alice\\\\no.png'"
+        assert text.count("\\") == 6
+        masked = common.sanitize_text(text)
+        assert "alice" not in masked
+        assert "no.png" not in masked
+        assert "[REDACTED]" in masked
+        # 사유 골격은 남는다.
+        assert "Errno 2" in masked or "No such file" in masked
+
+    def test_b_single_backslash_windows_path_still_redacted(self):
+        """(b) 단일 역슬래시 Windows 경로도 가려진다 (회귀 방지)."""
+        text = "file at C:\\Users\\alice\\x.png"
+        masked = common.sanitize_text(text)
+        assert "alice" not in masked
+        assert "[REDACTED]" in masked
+
+    def test_b_forward_slash_windows_path_still_redacted(self):
+        """(b) 슬래시 형태 Windows 경로(C:/Users/..)도 가려진다 (회귀)."""
+        text = "file at C:/Users/alice/x.png"
+        masked = common.sanitize_text(text)
+        assert "alice" not in masked
+        assert "[REDACTED]" in masked
+
+    def test_c_real_filenotfounderror_redacted(self, tmp_path):
+        """(c) 실제 FileNotFoundError 를 정화하면 경로가 안 보이고 타입은 보인다.
+
+        실제 예외를 일으켜 검증한다 — 문자열 단위 테스트만으로는 이 결함을
+        놓쳤다 (이것이 이 티켓의 핵심 교훈).
+        """
+        # 존재하지 않는 절대경로 — tmp_path 하위라도 예외 메시지에 절대경로가
+        # repr 형태로 실린다. 사용자명을 흉내 내기 위해 alice 하위를 쓴다.
+        nonexistent = tmp_path / "Users-alice-standin" / "nope_probe.png"
+        try:
+            open(str(nonexistent))
+            raise AssertionError("예외가 발생해야 함")
+        except FileNotFoundError as exc:
+            sanitized = common.sanitize_error(exc)
+
+        # 예외 타입명은 보인다.
+        assert "FileNotFoundError" in sanitized
+        # 사유 골격은 보인다.
+        assert "No such file" in sanitized or "Errno" in sanitized
+        # 경로 값(파일명 일부)은 가려진다.
+        assert "nope_probe.png" not in sanitized
+        assert "[REDACTED]" in sanitized
+
+    def test_d_posix_home_path_redacted(self):
+        """(d) POSIX /home/... 절대경로가 가려진다."""
+        text = "error in /home/alice/secret.png"
+        masked = common.sanitize_text(text)
+        assert "alice" not in masked
+        assert "[REDACTED]" in masked
+
+    def test_d_posix_users_path_redacted(self):
+        """(d) POSIX /Users/... 절대경로가 가려진다 (macOS)."""
+        text = "error in /Users/bob/secret.png"
+        masked = common.sanitize_text(text)
+        assert "bob" not in masked
+        assert "[REDACTED]" in masked
+
+    def test_d_posix_etc_path_redacted(self):
+        """(d) POSIX /etc/... 경로도 가려진다 (회귀)."""
+        text = "error in /etc/passwd"
+        masked = common.sanitize_text(text)
+        assert "/etc/passwd" not in masked
+        assert "[REDACTED]" in masked
+
+    def test_e_https_url_not_redacted(self):
+        """(e) https:// URL 은 가려지지 않는다 (과탐 방지).
+
+        URL 은 진단에 필요하고 비밀이 아니다 — 문장 전체를 가리면 안 된다.
+        """
+        text = "see https://platform.openai.com/docs for help"
+        masked = common.sanitize_text(text)
+        assert "https://platform.openai.com/docs" in masked
+        assert "[REDACTED]" not in masked
+
+    def test_e_http_url_not_redacted(self):
+        """(e) http:// URL 도 가려지지 않는다."""
+        text = "fetch http://example.com/api failed"
+        masked = common.sanitize_text(text)
+        assert "http://example.com/api" in masked
+
+    def test_f_korean_sentence_unchanged(self):
+        """(f) 일반 한국어 문장이 훼손되지 않는다."""
+        text = "상품 등록에 실패했습니다. 카테고리를 확인하세요."
+        masked = common.sanitize_text(text)
+        assert masked == text
+
+    def test_f_mixed_korean_and_path(self):
+        """(f) 한국어 사유와 경로가 섞여 있으면 사유는 남고 경로만 가려진다."""
+        text = "이미지 열기 실패: C:\\Users\\alice\\img.png 를 찾을 수 없습니다"
+        masked = common.sanitize_text(text)
+        assert "이미지 열기 실패" in masked
+        assert "찾을 수 없습니다" in masked
+        assert "alice" not in masked
+        assert "[REDACTED]" in masked

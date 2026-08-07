@@ -309,13 +309,19 @@ SENSITIVE_PATTERNS: list[re.Pattern[str]] = [
     # 긴 hex 토큰 (32자 이상 16진수). OAuth client_secret 등.
     re.compile(r"\b([0-9a-fA-F]{32,})\b"),
     # Windows 파일시스템 경로 전체 (드라이브 문자 포함).
+    # 파이썬 예외 메시지는 경로를 repr 형태(역슬래시 이중)로 담아 내보내므로,
+    # 단일 구분자와 이중 구분자 모두 매칭해야 한다. 아래 정규식의
+    # `[\\/][\\/]?` 부분이 1~2개의 연속된 역슬래시/슬래시를 커버한다.
     re.compile(
-        r"([A-Za-z]:[\\/](?:Users|home|private|secret|config|\.local|Desktop|Documents)[\\/])[^\"'<>\s]+",
+        r"([A-Za-z]:[\\/][\\/]?"
+        r"(?:Users|home|private|secret|config|\.local|Desktop|Documents)[\\/][\\/]?)"
+        r"[^\"'<>\s]+",
         re.IGNORECASE,
     ),
-    # POSIX 시스템/사용자 디렉토리 경로.
+    # POSIX 시스템/사용자 디렉토리 경로. 슬래시 단일/이중 모두 커버.
     re.compile(
-        r"(/(?:home|Users|etc|var|root|tmp|opt|srv|private|secret)/[^\"'<>\s]+)", re.IGNORECASE
+        r"(/[/]?(?:home|Users|etc|var|root|tmp|opt|srv|private|secret)/[^\"'<>\s]+)",
+        re.IGNORECASE,
     ),
     # traceback 헤더 및 File 프레임.
     re.compile(r"Traceback\s*\(most\s+recent\s+call\s+last\)", re.IGNORECASE),

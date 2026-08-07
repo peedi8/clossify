@@ -43,6 +43,7 @@ from __future__ import annotations
 import datetime
 import html
 import http.server
+import os
 import re
 import socketserver
 import threading
@@ -53,7 +54,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from . import approval_server
+from . import approval_server, common
 
 # ---------------------------------------------------------------------------
 # 상수.
@@ -116,8 +117,29 @@ _STYLE_ORIGIN = "18"  # 원산지 전용 텍스트 셀.
 # 더미 상품의 고정값들 (규제값 아님 — 명시적 더미이므로 허용).
 _DUMMY_PRICE = 100  # 판매가 최소값 근사.
 _DUMMY_STOCK = 1  # 재고 최소값.
-_DUMMY_IMAGE = "https://placehold.co/100x100.png"  # 대표이미지 (더미 URL).
 _DUMMY_DETAIL = "<p>템플릿 이관용 임시 상품입니다. 자동 삭제 예정.</p>"
+
+# ---------------------------------------------------------------------------
+# 대표이미지 조달 (외부 서비스 의존 제거).
+#
+# 과거: ``https://placehold.co/100x100.png`` (타사 플레이스홀더 서비스).
+#   - 그 서비스가 죽거나 네이버가 차단하면 업로드가 통째로 실패하고 원인이
+#     화면에 드러나지 않는다 (조용한 통과).
+#   - 우리 산출물에 선언되지 않은 외부 의존이 들어있었다.
+#
+# 현재: ``data/dummy_main_image.png`` (100x100 단색 PNG, 패키지 자산).
+#   - 215바이트짜리 표준 PNG. 표준 라이브러리(zlib+struct)로 생성 가능한
+#     포맷이지만, **패키지 자산으로 동봉**해 생성 코드가 필요 없게 한다
+#     (과거 이 프로젝트에서 자산 누락 사고가 있었다 — importlib.resources 관례).
+#   - common.package_data_path 로 읽는다 (소스 트리·editable·wheel 모두 동일).
+#   - 최초 1회 업로드 후 CDN 주소를 캐시(STATE_DIR/template_migration_dummy_image.json)
+#     해 재사용 — 캐시 적중 시 네트워크 호출 0회.
+#   - 업로드는 기존 이미지 업로드 경로(naver_client.upload_images)를 재사용.
+#   - 업로드 실패 시 엑셀 생성을 거부하고 사유를 알린다 (조용한 통과 금지).
+#   - 사용자가 직접 대표이미지 주소를 지정할 수 있는 선택 입력을 둔다.
+# ---------------------------------------------------------------------------
+_DUMMY_IMAGE_ASSET = "dummy_main_image.png"
+_DUMMY_IMAGE_CACHE_NAME = "template_migration_dummy_image.json"
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +277,7 @@ def _inject_dummy_rows(
     shipping_codes: list[str],
     as_codes: list[str],
     origin_code: str,
+    image_url: str,
     category_code: str = "",
 ) -> str:
     """원본 A1 사본에 더미 행들을 주입해 새 xlsx 를 만든다.
@@ -272,6 +295,7 @@ def _inject_dummy_rows(
         shipping_codes: 배송비 템플릿코드 리스트.
         as_codes: AS 템플릿코드 리스트.
         origin_code: 원산지코드 (사용자 입력값).
+        image_url: 대표이미지 URL (조달된 값 — 사용자 지정 또는 업로드된 CDN).
         category_code: 카테고리코드 (선택).
 
     Returns:
@@ -314,7 +338,7 @@ def _inject_dummy_rows(
     # 공통 문자열.
     strings.append(origin_code)
     origin_idx = len(strings) - 1
-    strings.append(_DUMMY_IMAGE)
+    strings.append(image_url)
     image_idx = len(strings) - 1
     strings.append(_DUMMY_DETAIL)
     detail_idx = len(strings) - 1
@@ -451,6 +475,142 @@ def _verify_injection(xlsx_path: str | Path, *, expected_rows: int) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 대표이미지 조달 (외부 서비스 의존 제거).
+#
+# 우선순위:
+#   1. 사용자가 직접 대표이미지 URL 을 지정 → 그 값을 그대로 쓴다 (우리 기본값이
+#      덮지 않는다).
+#   2. 캐시된 CDN 주소가 있으면 재사용 (네트워크 호출 0회).
+#   3. 패키지 자산 PNG(data/dummy_main_image.png) 를 업로드 → CDN 주소 획득 → 캐시.
+#
+# 업로드는 기존 경로(naver_client.upload_images)를 재사용한다. 새로 만들지 않는다.
+# 업로드 실패 시 ``ImageResolveError`` 를 일으켜 호출자(generate_dummy_excel)가
+# 엑셀 생성을 거부하게 한다 — 깨진 주소가 박힌 엑셀을 만들지 않는다 (조용한 통과
+# 금지).
+#
+# 캐시 위치: ``common.STATE_DIR / _DUMMY_IMAGE_CACHE_NAME``. 비밀값이 아니므로
+# 별도 파일로 둔다(config.json 이나 토큰과 섞이지 않는다).
+# ---------------------------------------------------------------------------
+class ImageResolveError(RuntimeError):
+    """대표이미지 조달 실패 — 업로드 실패·자산 부재 등."""
+
+
+def _dummy_image_cache_path() -> Path:
+    """캐시 파일 경로 (STATE_DIR 아래 별도 파일)."""
+    return Path(common.STATE_DIR) / _DUMMY_IMAGE_CACHE_NAME
+
+
+def _read_cached_image_url() -> str:
+    """캐시된 대표이미지 CDN URL 을 읽는다. 없으면 빈 문자열.
+
+    비밀값이 아니므로 일반 파일로 취급한다.
+    """
+    cache = _dummy_image_cache_path()
+    try:
+        import json
+
+        data = json.loads(cache.read_text(encoding="utf-8"))
+        url = str(data.get("url") or "").strip()
+        return url
+    except Exception:
+        return ""
+
+
+def _write_cached_image_url(url: str) -> None:
+    """업로드로 얻은 CDN URL 을 캐시 파일에 저장한다 (비밀값 아님)."""
+    if not url:
+        return
+    cache = _dummy_image_cache_path()
+    try:
+        import json
+
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cache.with_suffix(cache.suffix + ".tmp")
+        tmp.write_text(
+            json.dumps({"url": url}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        os.replace(tmp, cache)
+    except OSError:
+        # 캐시 쓰기 실패는 치명적이지 않다 — 다음 생성 때 업로드를 다시 시도한다.
+        # 단, 호출자에게 알리지 않고 조용히 넘기면 안 되므로 로그는 남기지 않되
+        # 캐시 없음 경로가 그대로 동작하게 둔다.
+        pass
+
+
+def _resolve_dummy_image_url(
+    *,
+    user_image_url: str = "",
+    upload_fn: Any = None,
+) -> str:
+    """대표이미지 URL 을 조달한다.
+
+    우선순위:
+      1. ``user_image_url`` 이 비어있지 않으면 그 값 (우리 기본값이 덮지 않는다).
+      2. 캐시된 CDN URL.
+      3. 패키지 자산 PNG 업로드 → 새 CDN URL → 캐시.
+
+    Args:
+        user_image_url: 사용자가 직접 지정한 대표이미지 주소 (선택).
+        upload_fn: 패키지 자산 PNG 경로 리스트 → CDN URL 리스트 변환 함수.
+            기본값은 ``naver_client.upload_images``. 테스트 주입 가능.
+
+    Returns:
+        조달된 대표이미지 URL 문자열.
+
+    Raises:
+        ImageResolveError: 업로드 실패 또는 패키지 자산 부재.
+    """
+    # 1. 사용자 지정값 우선.
+    user_url = (user_image_url or "").strip()
+    if user_url:
+        return user_url
+
+    # 2. 캐시 적중 시 네트워크 호출 0회.
+    cached = _read_cached_image_url()
+    if cached:
+        return cached
+
+    # 3. 패키지 자산 PNG 업로드.
+    asset_path = common.package_data_path(_DUMMY_IMAGE_ASSET)
+    if not asset_path.exists():
+        raise ImageResolveError(
+            f"대표이미지 패키지 자산이 없습니다: {asset_path} "
+            "(설치본이 깨졌거나 wheel 에서 누락됨). "
+            "사용자 대표이미지 주소를 직접 지정하세요."
+        )
+
+    if upload_fn is None:
+        # 지연 import — naver_client 는 requests/bcrypt 에 의존하므로 모듈 로딩
+        # 시점이 아닌 실제 업로드가 필요할 때만 불러온다. 테스트가 mock 주입 없이
+        # generate_dummy_excel 을 호출해도 모듈 자체는 import 된다.
+        from . import naver_client
+
+        upload_fn = naver_client.upload_images
+
+    try:
+        urls = upload_fn([str(asset_path)])
+    except Exception as exc:
+        # 네이버 실호출 에러를 그대로 노출하면 인증 정보가 새어나갈 수 있다.
+        # 사유(예외 타입)는 남기고 메시지는 sanitize 한다.
+        reason = common.sanitize_error(exc)
+        raise ImageResolveError(
+            f"대표이미지 업로드 실패 — {reason}. "
+            "깨진 이미지 주소가 박힌 엑셀을 만들지 않기 위해 생성을 거부합니다. "
+            "사용자 대표이미지 주소를 직접 지정하거나 인증·네트워크를 확인하세요."
+        ) from exc
+
+    if not urls or not str(urls[0] or "").strip():
+        raise ImageResolveError(
+            "대표이미지 업로드가 빈 결과를 반환했습니다. "
+            "깨진 이미지 주소가 박힌 엑셀을 만들지 않기 위해 생성을 거부합니다."
+        )
+    cdn_url = str(urls[0]).strip()
+    _write_cached_image_url(cdn_url)
+    return cdn_url
+
+
+# ---------------------------------------------------------------------------
 # 공개 API: 더미 엑셀 생성 (폼 서버 없이 직접 호출용).
 # ---------------------------------------------------------------------------
 def generate_dummy_excel(
@@ -462,12 +622,18 @@ def generate_dummy_excel(
     as_codes_raw: str,
     origin_code: str,
     category_code: str = "",
+    main_image_url: str = "",
+    upload_fn: Any = None,
 ) -> Outcome:
     """더미 대량등록 엑셀을 생성한다.
 
     셋 다(고시/배송/AS) 비어 있으면 생성하지 않고 사유를 알린다.
     원산지코드가 없으면 생성을 거부한다 (규제값 — 예시값·기본값 창작 금지).
     이상 코드 줄은 어느 줄이 왜 탈락했는지 명시한다 (조용한 드롭 금지).
+
+    대표이미지 URL 조달은 ``_resolve_dummy_image_url`` 에 위임한다. 업로드 실패 시
+    ``ImageResolveError`` 를 잡아 엑셀 생성을 거부한다 (깨진 주소가 박힌 엑셀을
+    만들지 않는다 — 조용한 통과 금지).
 
     Args:
         src_xlsx: 원본 A1 엑셀 경로.
@@ -477,6 +643,12 @@ def generate_dummy_excel(
         as_codes_raw: AS 템플릿코드 원시 입력.
         origin_code: 원산지코드 (사용자 실값).
         category_code: 카테고리코드 (선택).
+        main_image_url: 사용자가 직접 지정한 대표이미지 주소 (선택).
+            비어 있으면 패키지 자산 PNG 를 업로드해 CDN 주소를 얻는다
+            (캐시 적중 시 네트워크 호출 0회).
+        upload_fn: 테스트 주입용 업로드 함수. 기본값은
+            ``naver_client.upload_images``. ``main_image_url`` 이나 캐시가
+            있으면 호출되지 않는다.
 
     Returns:
         ``Outcome`` — 생성 결과.
@@ -521,6 +693,20 @@ def generate_dummy_excel(
             rejected_lines=all_rejected + [f"'{cat}' — 카테고리코드가 숫자가 아님"],
         )
 
+    # 대표이미지 URL 조달 (외부 서비스 의존 제거).
+    # 업로드 실패 시 ImageResolveError 를 잡아 엑셀 생성을 거부한다.
+    try:
+        image_url = _resolve_dummy_image_url(
+            user_image_url=main_image_url,
+            upload_fn=upload_fn,
+        )
+    except ImageResolveError as exc:
+        return Outcome(
+            generated=False,
+            reason=str(exc),
+            rejected_lines=all_rejected,
+        )
+
     # 엑셀 생성.
     try:
         output = _inject_dummy_rows(
@@ -530,6 +716,7 @@ def generate_dummy_excel(
             shipping_codes=shipping_codes,
             as_codes=as_codes,
             origin_code=origin,
+            image_url=image_url,
             category_code=cat,
         )
     except (ValueError, OSError, zipfile.BadZipFile) as exc:
@@ -764,6 +951,32 @@ def render_template_migration_form_html(
 
     parts.append("</div>")  # form-section
 
+    # 대표이미지 섹션 (선택).
+    parts.append('<div class="form-section">')
+    parts.append("<h2>대표이미지 (선택)</h2>")
+    parts.append(
+        '<p class="form-section-desc">비워두면 패키지에 포함된 더미 이미지를 '
+        "업로드해 자동으로 채웁니다. 이미 사용할 이미지 주소가 있거나 업로드가 "
+        "막힌 경우에 직접 지정하세요.</p>"
+    )
+
+    # 대표이미지 URL (선택).
+    parts.append('<div class="field">')
+    parts.append(_field_label("main_image_url", "대표이미지 주소", required=False))
+    parts.append(
+        '<input type="text" id="f-main_image_url" name="main_image_url" '
+        'class="field-input" autocomplete="off" '
+        'placeholder="[선택] https://example.com/image.png" />'
+    )
+    parts.append(
+        '<div class="field-guide">비워두면 더미 이미지를 자동 업로드합니다. '
+        "업로드 실패 시 엑셀 생성이 거부되며 사유가 표시됩니다 — "
+        "이 경우 직접 주소를 지정하세요.</div>"
+    )
+    parts.append("</div>")  # field
+
+    parts.append("</div>")  # form-section
+
     # 안내문.
     parts.append('<div class="form-note">')
     parts.append(
@@ -995,6 +1208,7 @@ class _TemplateFormHandler(http.server.BaseHTTPRequestHandler):
         as_raw = form_values.get("as_codes", "")
         origin = form_values.get("origin_code", "")
         category = form_values.get("category_code", "")
+        main_image = form_values.get("main_image_url", "")
         src_xlsx = form_values.get("src_xlsx", "") or srv.src_xlsx_path
 
         # 출력 경로 — 타임스탬프 기반.
@@ -1010,6 +1224,7 @@ class _TemplateFormHandler(http.server.BaseHTTPRequestHandler):
             as_codes_raw=as_raw,
             origin_code=origin,
             category_code=category,
+            main_image_url=main_image,
         )
 
         # 7. 결과 기록하고 토큰 폐기.
@@ -1230,6 +1445,7 @@ def actual_bound_host(server: TemplateFormServer) -> str:
 
 
 __all__ = [
+    "ImageResolveError",
     "Outcome",
     "TemplateFormServer",
     "_load_shared_strings",

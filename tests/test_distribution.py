@@ -160,6 +160,22 @@ def test_b_data_assets_in_wheel(built_wheel: Path) -> None:
         )
 
 
+def test_b_dummy_image_asset_in_wheel(built_wheel: Path) -> None:
+    """``dummy_main_image.png`` is packaged under ``clossify/data/`` in the wheel.
+
+    This guards against the external-service dependency regression: the dummy
+    main image was previously a ``placehold.co`` URL. It is now a packaged PNG
+    asset that must ship inside the wheel.
+    """
+    with zipfile.ZipFile(built_wheel) as zf:
+        names = zf.namelist()
+    wheel_path = "clossify/data/dummy_main_image.png"
+    assert wheel_path in names, (
+        f"dummy_main_image.png is missing from the wheel (expected at {wheel_path!r}). "
+        f"Wheel data contents: {sorted(n for n in names if 'data/' in n)}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # (c) Every agents/*.md prompt asset is inside the wheel under clossify/agents/.
 # ---------------------------------------------------------------------------
