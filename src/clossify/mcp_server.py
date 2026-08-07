@@ -34,6 +34,7 @@ from typing import Any
 from mcp.server import MCPServer
 
 from . import common, naver_client, qa_agents
+from . import listing_templates as _templates_mod
 from . import register as _register_mod
 
 # 서버 인스턴스 — 클라이언트 LLM이 discover 하는 도구들의 컨테이너.
@@ -1212,6 +1213,33 @@ def _stringify_policy(value: Any) -> str:
     return _normalize_policy_text(value)
 
 
+def _attach_templates(result: dict[str, Any]) -> None:
+    """``result`` 에 ``templates``/``templates_read_error`` 키를 얹는다.
+
+    템플릿 저장소는 ``config.json`` 과 **별도 파일**이므로 설정 상태와 독립적으로
+    읽힌다. ``check_config`` 의 **모든 반환 경로**(정상·설정 없음·설정 손상·기타
+    조기 반환)가 이 키를 포함하게 하기 위해 이 헬퍼를 공통으로 쓴다 — 어느 경로로
+    빠져도 사용자가 자기 템플릿을 조회할 수 있어야 하고, 호출부가 키 유무를 예측할
+    수 있어야 한다(조용한 누락 금지).
+
+    부분-실패 허용: 템플릿 조회가 실패해도 ``result`` 에 이미 담긴 진단 키들은
+    그대로 살아 있다. 값 자체는 담지 않는다(이름·고시타입·생성일만).
+    """
+    templates_list: list[dict[str, Any]] = []
+    templates_read_error: str | None = None
+    try:
+        templates_list = _templates_mod.list_templates()
+    except _templates_mod.TemplateStoreError as exc:
+        templates_read_error = (
+            f"템플릿 저장소가 손상되어 목록을 읽을 수 없습니다: {exc}. "
+            "조용히 덮어쓰지 않습니다 — 파일을 점검하세요."
+        )
+    except Exception as exc:  # 방어 — 기존 진단은 살린다.
+        templates_read_error = _sanitize_error(exc)
+    result["templates"] = templates_list
+    result["templates_read_error"] = templates_read_error
+
+
 @mcp.tool()
 def check_config(read_existing: bool = False) -> dict[str, Any]:
     """네이버 커머스 API 자격증명/설정 상태를 검사한다.
@@ -1240,7 +1268,8 @@ def check_config(read_existing: bool = False) -> dict[str, Any]:
         "placeholders": [...], "origin_configured": bool, "origin_hint": str,
         "as_tel_configured": bool, "as_tel_hint": str, "error": str | None,
         "policy_gaps": [...], "suggested_from_existing": {...},
-        "drift_from_existing": [...], "existing_read_error": str | None}``
+        "drift_from_existing": [...], "existing_read_error": str | None,
+        "templates": [...], "templates_read_error": str | None}``
         - ``ok``: 모든 필수 키가 존재하고 플레이스홀더가 아님.
         - ``present``: 필수 키별 현재 값의 *존재 여부* (값 자체는 노출 안 함).
         - ``missing``: 누락된 필수 키 이름 목록.
@@ -1262,11 +1291,19 @@ def check_config(read_existing: bool = False) -> dict[str, Any]:
         - ``existing_read_error``: ``read_existing=True`` 로 읽기에 실패한 경우
           사유. ``None`` 이면 시도 자체가 없었거나 성공한 것. 기존 진단 키들은
           이 실패와 무관하게 정상 동작한다 (부분 실패 허용).
+        - ``templates``: 저장된 상품군별 템플릿 목록(이름·고시타입·생성일만).
+          값 자체는 담지 않는다. ``prepare_listing`` 의 ``apply_template``
+          인자로 이 이름을 넘긴다. 파일 부재 → 빈 리스트. 손상 시 빈 리스트에
+          사유를 ``templates_read_error`` 에 담는다(조용한 덮어쓰기 금지).
+        - ``templates_read_error``: 템플릿 저장소가 손상된 경우 사유. ``None``
+          이면 정상. 기존 진단 키들은 이 실패와 무관하게 정상 동작한다.
 
     안내: 실제 값은 반환하지 않는다. 이 도구는 가시성이 아니라 게이트(gate)다.
     단, ``suggested_from_existing`` / ``drift_from_existing`` 은 예외다 — 이들은
     사용자가 검토하고 승인할 "제안" 이므로 값을 드러낸다. 게이트 본연의 진단 키
-    (``ok``/``present``/``missing``/...)는 값을 노출하지 않는다.
+    (``ok``/``present``/``missing``/...)는 값을 노출하지 않는다. ``templates``
+    도 값이 아닌 *이름* 만 노출한다 — 템플릿 값은 ``prepare_listing`` 이
+    명시적으로 지목했을 때만 흐른다 (자동 적용 금지).
     """
     # 매 호출마다 최신 경로를 사용 (CLOSSIFY_CONFIG 오버라이드 반영).
     cfg_path = naver_client.config_path()
@@ -1286,6 +1323,9 @@ def check_config(read_existing: bool = False) -> dict[str, Any]:
         )
         result["config_form_path"] = None
         result["config_form_open"] = False
+        # 템플릿 저장소는 config.json 과 별개 파일 — 설정이 없어도 읽힌다.
+        # 조기 반환에서도 templates 키를 얹어 사용자가 자기 템플릿을 항상 볼 수 있게.
+        _attach_templates(result)
         return result
 
     try:
@@ -1295,6 +1335,8 @@ def check_config(read_existing: bool = False) -> dict[str, Any]:
         result["error"] = _sanitize_text(f"config 파일을 읽거나 파싱할 수 없습니다: {exc}")
         result["config_form_path"] = None
         result["config_form_open"] = False
+        # 마찬가지: 손상된 config 경로에서도 템플릿 키를 얹는다(조용한 누락 금지).
+        _attach_templates(result)
         return result
 
     naver = cfg.get("naver")
@@ -1307,6 +1349,8 @@ def check_config(read_existing: bool = False) -> dict[str, Any]:
             cfg_path,
             missing=["naver.client_id", "naver.client_secret", "naver.store_url_slug"],
         )
+        # naver 섹션 비정상 경로에서도 템플릿 키를 얹는다(설정 진단과 무관).
+        _attach_templates(result)
         return result
 
     missing: list[str] = []
@@ -1435,6 +1479,19 @@ def check_config(read_existing: bool = False) -> dict[str, Any]:
             "이미지 생성 단계가 동작하지 않습니다 — prepare_listing 은 생성 없이 "
             "진행되며, 생성을 요청한 경우 명확한 사유로 거부됩니다."
         )
+
+    # ------------------------------------------------------------------ #
+    # 저장된 상품군별 템플릿 목록(이름만 — 값은 노출하지 않는다).
+    #
+    # 이웃 진단(policy_gaps/origin_configured)과 같은 부분-실패 허용 원칙을 따른다:
+    # 템플릿 저장소가 손상됐거나 읽기에 실패하면 빈 목록을 두되 사유를
+    # templates_read_error 에 담는다. 기존 진단 키는 이 실패와 무관하게 정상 동작
+    # 한다. 템플릿 값 자체는 절대 담지 않는다 — prepare_listing 의 apply_template
+    # 인자로 흐르기 전까지는 가시성이 아니라 이름 목록만 있다(자동 적용 금지).
+    # ------------------------------------------------------------------ #
+    # 헬퍼 ``_attach_templates`` 를 모든 반환 경로(정상·조기 반환)가 공유한다 —
+    # 어느 경로로 빠져도 ``templates``/``templates_read_error`` 키가 있다.
+    _attach_templates(result)
 
     result["ok"] = not missing and not placeholders
     return result
@@ -2872,14 +2929,53 @@ def delete_product(
     }
 
 
+# ---------------------------------------------------------------------------
+# 템플릿 저장용 고시 타입 추론 헬퍼.
+#
+# 단일 진실 공급원: ``qa_agents._infer_notice_type`` 을 그대로 쓴다 — 새 추론
+# 함수를 만들지 않는다. ``naver_client._resolve_notice_type`` 은 알 수 없는
+# 명시 타입에 ``ValueError`` 를 던지는데, 템플릿 저장은 준비 성공 후 부가 동작이
+# 므로 전체 준비를 실패로 뒤집지 않는 ``_infer_notice_type`` 의 ETC 폴백이
+# 여기서는 더 적합하다(값이 명확히 잘못된 경우는 이미 prepare_listing 본체가 잡는다).
+# ---------------------------------------------------------------------------
+def _infer_template_notice_type(product: dict[str, Any]) -> str:
+    """상품 입력에서 고시 타입을 추론한다(ETC 폴백, 예외 없음).
+
+    템플릿의 상품군 축(notice_type) 을 저장할 때 쓴다. ``naver_client`` 의
+    엄격한 해석(``_resolve_notice_type``) 대신 추론 헬퍼(``_infer_notice_type``)
+    를 쓴다 — 템플릿 저장은 준비 *후* 부가 동작이라, 여기서 추론이 애매하다고
+    준비를 실패로 뒤집지 않는다(ETC 폴백). 잘못된 고시 타입 자체는 준비 본체의
+    검증 단계에서 이미 차단된다.
+
+    Returns:
+        대문자 고시 타입 문자열(예: ``"ETC"`` / ``"WEAR"`` / ``"FURNITURE"``).
+        추론할 수 없으면 ``"ETC"``.
+    """
+    return str(qa_agents._infer_notice_type(product) or "ETC").strip().upper()
+
+
 @mcp.tool()
-def prepare_listing(product: dict[str, Any]) -> dict[str, Any]:
+def prepare_listing(
+    product: dict[str, Any],
+    apply_template: str = "",
+    save_as_template: str = "",
+) -> dict[str, Any]:
     """상품 정보 + 이미지 소스로 prepared payload 를 만든다.
 
     등록 전 단계를 수행한다: 이미지 정규화(images.attach_images), 상세 HTML
     렌더(detail_render), JPEG 비의존 QA 집계. 결과를 prepared payload 로
     저장한다. 이미지 QA 는 래스터 렌더를 요구하므로 PENDING 등록하고, 카피
     QA 도 LLM 판단이 필요하면 PENDING 이다(FAIL 로 만들지 않는다).
+
+    상품군별 템플릿 지원 (자동 적용 금지 — 이름을 명시했을 때만 동작):
+        - ``apply_template``: 이 이름의 템플릿에서 값을 가져와 상품 입력의
+          *빈 자리만* 채운다. **사용자가 직접 준 값을 덮어쓰지 않는다.** 빈
+          문자열이면 어떤 템플릿도 적용하지 않는다(암묵 적용 없음). 적용 결과는
+          반환의 ``template_applied`` 에 드러난다 — 어느 필드를 어느 템플릿에서
+          채웠는지(출처). 템플릿이 없으면 조용히 넘기지 않고 사유를 알린다.
+        - ``save_as_template``: 준비가 성공하면 상품 입력에서 안전한 필드만
+          뽑아 이 이름으로 템플릿을 저장한다. 상품명·가격·재고·이미지·옵션·비밀값
+          은 절대 담기지 않는다. 빈 문자열이면 저장하지 않는다.
 
     Args:
         product: 상품 입력 dict. 필수 키:
@@ -2888,10 +2984,15 @@ def prepare_listing(product: dict[str, Any]) -> dict[str, Any]:
             - ``image_sources``: 이미지 소스 리스트(로컬 경로/CDN URL/외부 URL).
             선택 키: ``options``, ``tags``, ``notice``, ``category_id`` 등.
             URL 키(``url``/``source_url``/``item_url``/``detail_url``)는 거부.
+        apply_template: 적용할 템플릿 이름. 빈 문자열(기본) → 적용 안 함.
+        save_as_template: 준비 성공 후 저장할 템플릿 이름. 빈 문자열(기본) →
+            저장 안 함.
 
     Returns:
         ``{"ok": bool, "product_key": str, "needs_llm": [...],
-        "needs_user": [...], "qa": {...}, "error": str | None}``
+        "needs_user": [...], "qa": {...}, "images": [...],
+        "preview_path": str|None, "template_applied": {...}|None,
+        "template_saved": {...}|None, "error": str | None}``
 
     안내:
         - ``needs_llm`` 의 각 항목은 ``submit_reviews`` 로 회신해야 한다.
@@ -2907,6 +3008,34 @@ def prepare_listing(product: dict[str, Any]) -> dict[str, Any]:
             "qa": {},
             "error": "product 는 dict 여야 합니다.",
         }
+
+    # --- 템플릿 적용 (자동 적용 금지 — 이름이 명시됐을 때만) ---
+    # 준비 본체의 검사 *전*에 빈 자리를 채운다. 사용자가 직접 준 값은 덮지 않는다.
+    # 템플릿 저장소가 손상됐으면 조용히 넘기지 않고 사유를 반환한다(준비 자체는
+    # 계속 진행할 수 있게 apply 만 빈 결과로 둔다 — 부분 실패 허용).
+    template_applied: dict[str, Any] | None = None
+    apply_name = str(apply_template or "").strip()
+    if apply_name:
+        try:
+            template_applied = _templates_mod.apply_template(name=apply_name, product=product)
+        except _templates_mod.TemplateStoreError as exc:
+            template_applied = {
+                "applied": False,
+                "template_name": apply_name,
+                "not_found": (
+                    f"템플릿 저장소가 손상되어 적용할 수 없습니다: {exc}. "
+                    "조용히 넘기지 않습니다 — 저장소 파일을 점검하세요."
+                ),
+            }
+        except (_templates_mod.TemplateNameError, ValueError) as exc:
+            template_applied = {
+                "applied": False,
+                "template_name": apply_name,
+                "not_found": (
+                    f"템플릿 적용을 거부했습니다(이름 형식 오류): {exc}. " "조용히 넘기지 않습니다."
+                ),
+            }
+
     try:
         payload = _register_mod.prepare_listing(product)
     except ValueError as exc:
@@ -2916,6 +3045,7 @@ def prepare_listing(product: dict[str, Any]) -> dict[str, Any]:
             "needs_llm": [],
             "needs_user": [],
             "qa": {},
+            "template_applied": template_applied,
             "error": _sanitize_text(str(exc)),
         }
     except Exception as exc:
@@ -2925,6 +3055,7 @@ def prepare_listing(product: dict[str, Any]) -> dict[str, Any]:
             "needs_llm": [],
             "needs_user": [],
             "qa": {},
+            "template_applied": template_applied,
             "error": f"prepare_listing 중 오류: {_sanitize_error(exc)}",
         }
     # 정규화된 네이버 CDN URL 리스트를 images 키로 노출한다.
@@ -2936,6 +3067,44 @@ def prepare_listing(product: dict[str, Any]) -> dict[str, Any]:
         for u in (_images_block.get("listing_urls") or [])
         if isinstance(u, str) and u.strip()
     ]
+
+    # --- 템플릿 저장 (준비 성공 후 — 사용자가 이름을 명시했을 때만) ---
+    # 상품 입력에서 안전한 필드만 뽑아 저장한다(화이트리스트). 상품명·가격·재고·
+    # 이미지·옵션·비밀값은 어떤 경우에도 담기지 않는다. 저장소 손상 시 조용히
+    # 넘기지 않고 사유를 반환한다(준비 결과는 이미 확정됐으므로 ok=True 유지).
+    template_saved: dict[str, Any] | None = None
+    save_name = str(save_as_template or "").strip()
+    if save_name:
+        # 고시 타입은 product 에서 추론한다 — 템플릿의 상품군 축으로 저장.
+        notice_type = _infer_template_notice_type(product)
+        try:
+            template_saved = _templates_mod.save_template(
+                name=save_name, notice_type=notice_type, product=product
+            )
+        except _templates_mod.TemplateStoreError as exc:
+            template_saved = {
+                "ok": False,
+                "name": save_name,
+                "error": (
+                    f"템플릿 저장소가 손상되어 저장할 수 없습니다: {exc}. "
+                    "조용히 넘기지 않습니다 — 저장소 파일을 점검하세요."
+                ),
+            }
+        except _templates_mod.TemplateNameError as exc:
+            template_saved = {
+                "ok": False,
+                "name": save_name,
+                "error": (
+                    f"템플릿 저장을 거부했습니다(이름 형식 오류): {exc}. " "조용히 넘기지 않습니다."
+                ),
+            }
+        except ValueError as exc:
+            template_saved = {
+                "ok": False,
+                "name": save_name,
+                "error": _sanitize_text(str(exc)),
+            }
+
     return {
         "ok": True,
         "product_key": payload.get("product_key"),
@@ -2944,6 +3113,8 @@ def prepare_listing(product: dict[str, Any]) -> dict[str, Any]:
         "qa": payload.get("qa") or {},
         "images": _listing_urls,
         "preview_path": payload.get("preview_path"),
+        "template_applied": template_applied,
+        "template_saved": template_saved,
         "error": None,
     }
 

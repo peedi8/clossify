@@ -1,0 +1,815 @@
+# SPDX-FileCopyrightText: 2026 3rdhand
+# SPDX-License-Identifier: LicenseRef-SustainableUse-1.0
+# Providing this software to others is permitted only free of charge and for
+# non-commercial purposes. See LICENSE.md.
+"""상품군별 등록 템플릿 저장소.
+
+본 모듈은 **상품군별 복수 템플릿**을 저장·조회·명시적 적용한다.
+``templates.py``(브랜드 상세 HTML 렌더러) 와 이름이 비슷하지만 관계없다 —
+본 모듈은 ``listing_templates`` 이다.
+
+안전 설계 (이슈: 템플릿 저장 — 상품군별 복수, 자동 적용 금지)
+----------------------------------------------------------
+템플릿에 담기는 값 중 **고시·원산지·AS 는 규제 신고값**이다. 템플릿은 창작은
+아니지만 **다른 상품의 값을 가져오는 것**이라, 검증 없이 흐르면 규제 원칙의
+우회로가 된다. 같은 상품군이라도 공급처가 다르면 원산지가 다르다.
+
+따라서 본 모듈은 다음 세 가지를 지킨다:
+
+1. **자동 적용 금지.** 사용자가 *명시적으로 지목한* 템플릿만 적용한다.
+   "가장 최근 것"·"하나뿐이니까" 같은 암묵 적용 경로를 만들지 않는다.
+2. **출처를 남긴다.** 적용된 값은 *어느 템플릿에서 왔는지* 결과에 드러난다.
+3. **비밀값을 담지 않는다.** 키·토큰·API 자격증명은 저장·출력·로그에 남기지
+   않는다. ``_TEMPLATE_FIELD_KEYS`` 화이트리스트에 없는 키는 저장 단계에서
+   거부된다(조용한 채움 금지).
+
+저장소
+------
+- 파일: ``<STATE_DIR>/templates.json`` (``config.json`` 과 **별도 파일**).
+- 수명이 다르고 복수다. 설정 정본(``config.json``) 에 섞지 않는다.
+- 파일이 없으면 **빈 상태로 취급**(오류 아님).
+- 파일이 손상됐으면 **조용히 덮어쓰지 않고** 사유를 알린다(``TemplateStoreError``).
+- 쓰기 전 **백업** — ``config_form_server._backup_config`` 관례를 따른다:
+  ``shutil.copy2`` → ``<path>.bak.<UTC타임스탬프>``.
+- 원자적 쓰기 — ``common._write_json_file``(tmp + ``os.replace``).
+
+담는 값 / 안 담는 값
+--------------------
+담는다  : ``productInfoProvidedNotice``(고시 본문) · ``afterServiceInfo``(AS)
+          · ``delivery_policy``(반품/교환 배송비) · ``origin``(원산지)
+          · ``manufacturer_brand``(제조사/브랜드)
+안 담는다: 상품명 · 가격 · 재고 · 이미지 · 옵션 · 태그 · ``categoryId``
+          · 키/토큰 등 비밀값
+
+경계가 애매한 필드는 담지 않는다. 안 담아서 다시 묻는 건 불편이고, 잘못 담아서
+다른 상품에 흘러가는 건 **규제 사고**다. 각 템플릿에는 **고시 타입**을 함께
+저장한다(그게 상품군 축이다).
+
+적용 규칙
+---------
+- 템플릿 값은 **사용자가 이번에 직접 준 값을 덮어쓰지 않는다.** 빈 자리만 채운다.
+- 적용 결과에 **어떤 필드가 어느 템플릿에서 왔는지** 목록을 실는다.
+- 요청한 이름의 템플릿이 **없으면 조용히 넘어가지 않는다** — 명확한 사유
+  (``TemplateNotFoundError``).
+"""
+
+from __future__ import annotations
+
+import datetime
+import json
+import re as _re
+import shutil
+from pathlib import Path
+from typing import Any
+
+from . import common
+
+# ---------------------------------------------------------------------------
+# 저장소 경로.
+#
+# ``templates.json`` 은 ``config.json`` 과 **별도 파일**이다. 수명이 다르고
+# 복수다(상품군별로 여러 개). ``STATE_DIR``(<cwd>/.local 또는 CLOSSIFY_STATE_DIR)
+# 아래에 둔다 — 새 디렉터리 규약을 만들지 않는다.
+# ``.gitignore`` 가 이미 ``.local/`` 을 커버하고 있다(비밀 누출 방지).
+# ---------------------------------------------------------------------------
+_TEMPLATE_FILE_NAME = "templates.json"
+_TEMPLATE_VERSION = 1
+_BACKUP_SUFFIX = ".bak"
+
+
+def templates_path() -> Path:
+    """템플릿 저장 파일 경로를 반환(단일 진실 공급원).
+
+    ``STATE_DIR`` 아래 ``templates.json``. 파일 존재 여부는 검사하지 않는다
+    (호출자가 부재/손상 케이스를 다룬다).
+    """
+    return Path(common.STATE_DIR) / _TEMPLATE_FILE_NAME
+
+
+# ---------------------------------------------------------------------------
+# 예외.
+#
+# 조용한 실패 금지 계약: 템플릿이 없거나 저장소가 손상됐을 때 빈 결과로
+# 떨어지지 않고 명확한 사유를 던진다. ``apply_template`` 은 이 예외를 잡아
+# 결과 메타에 사유를 담는다(호출자가 사용자에게 보이게).
+# ---------------------------------------------------------------------------
+class TemplateStoreError(RuntimeError):
+    """템플릿 저장소가 손상됐거나 읽을 수 없는 경우."""
+
+
+class TemplateNotFoundError(KeyError):
+    """요청한 이름의 템플릿이 없는 경우(조용한 실패 금지)."""
+
+
+class TemplateNameError(ValueError):
+    """템플릿 이름이 비어 있거나 허용 문자 집합을 벗어난 경우."""
+
+
+# ---------------------------------------------------------------------------
+# 템플릿 이름 검증.
+#
+# 이름은 파일시스템·JSON 키·로그에 안전해야 한다. 빈 문자열/공백/제어문자
+# 금지. 100자 이하(과도한 이름 차단). ``[A-Za-z0-9 _./-]`` 외 문자 금지 —
+# 경로 구분자·JSON 이스케이프·셸 확장에 안전한 문자 집합.
+# ---------------------------------------------------------------------------
+_NAME_CHARS = _re.compile(r"^[A-Za-z0-9 _./\uAC00-\uD7A3-]+$")
+_NAME_MAX_LEN = 100
+
+
+def _validate_name(name: str) -> str:
+    """템플릿 이름을 검증·정규화한다.
+
+    Returns:
+        strip 된 이름.
+
+    Raises:
+        TemplateNameError: 빈 문자열/공백이거나 허용 문자 집합을 벗어나거나
+            100자를 초과할 때.
+    """
+    text = str(name or "").strip()
+    if not text:
+        raise TemplateNameError("템플릿 이름이 비어 있습니다 (이름이 있어야 저장한다).")
+    if len(text) > _NAME_MAX_LEN:
+        raise TemplateNameError(
+            f"템플릿 이름이 {_NAME_MAX_LEN}자를 초과합니다 (got {len(text)}자)."
+        )
+    if not _NAME_CHARS.match(text):
+        raise TemplateNameError(
+            "템플릿 이름에 허용되지 않는 문자가 있습니다. "
+            "한글·알파벳·숫자·공백·밑줄·점·슬래시·하이픈만 쓸 수 있습니다."
+        )
+    return text
+
+
+def _validate_notice_type(notice_type: str) -> str:
+    """고시 타입을 정규화한다(대문자, strip).
+
+    빈 문자열은 그대로 둔다(저장 시점에 상품군 정보가 없을 수 있다). 단, 빈
+    문자열로 저장된 템플릿은 조회 시 고시타입 축이 모호해지므로 저장 호출자가
+    가능하면 채워 넣도록 안내한다.
+    """
+    return str(notice_type or "").strip().upper()
+
+
+# ---------------------------------------------------------------------------
+# 담는 값 화이트리스트 / 안 담는 값.
+#
+# **경계가 애매한 필드는 담지 않는다.** 담는 필드는 상품 입력 키 기준으로
+# 정확히 나열한다. 화이트리스트에 없는 키가 입력에 있어도 저장하지 않는다
+# (조용한 채움 금지 — 상품에만 해당하는 값이 다른 상품에 흘러가는 것을 막는다).
+#
+# 구조: 각 섹션은 (입력에서 읽을 키 튜플, 빈 값 판정) 의 리스트.
+# 빈 값 판정은 "None 이거나 빈 문자열이거나 공백만" 을 기준으로 한다 —
+# qa_agents 의 placeholder 판정을 여기서 다시 만들지 않는다(단일 진실 공급원).
+# ---------------------------------------------------------------------------
+_TEMPLATE_FIELD_KEYS: tuple[str, ...] = (
+    # 고시 본문(productInfoProvidedNotice). notice dict 의 키 중 안 담는 것
+    # (itemName 같은 상품명·타입 노드 키) 은 빼고 본문 값만 담는다.
+    "productInfoProvidedNotice",
+    # AS 정보.
+    "afterServiceInfo",
+    # 배송 정책(반품/교환 배송비).
+    "delivery_policy",
+    # 원산지.
+    "origin",
+    # 제조사/브랜드.
+    "manufacturer_brand",
+)
+
+# 고시 본문 노드에서 **상품 특정값이라 담지 않는** 키.
+# itemName(=상품명) 은 상품마다 다르고, productInfoProvidedNoticeType 은
+# 템플릿의 notice_type 메타로 이미 저장하므로 본문에서는 뺀다.
+_NOTICE_BODY_SKIP_KEYS: frozenset[str] = frozenset(
+    {"itemName", "productInfoProvidedNoticeType", "name"}
+)
+
+# 고시 본문 후보 입력 키(상품 입력 dict 에서 어디서 읽을지).
+# naver_client._notice_defaults / register._build_register_product_dict 가
+# 읽는 키를 그대로 쓴다 — 새 별칭을 만들지 않는다.
+_NOTICE_BODY_FIELD_CANDIDATES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    # 공통 5필드 (camelCase 고시 필드명).
+    ("returnCostReason", ("returnCostReason", "return_cost_reason")),
+    ("noRefundReason", ("noRefundReason", "no_refund_reason")),
+    ("qualityAssuranceStandard", ("qualityAssuranceStandard", "quality_assurance_standard")),
+    ("compensationProcedure", ("compensationProcedure", "compensation_procedure")),
+    ("troubleShootingContents", ("troubleShootingContents", "trouble_shooting_contents")),
+    # AS/제조 관련 고시 본문 필드(값이 있을 때만).
+    ("afterServiceDirector", ("afterServiceDirector",)),
+    ("customerServicePhoneNumber", ("customerServicePhoneNumber",)),
+    ("manufacturer", ("manufacturer",)),
+    ("importer", ("importer",)),
+    ("manufactureDate", ("manufactureDate", "manufacture_date")),
+    ("modelName", ("modelName", "model_name")),
+    ("certDetail", ("certDetail", "cert_detail")),
+    ("madeIn", ("madeIn", "made_in", "origin_content")),
+    # FURNITURE 등 타입별 필드(사용자가 준 값만).
+    ("material", ("material", "fabric")),
+    ("size", ("size", "dimensions")),
+    ("components", ("components", "composition")),
+    ("safetyStandard", ("safetyStandard", "safety_standard")),
+)
+
+# AS 정보(afterServiceInfo) 후보 입력 키.
+_AS_INFO_CANDIDATES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("afterServiceTelephoneNumber", ("as_tel", "afterServiceTelephoneNumber")),
+    ("afterServiceGuideContent", ("as_guide", "afterServiceGuideContent")),
+)
+
+# 배송 정책 후보 입력 키(반품/교환 배송비).
+_DELIVERY_POLICY_CANDIDATES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("return_delivery_fee", ("return_delivery_fee",)),
+    ("exchange_delivery_fee", ("exchange_delivery_fee",)),
+)
+
+# 원산지 후보 입력 키.
+_ORIGIN_CANDIDATES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("origin_area_code", ("origin_code", "origin_area_code")),
+    ("origin_content", ("origin_content", "made_in")),
+    ("importer", ("importer",)),
+)
+
+# 제조사/브랜드 후보 입력 키.
+_MANUFACTURER_BRAND_CANDIDATES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("manufacturer", ("manufacturer", "seller_name_ko", "sellerNameKo")),
+    ("brand", ("brand",)),
+)
+
+
+def _has_text(value: Any) -> bool:
+    """값이 "비어있지 않은 텍스트/숫자/bool" 인지 판정.
+
+    None/빈 문자열/공백만 → ``False``. 그 외(숫자·bool·비어있지 않은 문자열) →
+    ``True``. placeholder 판정(해당없음/상세참조/TBD)은 여기서 하지 *않는다* —
+    저장하는 단계에서는 사용자가 "상세참조" 를 의도적으로 넣었을 수도 있으므로
+    저장은 하되, 적용 시점에 받는 쪽이 검수한다. placeholder 판정의 단일 진실
+    공급원(qa_agents._is_placeholder_value) 을 여기서 다시 만들지 않는다.
+    """
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return True  # boolean 고시 필드값(False 포함) 은 유효 입력.
+    if isinstance(value, int | float):
+        return True
+    if isinstance(value, str):
+        return bool(value.strip())
+    return False
+
+
+def _pick(product: dict[str, Any], candidates: tuple[str, ...]) -> Any:
+    """상품 입력에서 후보 키 중 첫 번째 비어있지 않은 값을 반환.
+
+    Returns:
+        ``(발견한 값, 찾은 키)``. 못 찾으면 ``(None, "")``.
+    """
+    for key in candidates:
+        if key in product and _has_text(product.get(key)):
+            return product.get(key), key
+    return None, ""
+
+
+def _extract_notice_body(product: dict[str, Any]) -> dict[str, Any]:
+    """상품 입력에서 고시 본문 필드만 뽑는다(상품 특정값 itemName 등은 뺀다).
+
+    ``product.notice`` dict 가 있으면 그 안의 노드(etc/wear/...) 본문에서
+    camelCase 필드를 읽는다(naver_client._merge_notice 가 쓰는 구조).
+    동시에 top-level common 키(return_cost_reason 등) 도 후보로 읽는다 —
+    사용자가 두 자리 중 어디에 값을 넣었든 잡는다.
+    """
+    body: dict[str, Any] = {}
+    # (1) ``product.notice.<node>`` 에서 camelCase 필드를 읽는다.
+    user_notice = product.get("notice")
+    if isinstance(user_notice, dict):
+        for node_key, node_value in user_notice.items():
+            if not isinstance(node_value, dict):
+                continue
+            if node_key in ("productInfoProvidedNoticeType", "notice_type"):
+                continue
+            for camel_field, _ in _NOTICE_BODY_FIELD_CANDIDATES:
+                if camel_field in _NOTICE_BODY_SKIP_KEYS:
+                    continue
+                if camel_field in node_value and _has_text(node_value.get(camel_field)):
+                    body[camel_field] = node_value.get(camel_field)
+    # (2) top-level common 키 후보.
+    for camel_field, p_keys in _NOTICE_BODY_FIELD_CANDIDATES:
+        if camel_field in _NOTICE_BODY_SKIP_KEYS:
+            continue
+        if camel_field in body:
+            continue
+        value, _ = _pick(product, p_keys)
+        if value is not None:
+            body[camel_field] = value
+    return body
+
+
+def _extract_section(
+    product: dict[str, Any],
+    candidates: tuple[tuple[str, tuple[str, ...]], ...],
+) -> dict[str, Any]:
+    """후보 (출력키, 입력키튜플) 리스트에서 비어있지 않은 값만 모은다."""
+    section: dict[str, Any] = {}
+    for out_key, p_keys in candidates:
+        value, _ = _pick(product, p_keys)
+        if value is not None:
+            section[out_key] = value
+    return section
+
+
+def _utc_now_iso() -> str:
+    """현재 UTC 시각을 ISO 8601 문자열로."""
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+# ---------------------------------------------------------------------------
+# 저장소 IO.
+#
+# 파일이 없으면 빈 상태. 손상됐으면 **조용히 덮어쓰지 않고**
+# ``TemplateStoreError`` 로 사유를 알린다(계약: 조용한 덮어쓰기 금지).
+# 쓰기 전 백업은 ``config_form_server._backup_config`` 관례를 따른다:
+# ``shutil.copy2`` → ``<path>.bak.<UTC타임스탬프>``. 원자적 쓰기는
+# ``common._write_json_file``(tmp + ``os.replace``).
+# ---------------------------------------------------------------------------
+
+
+def _empty_store() -> dict[str, Any]:
+    """빈 저장소 구조를 반환."""
+    return {"version": _TEMPLATE_VERSION, "templates": []}
+
+
+def _load_store() -> dict[str, Any]:
+    """템플릿 저장소를 로드한다.
+
+    Returns:
+        저장소 dict. 파일이 없으면 빈 저장소.
+
+    Raises:
+        TemplateStoreError: 파일이 있지만 JSON 파싱에 실패했거나 구조가
+            올바르지 않은 경우. **조용히 덮어쓰지 않는다.**
+    """
+    path = templates_path()
+    if not path.is_file():
+        return _empty_store()
+    try:
+        raw = path.read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        raise TemplateStoreError(
+            f"템플릿 저장소를 읽을 수 없습니다: {path} ({exc}). "
+            "조용히 덮어쓰지 않습니다 — 파일 권한을 확인하세요."
+        ) from exc
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        raise TemplateStoreError(
+            f"템플릿 저장소가 손상되었습니다(JSON 파싱 실패): {path} ({exc}). "
+            "조용히 덮어쓰지 않습니다 — 파일을 직접 점검하거나 백업에서 되돌리세요."
+        ) from exc
+    if not isinstance(data, dict):
+        raise TemplateStoreError(
+            f"템플릿 저장소 루트가 객체가 아닙니다: {path} "
+            f"(got {type(data).__name__}). 조용히 덮어쓰지 않습니다."
+        )
+    templates = data.get("templates")
+    if not isinstance(templates, list):
+        raise TemplateStoreError(
+            f"템플릿 저장소의 'templates' 가 배열이 아닙니다: {path} "
+            f"(got {type(templates).__name__}). 조용히 덮어쓰지 않습니다."
+        )
+    return data
+
+
+def _backup_templates(path: Path) -> str:
+    """기존 템플릿 파일을 백업. 백업 경로를 반환(백업 안 했으면 빈 문자열).
+
+    ``config_form_server._backup_config`` 와 동일한 관례:
+    기존 파일이 있으면 ``<path>.bak.<UTC타임스탬프>`` 로 ``shutil.copy2``.
+    백업 실패는 치명적이지 않다 — 쓰기는 계속 진행. 단, 호출자에게 알린다.
+    """
+    if not path.is_file():
+        return ""
+    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup = path.with_suffix(path.suffix + f"{_BACKUP_SUFFIX}.{ts}")
+    try:
+        shutil.copy2(path, backup)
+        return str(backup)
+    except OSError:
+        return ""
+
+
+def _save_store(store: dict[str, Any]) -> tuple[Path, str]:
+    """템플릿 저장소를 디스크에 쓴다(백업 후 원자적 쓰기).
+
+    Returns:
+        ``(쓴 파일 경로, 백업 경로)``. 백업을 안 했으면 빈 문자열.
+    """
+    path = templates_path()
+    backup_path = _backup_templates(path)
+    common._write_json_file(path, store)
+    return path, backup_path
+
+
+# ---------------------------------------------------------------------------
+# 공개 API: 저장·조회·적용.
+# ---------------------------------------------------------------------------
+
+
+def save_template(
+    *,
+    name: str,
+    notice_type: str,
+    product: dict[str, Any],
+) -> dict[str, Any]:
+    """상품 입력에서 안전한 필드만 뽑아 템플릿으로 저장한다.
+
+    **자동 적용 금지** — 본 함수는 저장만 한다. 적용은 ``apply_template`` 이
+    사용자가 명시적으로 지목할 때만 한다.
+
+    **화이트리스트** — ``_TEMPLATE_FIELD_KEYS`` 에 없는 키는 저장하지 않는다.
+    비밀값(키/토큰)·상품 특정값(이름/가격/재고/이미지/옵션/태그/categoryId) 은
+    어떤 경우에도 담기지 않는다.
+
+    같은 이름의 템플릿이 있으면 **덮어쓴다**(사용자가 이름으로 지목한 갱신).
+    이때도 쓰기 전 백업을 남긴다.
+
+    Args:
+        name: 템플릿 이름. 비어있거나 허용 문자 집합을 벗어나면 ``TemplateNameError``.
+        notice_type: 고시 타입(ETC/WEAR/...). 상품군 축으로 저장된다.
+        product: 상품 입력 dict. 여기서 안전한 필드만 뽑는다.
+
+    Returns:
+        결과 메타 dict::
+
+            {"ok": True, "name": str, "notice_type": str,
+             "saved_keys": [...],   # 저장된 섹션명 목록
+             "skipped_keys": [...], # 입력에 있었으나 안 담는 키(상품특정/비밀)
+             "path": str, "backup_path": str, "created_at": str}
+
+        ``saved_keys`` / ``skipped_keys`` 는 섹션/키 *이름* 만 담는다. 값은
+        절대 담지 않는다(비밀값 비노출 — 결과가 로그/반환에 흘러도 안전).
+    """
+    sane_name = _validate_name(name)
+    sane_type = _validate_notice_type(notice_type)
+    if not isinstance(product, dict):
+        raise ValueError("save_template: product 는 dict 여야 합니다.")
+
+    # 화이트리스트 필드만 추출.
+    fields: dict[str, Any] = {}
+    fields["productInfoProvidedNotice"] = _extract_notice_body(product)
+    fields["afterServiceInfo"] = _extract_section(product, _AS_INFO_CANDIDATES)
+    fields["delivery_policy"] = _extract_section(product, _DELIVERY_POLICY_CANDIDATES)
+    fields["origin"] = _extract_section(product, _ORIGIN_CANDIDATES)
+    fields["manufacturer_brand"] = _extract_section(product, _MANUFACTURER_BRAND_CANDIDATES)
+    # 빈 섹션은 저장은 하되 결과에 "빈 섹션" 임을 드러낸다(사용자가 뭘 넣었는지
+    # 알 수 있게 — 조용한 빈 값 금지).
+    saved_sections = [k for k, v in fields.items() if isinstance(v, dict) and v]
+
+    # 입력에 있었으나 안 담은 키(상품 특정값/비밀값/경계 애매) 목록 —
+    # 사용자가 "내가 준 값이 다 저장됐다" 고 착각하지 않게.
+    _skip_product_specific = {
+        "name",
+        "title_ko",
+        "salePrice",
+        "sell_price",
+        "price",
+        "stock",
+        "stockQuantity",
+        "image_sources",
+        "images",
+        "options",
+        "option_groups",
+        "optionGroupNames",
+        "tags",
+        "categoryId",
+        "category_id",
+        "courier",
+        "delivery_fee",
+        "display",
+        "status",
+        "product_key",
+        "summary",
+        "desc",
+        "props",
+        "attributes",
+        "url",
+        "source_url",
+        "item_url",
+        "detail_url",
+        # 비밀/자격증명 키(어떤 형태든 담지 않는다).
+        "client_id",
+        "client_secret",
+        "api_key",
+        "access_token",
+        "secret",
+        "token",
+        "password",
+    }
+    skipped: list[str] = []
+    for key in product:
+        if key in _skip_product_specific:
+            skipped.append(key)
+    # "notice" 자체는 고시 본문을 뽑아갔으므로 skipped 에 넣지 않는다(본문 값은
+    # 담겼다). 단, notice 안의 itemName 같은 상품특정값은 _extract_notice_body
+    # 가 이미 뺐다 — 그 사실은 saved_sections 의 productInfoProvidedNotice 에
+    # 본문 키가 들어가 있어 드러난다.
+
+    store = _load_store()  # 손상시 TemplateStoreError 전파(조용한 덮어쓰기 금지).
+    templates = list(store.get("templates") or [])
+
+    created_at = _utc_now_iso()
+    entry = {
+        "name": sane_name,
+        "notice_type": sane_type,
+        "created_at": created_at,
+        "fields": fields,
+    }
+    # 같은 이름 갱신 — 리스트에서 제거 후 append(순서는 의미 없음).
+    replaced = False
+    for i, existing in enumerate(templates):
+        if isinstance(existing, dict) and existing.get("name") == sane_name:
+            templates[i] = entry
+            replaced = True
+            break
+    if not replaced:
+        templates.append(entry)
+    store["templates"] = templates
+    store["version"] = _TEMPLATE_VERSION
+
+    path, backup_path = _save_store(store)
+    return {
+        "ok": True,
+        "name": sane_name,
+        "notice_type": sane_type,
+        "saved_keys": saved_sections,
+        "skipped_keys": sorted(set(skipped)),
+        "path": str(path),
+        "backup_path": backup_path,
+        "created_at": created_at,
+        "replaced": replaced,
+    }
+
+
+def list_templates() -> list[dict[str, Any]]:
+    """템플릿 이름·고시타입 목록만 반환(값은 안 보낸다).
+
+    ``check_config`` 가 이 목록을 결과에 싣는다. **값 자체는 넣지 않는다.**
+
+    Returns:
+        ``[{"name": str, "notice_type": str, "created_at": str}, ...]``.
+        파일이 없으면 빈 리스트.
+
+    Raises:
+        TemplateStoreError: 저장소가 손상된 경우(조용한 덮어쓰기 금지).
+    """
+    store = _load_store()
+    out: list[dict[str, Any]] = []
+    for entry in store.get("templates") or []:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name") or "").strip()
+        if not name:
+            continue
+        out.append(
+            {
+                "name": name,
+                "notice_type": _validate_notice_type(str(entry.get("notice_type") or "")),
+                "created_at": str(entry.get("created_at") or ""),
+            }
+        )
+    return out
+
+
+def _get_template(name: str) -> dict[str, Any]:
+    """이름으로 템플릿 엔트리를 찾는다(내부 헬퍼).
+
+    Raises:
+        TemplateNameError: 이름이 빈 문자열/공백.
+        TemplateNotFoundError: 그 이름의 템플릿이 없음(조용한 실패 금지).
+    """
+    sane_name = _validate_name(name)
+    store = _load_store()
+    for entry in store.get("templates") or []:
+        if isinstance(entry, dict) and str(entry.get("name") or "").strip() == sane_name:
+            return entry
+    raise TemplateNotFoundError(sane_name)
+
+
+def apply_template(
+    *,
+    name: str,
+    product: dict[str, Any],
+) -> dict[str, Any]:
+    """명시적으로 지목한 템플릿의 값을 상품 입력의 빈 자리에 채운다.
+
+    **자동 적용 금지.** ``name`` 이 명시적으로 주어졌을 때만 적용한다. 빈
+    문자열이면 적용하지 않고 빈 결과를 반환한다(호출자가 "이름 안 주면 어떤
+    템플릿도 적용되지 않는다" 를 만족한다).
+
+    **사용자가 직접 준 값을 덮어쓰지 않는다.** 빈 자리만 채운다.
+
+    Args:
+        name: 적용할 템플릿 이름. 빈 문자열 → 적용 안 함(암묵 적용 없음).
+        product: 상품 입력 dict. **in-place** 로 갱신한다(호출자가 같은 객체를
+            계속 쓴다).
+
+    Returns:
+        적용 결과 메타::
+
+            {"applied": bool, "template_name": str, "notice_type": str,
+             "filled": [...],   # [{"section": str, "field": str}, ...]
+                                  어느 필드를 어느 템플릿에서 채웠는지(출처)
+             "not_found": str|None,  # 템플릿이 없을 때 사유
+             "skipped_existing": [...]}  # 사용자가 이미 준 값이라 안 덮은 필드
+
+    Raises:
+        TemplateNameError: 이름이 형식을 벗어날 때(빈 문자열 아님).
+    """
+    # 빈 이름 → 적용 안 함. 암묵 적용(가장 최근 것/하나뿐이니까) 절대 금지.
+    if not str(name or "").strip():
+        return {
+            "applied": False,
+            "template_name": "",
+            "notice_type": "",
+            "filled": [],
+            "not_found": None,
+            "skipped_existing": [],
+            "reason": "이름이 주어지지 않았습니다 — 어떤 템플릿도 적용하지 않습니다.",
+        }
+    if not isinstance(product, dict):
+        raise ValueError("apply_template: product 는 dict 여야 합니다.")
+
+    try:
+        entry = _get_template(name)
+    except TemplateNotFoundError:
+        return {
+            "applied": False,
+            "template_name": str(name).strip(),
+            "notice_type": "",
+            "filled": [],
+            "not_found": (
+                f"템플릿 '{str(name).strip()}' 을(를) 찾을 수 없습니다. "
+                "조용히 넘기지 않습니다 — check_config 로 저장된 템플릿 목록을 "
+                "확인하세요."
+            ),
+            "skipped_existing": [],
+        }
+
+    fields = entry.get("fields") if isinstance(entry.get("fields"), dict) else {}
+    sane_name = str(entry.get("name") or "").strip()
+    sane_type = _validate_notice_type(str(entry.get("notice_type") or ""))
+    filled: list[dict[str, str]] = []
+    skipped_existing: list[dict[str, str]] = []
+
+    # 고시 본문: ``product.notice.<node>`` 또는 top-level common 키에 채운다.
+    # 사용자가 이미 준 필드는 덮지 않는다(빈 자리만).
+    notice_body = fields.get("productInfoProvidedNotice") or {}
+    if isinstance(notice_body, dict) and notice_body:
+        # ``product.notice`` 가 없으면 만든다. node 키는 notice_type 에서.
+        # naver_client._merge_notice 가 같은 규칙(타입→node) 을 쓰므로, 템플릿의
+        # notice_type 을 따라 node 키를 정한다.
+        if not isinstance(product.get("notice"), dict):
+            product["notice"] = {}
+        user_notice = product["notice"]
+        node_key = _node_key_for_type(sane_type)
+        if not isinstance(user_notice.get(node_key), dict):
+            user_notice[node_key] = {}
+        node_body = user_notice[node_key]
+        for field, value in notice_body.items():
+            if field in _NOTICE_BODY_SKIP_KEYS:
+                continue
+            # 사용자가 이미 node 본문에 같은 필드를 줬으면 덮지 않는다.
+            if _has_text(node_body.get(field)):
+                skipped_existing.append({"section": "productInfoProvidedNotice", "field": field})
+                continue
+            # top-level common 키로도 사용자가 줬을 수 있다 — 그것도 존중.
+            top_level_keys = _top_level_keys_for(field)
+            if top_level_keys and any(
+                key in product and _has_text(product.get(key)) for key in top_level_keys
+            ):
+                skipped_existing.append({"section": "productInfoProvidedNotice", "field": field})
+                continue
+            node_body[field] = value
+            filled.append({"section": "productInfoProvidedNotice", "field": field})
+        # productInfoProvidedNoticeType 이 비어있으면 템플릿의 타입으로 채운다
+        # (사용자가 명시한 타입이 있으면 그것이 우선 — 덮지 않는다).
+        existing_type = str(
+            user_notice.get("productInfoProvidedNoticeType") or user_notice.get("notice_type") or ""
+        ).strip()
+        if not existing_type and sane_type:
+            user_notice["productInfoProvidedNoticeType"] = sane_type
+            filled.append(
+                {"section": "productInfoProvidedNotice", "field": "productInfoProvidedNoticeType"}
+            )
+
+    # AS 정보.
+    _fill_section(
+        product,
+        fields.get("afterServiceInfo") or {},
+        _AS_INFO_CANDIDATES,
+        section_name="afterServiceInfo",
+        filled=filled,
+        skipped=skipped_existing,
+    )
+    # 배송 정책.
+    _fill_section(
+        product,
+        fields.get("delivery_policy") or {},
+        _DELIVERY_POLICY_CANDIDATES,
+        section_name="delivery_policy",
+        filled=filled,
+        skipped=skipped_existing,
+    )
+    # 원산지.
+    _fill_section(
+        product,
+        fields.get("origin") or {},
+        _ORIGIN_CANDIDATES,
+        section_name="origin",
+        filled=filled,
+        skipped=skipped_existing,
+    )
+    # 제조사/브랜드.
+    _fill_section(
+        product,
+        fields.get("manufacturer_brand") or {},
+        _MANUFACTURER_BRAND_CANDIDATES,
+        section_name="manufacturer_brand",
+        filled=filled,
+        skipped=skipped_existing,
+    )
+
+    return {
+        "applied": bool(filled),
+        "template_name": sane_name,
+        "notice_type": sane_type,
+        "filled": filled,
+        "not_found": None,
+        "skipped_existing": skipped_existing,
+    }
+
+
+def _node_key_for_type(notice_type: str) -> str:
+    """고시 타입 → node 키(etc/wear/furniture/...).
+
+    ``naver_client._notice_type_spec`` 과 같은 단일 진실 공급원을 쓴다.
+    알 수 없는 타입/빈 문자열이면 ``etc`` 폴백(기존 동작 보존).
+    """
+    try:
+        from . import naver_client as _nc
+
+        spec = _nc._notice_type_spec(notice_type)
+        if isinstance(spec, dict) and spec.get("node"):
+            return str(spec["node"])
+    except Exception:
+        pass
+    return "etc"
+
+
+def _top_level_keys_for(field: str) -> tuple[str, ...]:
+    """고시 camelCase 필드명 → top-level common 입력 키 후보."""
+    for camel, p_keys in _NOTICE_BODY_FIELD_CANDIDATES:
+        if camel == field:
+            return p_keys
+    return ()
+
+
+def _fill_section(
+    product: dict[str, Any],
+    template_section: dict[str, Any],
+    candidates: tuple[tuple[str, tuple[str, ...]], ...],
+    *,
+    section_name: str,
+    filled: list[dict[str, str]],
+    skipped: list[dict[str, str]],
+) -> None:
+    """템플릿 섹션의 값을 상품 입력의 빈 자리에 채운다(in-place).
+
+    사용자가 이미 준 값(``product[p_key]`` 가 비어있지 않음) 은 덮지 않는다.
+    """
+    if not isinstance(template_section, dict) or not template_section:
+        return
+    # candidates 의 out_key 가 템플릿 섹션에 있는 값만 다룬다.
+    for out_key, p_keys in candidates:
+        value = template_section.get(out_key)
+        if not _has_text(value):
+            continue
+        # 사용자가 이미 p_keys 중 하나로 값을 줬는지 확인.
+        already = any(key in product and _has_text(product.get(key)) for key in p_keys)
+        if already:
+            for key in p_keys:
+                if key in product and _has_text(product.get(key)):
+                    skipped.append({"section": section_name, "field": out_key})
+                    break
+            continue
+        # 빈 자리 — 첫 번째 p_keys 키에 채운다.
+        first_key = p_keys[0]
+        product[first_key] = value
+        filled.append({"section": section_name, "field": out_key})
+
+
+__all__ = [
+    "TemplateNameError",
+    "TemplateNotFoundError",
+    "TemplateStoreError",
+    "apply_template",
+    "list_templates",
+    "save_template",
+    "templates_path",
+]
