@@ -5,8 +5,8 @@
   2. 삭제 대상 심볼을 참조하는 호출부가 코드 범위에 잔존하지 않는다.
   3. 삭제된 계층의 설정 키(upstream.base_url, llm.vendor_*)가
      config.example.json 에 존재하지 않는다.
-  4. image_providers 섹션은 "현재 미사용"임이 _comment 로 명시되어 있다
-     (삭제하지 않음 — 로드맵상 예정된 자리).
+  4. image_providers 섹션은 "코드가 실제로 읽는" 섹션임이 _comment 로 명시되어 있다
+     (image_gen 모듈이 이 섹션에서 api_key 를 읽어 생성을 수행한다).
   5. 삭제 후에도 live 접근자(DEFAULT_AS_TEL 등)가 정상 동작한다.
   6. 무동작/identity 금지: 본 테스트는 실제로 단언한다 (무조건 통과 아님).
 """
@@ -131,21 +131,42 @@ class TestConfigExampleClean:
 
 
 # --------------------------------------------------------------------------- #
-# 4. image_providers 미사용 명시.
+# 4. image_providers 코드 읽기 명시.
 # --------------------------------------------------------------------------- #
-class TestImageProvidersMarkedUnused:
-    """image_providers 섹션은 유지하되 미사용임이 명시되어 있다."""
+class TestImageProvidersActuallyRead:
+    """image_providers 섹션은 image_gen 모듈이 실제로 읽는 섹션임이 명시되어 있다."""
 
     def test_image_providers_present(self):
         cfg = json.loads(_CONFIG_EXAMPLE_PATH.read_text(encoding="utf-8-sig"))
         assert (
             "image_providers" in cfg
-        ), "image_providers 섹션이 삭제됨 — 로드맵 자리이므로 유지해야 함"
+        ), "image_providers 섹션이 삭제됨 — image_gen 이 읽는 자리이므로 유지해야 함"
 
-    def test_image_providers_comment_marks_unused(self):
+    def test_image_providers_comment_marks_used(self):
+        """_comment 가 "코드가 실제로 읽는다" 는 사실을 명시하는지 검증.
+
+        과거("현재 미사용")와 달리, image_gen 모듈이 추가되어 이제 이 섹션은
+        실제로 읽힌다. _comment 가 여전히 "미사용" 이라고 쓰여 있으면 운영자가
+        키를 채워도 동작하지 않는다고 오인하게 된다 (유령 키 회귀).
+        """
         cfg = json.loads(_CONFIG_EXAMPLE_PATH.read_text(encoding="utf-8-sig"))
         comment = str(cfg["image_providers"].get("_comment", ""))
-        assert "미사용" in comment, "image_providers._comment 가 미사용 표시를 포함하지 않음"
+        assert "미사용" not in comment, (
+            "image_providers._comment 가 여전히 '미사용' 이라고 명시 — "
+            "image_gen 모듈이 이제 이 섹션을 읽으므로 회귀"
+        )
+
+    def test_image_providers_comment_indicates_usage(self):
+        """_comment 가 image_gen 모듈의 사용을 명시하는지 검증."""
+        cfg = json.loads(_CONFIG_EXAMPLE_PATH.read_text(encoding="utf-8-sig"))
+        comment = str(cfg["image_providers"].get("_comment", ""))
+        # "image_gen" 또는 "읽어" / "읽는다" 같은 실사용 표현이 있어야 한다.
+        assert (
+            "image_gen" in comment
+            or "읽어" in comment
+            or "읽는다" in comment
+            or "생성을 수행" in comment
+        ), "image_providers._comment 가 코드가 실제로 읽는다는 점을 명시하지 않음"
 
 
 # --------------------------------------------------------------------------- #

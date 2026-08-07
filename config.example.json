@@ -14,7 +14,7 @@
     "customer_id": "REPLACE_WITH_SEARCHAD_CUSTOMER_ID"
   },
   "image_providers": {
-    "_comment": "Paid image generation providers for detail-page cut shortages. See agents/IMAGE_GENERATION_PRICE_POLICY.md. 향후 어댑터 연동 예정, 현재 미사용(코드가 이 섹션을 읽지 않음).",
+    "_comment": "Paid image generation providers for detail-page cut shortages. See agents/IMAGE_GENERATION_PRICE_POLICY.md. image_gen 모듈이 이 섹션을 읽어 openai/gemini 어댑터로 생성을 수행한다. prepare_listing 단계 분기: 사용자 이미지가 있으면 생성 경로 미진입(생성 0), generate_images 가 참이고 사용자 이미지가 없으면 pick_provider 우선순위로 생성 시도 — 키가 없으면 조용한 실패 없이 needs_user 에 안내. api_key 가 REPLACE_WITH_... 플레이스홀더면 미설정으로 취급된다.",
     "openai": {
       "api_key": "REPLACE_WITH_OPENAI_API_KEY",
       "model": "gpt-image-2"

@@ -304,8 +304,8 @@ class TestKeyCrossReference:
     """config.example.json 의 키와 코드가 읽는 키의 대조 결과.
 
     as_tel 불일치는 수리됨. 예시에 있지만 코드가 읽지 않는 섹션 중
-    image_providers 는 어댑터 연동 전 미사용으로 예시 _comment 에 명시되어 있으므로
-    그 사실을 검증한다 (문서화 목적의 실제 단언).
+    image_providers 는 이제 image_gen 모듈이 실제로 읽는 섹션이며, 예시
+    _comment 에도 그 사실이 명시되어 있다 (유령 키 회귀 방지용 실제 단언).
     """
 
     def test_as_tel_mismatch_resolved(self):
@@ -317,16 +317,19 @@ class TestKeyCrossReference:
             "as_tel" in cfg["smartstore_notice_defaults"]
         ), "코드가 읽는 자리(smartstore_notice_defaults.as_tel)에 예시 항목이 없음"
 
-    def test_image_providers_section_marked_unused(self):
-        """image_providers 섹션은 어댑터 연동 전 미사용이며 예시에 명시되어 있다.
+    def test_image_providers_section_marked_used(self):
+        """image_providers 섹션은 image_gen 모듈이 실제로 읽는 섹션이다.
 
-        코드가 이 섹션을 읽지 않는 것이 의도적임을 예시 _comment 로 확인한다.
-        (as_tel 본래 범위 밖이지만, 예시-코드 불일치 중 검증 가능한 항목.)
+        과거("현재 미사용")와 달리, image_gen 모듈이 추가되어 이제 이 섹션은
+        실제로 읽힌다. _comment 가 여전히 "미사용" 이라고 쓰여 있으면 운영자가
+        키를 채워도 동작하지 않는다고 오인하게 된다 (유령 키 회귀).
+        (as_tel 본래 범위 밖이지만, 예시-코드 일치성 중 검증 가능한 항목.)
         """
         cfg = _load_example_config()
         ip = cfg.get("image_providers")
         assert isinstance(ip, dict), "image_providers 섹션이 객체가 아님"
         comment = str(ip.get("_comment") or "")
-        assert (
-            "미사용" in comment
-        ), "image_providers._comment 가 이 섹션이 현재 미사용임을 명시하지 않음"
+        assert "미사용" not in comment, (
+            "image_providers._comment 가 여전히 '미사용' 이라고 명시 — "
+            "image_gen 모듈이 이제 이 섹션을 읽으므로 회귀"
+        )

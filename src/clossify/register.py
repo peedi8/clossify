@@ -1073,18 +1073,44 @@ def inject_prepared_qa(d):
 # ---------------------------------------------------------------------------
 
 
-def prepare_listing(d, *, attach_fn=None):
+def prepare_listing(d, *, attach_fn=None, generate_fn=None):
     """상품 정보 + 이미지 소스 로 prepared payload 를 만든다.
 
-    본 함수는 등록 전 단계를 수행한다: 이미지 정규화, 상세 HTML 렌더, QA 집계
-    (이미지 QA 는 PENDING 등록 — JPEG 의존 항목은 이 파이프라인에서 실행하지
-    않는다). 결과를 prepared payload 로 저장하고 반환한다.
+    본 함수는 등록 전 단계를 수행한다: 이미지 정규화, (선택) 이미지 생성
+    단계 분기, 상세 HTML 렌더, QA 집계 (이미지 QA 는 PENDING 등록 — JPEG
+    의존 항목은 이 파이프라인에서 실행하지 않는다). 결과를 prepared payload
+    로 저장하고 반환한다.
+
+    **이미지 생성 단계 분기** (도달 가능 분기 — 과거 "원본 0장이면 생성" 조건이
+    원본 게이트와 겹쳐 절대 실행되지 않는 죽은 코드였던 결함을 고쳤다):
+
+      ① 원본 사진이 있는가? → ``image_sources`` 가 비어있거나 정규화 후
+         ``listing_urls`` 가 0장이면 ``attach_images`` 게이트가 ``ValueError``
+         로 차단한다. **생성이 이 자리를 대체하지 못한다 (원본 게이트 불변).**
+      ② 필요한 컷 수를 원본으로 채웠는가? → ``image_gen.images_ready(
+         image_sources, needed_cuts)`` 판정. 채웠으면 생성 경로 미진입(생성 0).
+         부족하면 ③ 으로.
+      ③ 생성을 원하는가? → ``d.generate_images`` 가 참일 때만. 아니면 그대로
+         진행(생성 0).
+      ④ 생성 API 키가 있는가? → 있으면 자기 키로 **부족분(shortfall)만큼만**
+         생성한다. 없으면 명확한 사유 + 발급 안내(조용한 실패 금지).
+
+    안전 규율 (불변):
+      - 원본 이미지 0장이면 생성으로 대체할 수 없다 — ``attach_images`` 게이트가
+        이미 차단한다. 생성은 **부족한 추가 컷** 만 메운다(원본 자리 아님).
+      - 생성 결과는 원본을 대체하지 않는다 (대표이미지 규약·순서 보존). 원본
+        ``listing_urls`` 의 *뒤에* 추가한다.
+      - 부족분이 0 이하면 생성 경로에 진입하지 않는다 (사용자 돈 누수 방지).
 
     Args:
         d: 상품 입력 dict. 필수: ``name``, ``salePrice``, ``image_sources``
             (이미지 소스 리스트 — 로컬 경로/CDN URL/외부 URL 혼합).
-            선택: ``options``, ``tags``, ``notice``, ``category_id`` 등.
+            선택: ``options``, ``tags``, ``notice``, ``category_id``,
+            ``generate_images`` (bool — 이미지 생성 단계 분기),
+            ``image_prompt`` (str — 생성 프롬프트),
+            ``needed_cuts`` (int — 필요 컷 수, 기본 1).
         attach_fn: ``images.attach_images`` 대체(테스트 주입용).
+        generate_fn: ``image_gen.generate`` 대체(테스트 주입용).
 
     Returns:
         prepared payload dict. 다음 키를 포함한다:
@@ -1096,6 +1122,10 @@ def prepare_listing(d, *, attach_fn=None):
           - ``needs_llm``: LLM 위임이 필요한 항목 리스트.
           - ``needs_user``: 사용자 입력이 필요한 항목 리스트.
           - ``qa``: QA 집계 결과.
+          - ``image_generation``: 생성 단계 분기 결과 메타(생성 시도 시에만).
+            ``needed_cuts``/``api_call_count``/``output_canvas_count``/
+            ``output_layout``/``panel_count_used``/``estimated_cost_usd`` 를
+            포함한다 (``IMAGE_GENERATION_PRICE_POLICY.md`` 단위 규약 준수).
           - ``version``: ``common.PREPARED_PAYLOAD_VERSION``.
 
     Raises:
@@ -1143,6 +1173,91 @@ def prepare_listing(d, *, attach_fn=None):
         )
     # 상세 이미지 URL 도 같은 소스에서 왔다고 간주(상세 전용 소스는 OUT 범위).
     detail_urls = list(listing_urls)
+
+    # --- 1.5. 이미지 생성 단계 분기 (도달 가능 분기) ---
+    # image_gen 모듈이 config.image_providers 를 실제로 읽는 유일한 경로다.
+    #
+    # 과거 결함 (죽은 코드): 조건이 "want_generation and not user_has_images" 였다.
+    #   - image_sources=[]      → 위 게이트(attach_images)가 ValueError 로 차단.
+    #   - image_sources=[""]    → 게이트가 차단(또는 listing_urls 0장 → 차단).
+    #   - image_sources=["   "] → 동일.
+    # 즉 조건이 참이 되는 입력이 존재하지 않았다 → 생성 분기는 절대 도달 불가.
+    #
+    # 수정된 단계 분기 (원본 게이트 불변):
+    #   ① 원본 0장 → attach_images 게이트가 이미 차단 (생성으로 대체 불가).
+    #   ② 원본으로 needed_cuts 를 채웠는가? → images_ready(image_sources,
+    #      needed_cuts) 판정. 채웠으면 생성 경로 미진입(생성 0).
+    #   ③ 부족하면 generate_images 가 참일 때만 생성 시도.
+    #   ④ **부족분(shortfall)만큼만** 생성한다 — needed_cuts 전량이 아니라
+    #      ``needed_cuts - 보유 유효 원본 컷 수``. 있는 걸 또 만들면 사용자
+    #      돈이 샌다. 부족분이 0 이하면 생성 경로 미진입(호출 0).
+    #   ⑤ 생성 결과는 원본 listing_urls 의 *뒤에* 추가한다 (대표이미지 규약·
+    #      순서 보존 회귀 금지).
+    image_generation_meta: dict | None = None
+    generation_user_hint: dict | None = None
+    try:
+        from . import image_gen as _image_gen_mod
+
+        try:
+            # 최소 1 보장 — 0 이하 needed_cuts 는 의미 없고 폴백 1 로 고정.
+            needed_cuts = max(1, int(d.get("needed_cuts") or 1))
+        except (TypeError, ValueError):
+            needed_cuts = 1
+        # 보유 유효 원본 컷 수 — 빈 문자열/공백은 제외(기존 images_ready 규칙).
+        valid_original_count = sum(1 for s in image_sources if isinstance(s, str) and s.strip())
+        shortfall = needed_cuts - valid_original_count
+        want_generation = bool(d.get("generate_images"))
+        # ②③ 원본이 needed_cuts 를 채우지 못했고 + 생성을 원할 때만 진입.
+        if want_generation and shortfall > 0:
+            # ④ 부족분만큼만 생성 — 필요 컷 전량을 다시 만들지 않는다(돈 누수 방지).
+            prompt = str(d.get("image_prompt") or name or "").strip()
+            generate = generate_fn if generate_fn is not None else _image_gen_mod.generate
+            gen_result = generate(prompt, needed_cuts=shortfall)
+            image_generation_meta = {
+                "ok": bool(gen_result.get("ok")),
+                "provider": gen_result.get("provider"),
+                "model": gen_result.get("model"),
+                "needed_cuts": gen_result.get("needed_cuts"),
+                "api_call_count": gen_result.get("api_call_count"),
+                "output_canvas_count": gen_result.get("output_canvas_count"),
+                "output_layout": gen_result.get("output_layout"),
+                "panel_count_used": gen_result.get("panel_count_used"),
+                "estimated_cost_usd": gen_result.get("estimated_cost_usd"),
+                "error": gen_result.get("error"),
+                # 부족분 추적(정책 문서 단위 규약 추가 메타).
+                "requested_needed_cuts": needed_cuts,
+                "original_count": valid_original_count,
+                "shortfall": shortfall,
+            }
+            if gen_result.get("ok"):
+                # ⑤ 생성 성공 — 원본 뒤에 추가. 원본을 대체하지 않는다(순서 보존).
+                gen_urls = [
+                    str(u).strip()
+                    for u in (gen_result.get("image_urls") or [])
+                    if isinstance(u, str) and u.strip()
+                ]
+                listing_urls.extend(gen_urls)
+                detail_urls = list(listing_urls)
+            else:
+                # 생성 실패 — 조용히 넘기지 않고 안내를 needs_user 에 싣는다.
+                # image_gen 이 키 부재 안내 문구를 error 에 담아 반환한다
+                # (조용한 실패 금지).
+                generation_user_hint = {
+                    "field": "image_generation",
+                    "label": "이미지 생성",
+                    "why": str(
+                        gen_result.get("error") or "이미지 생성에 실패했습니다 (사유 미상)."
+                    ),
+                }
+        # shortfall <= 0 이거나 want_generation 이 아니면 생성 경로 미진입(호출 0).
+    except Exception as exc:
+        # image_gen 로드 자체가 실패하면 생성 불가. 조용한 통과 금지 — 안내 싣기.
+        # 단, prepare_listing 본체는 죽이지 않는다(준비 단계 역할 존중).
+        generation_user_hint = {
+            "field": "image_generation",
+            "label": "이미지 생성",
+            "why": f"이미지 생성 모듈 로드/실행 중 오류: {exc}",
+        }
 
     # --- 2. 상세 HTML 렌더 (detail_render.render_detail_html) ---
     # scene 도 같은 입력에서 산출한다(detail_html 과 scene 은
@@ -1332,6 +1447,10 @@ def prepare_listing(d, *, attach_fn=None):
                         "why": str(v.get("detail") or "사용자 입력이 필요합니다."),
                     }
                 )
+    # 이미지 생성 단계 분기에서 키 부재/실패 안내가 있으면 needs_user 에 싣는다
+    # (조용한 실패 금지 — 생성을 요청했는데 못 한 사실을 사용자가 알아야 한다).
+    if generation_user_hint is not None:
+        needs_user.append(generation_user_hint)
 
     # --- 6. prepared payload 저장 ---
     payload = {
@@ -1370,6 +1489,8 @@ def prepare_listing(d, *, attach_fn=None):
         "qa": qa_result,
         "status": d.get("status") or "SALE",
     }
+    if image_generation_meta is not None:
+        payload["image_generation"] = image_generation_meta
     if overwrite_warning is not None:
         payload["overwrite_warning"] = overwrite_warning
     write_prepared_payload(payload)

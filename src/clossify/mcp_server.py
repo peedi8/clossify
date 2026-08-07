@@ -1411,6 +1411,31 @@ def check_config(read_existing: bool = False) -> dict[str, Any]:
     # ------------------------------------------------------------------ #
     _generate_config_form(result, cfg, cfg_path, missing=missing, placeholders=placeholders)
 
+    # ------------------------------------------------------------------ #
+    # 이미지 생성 키 설정 여부 (image_generation_configured).
+    #
+    # config.image_providers 섹션을 image_gen 모듈이 실제로 읽는다(유령 키 해소).
+    # 값 자체는 반환하지 않고 채워짐/비어있음만 보고한다 — 이 도구는 게이트다.
+    # 플레이스홀더(REPLACE_WITH_...) 값은 미설정으로 취급한다.
+    #
+    # 기존 반환 키의 의미를 변경하지 않고 새 키만 추가한다 (호환).
+    # ------------------------------------------------------------------ #
+    try:
+        from . import image_gen as _image_gen_mod
+
+        image_gen_ready = _image_gen_mod.generation_available(cfg)
+    except Exception:
+        # image_gen 로드가 실패해도 기존 진단 키는 살아 있다 (부분 실패 허용).
+        image_gen_ready = False
+    result["image_generation_configured"] = bool(image_gen_ready)
+    if not image_gen_ready:
+        result["image_generation_hint"] = (
+            "이미지 생성 제공자 키(image_providers.openai.api_key 또는 "
+            "image_providers.gemini.api_key)가 설정되지 않았습니다. 키가 없으면 "
+            "이미지 생성 단계가 동작하지 않습니다 — prepare_listing 은 생성 없이 "
+            "진행되며, 생성을 요청한 경우 명확한 사유로 거부됩니다."
+        )
+
     result["ok"] = not missing and not placeholders
     return result
 
