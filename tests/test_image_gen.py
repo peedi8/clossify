@@ -682,12 +682,19 @@ class TestGenerateUnitCostsAndPlaceholder:
     """``image_gen.generate`` 단위 — 단가표 기반 비용, 플레이스홀더 감지, 오류 번역."""
 
     def test_openai_generates_and_reports_cost(self):
-        session = _RecordingSession(_ok_openai_response())
+        # ★ b64_json 경로(b64_json -> bytes -> upload -> CDN URL) 를 쓴다.
+        # 과거의 _ok_openai_response(url 형태) 는 session.get 을 요구해
+        # _RecordingSession 으로는 밟을 수 없고, upload_fn 없이는 attach_images
+        # 가 실호출을 시도한다. _GetCapableSession + b64_json + upload_fn 주입으로
+        # 실제 응답 형태를 쓰되 네트워크 0회를 유지한다.
+        session = _GetCapableSession(_ok_openai_b64_response())
+        upload_fn, _ = _counting_upload_factory()
         result = image_gen.generate(
             "상세 컷",
             needed_cuts=2,
             config=_valid_openai_config(),
             session=session,
+            upload_fn=upload_fn,
         )
         assert result["ok"] is True, f"생성 실패: {result.get('error')}"
         assert result["provider"] == "openai"
@@ -702,14 +709,20 @@ class TestGenerateUnitCostsAndPlaceholder:
         assert len(session.calls) == 2
 
     def test_gemini_generates_and_reports_cost(self):
-        session = _RecordingSession(_ok_gemini_response())
+        # ★ inlineData.data 경로(항상 base64 -> bytes -> upload -> CDN URL).
+        # 과거의 _ok_gemini_response 는 "fake-image-bytes" 의 base64 를 써서
+        # 매직바이트 게이트에서 거부됐다. _ok_gemini_inline_response 는 실제
+        # PNG 1x1 의 base64 를 써서 매직바이트 검증을 통과한다.
+        session = _GetCapableSession(_ok_gemini_inline_response())
+        upload_fn, _ = _counting_upload_factory()
         result = image_gen.generate(
             "상세 컷",
             needed_cuts=1,
             config=_valid_gemini_config(),
             session=session,
+            upload_fn=upload_fn,
         )
-        assert result["ok"] is True
+        assert result["ok"] is True, f"생성 실패: {result.get('error')}"
         assert result["provider"] == "gemini"
         assert result["model"] == "gemini-3.1-flash-image"
         assert result["api_call_count"] == 1
@@ -892,3 +905,448 @@ class TestCheckConfigImageGenerationCompat:
         with mock.patch.object(naver_client, "config_path", return_value=str(path)):
             result = mcp_server.check_config()
         assert result["image_generation_configured"] is False
+
+
+# =========================================================================== #
+# ★ base64 누수 결함 회귀 테스트 (과업 계약 (a)-(h)).
+#
+# 과거 결함: ``_call_openai`` 가 ``url`` 과 ``b64_json`` 을 같은 문자열로
+# 취급해, OpenAI b64_json 이나 Gemini inlineData.data(base64) 가 그대로
+# ``image_urls`` 에 들어갔다. 결과적으로 ``<img src="data:image/png;base64,
+# ...">`` 나 ``<img src="iVBORw0KGgo...">`` 형태의 깨진 src 가 상세 HTML 에
+# 담겼다. mock 이 너무 착하게(https://cdn.test/...) URL 을 지어줘서 이 음매가
+# 한 번도 밟히지 않았다.
+#
+# 본 섹션의 mock 은 **제공자가 실제로 주는 응답 형태** 를 그대로 쓴다:
+#   - OpenAI b64_json  → ``{"data": [{"b64_json": "<base64-of-PNG>"}]}``
+#   - OpenAI url       → ``{"data": [{"url": "https://provider-cdn/x.png"}]}``
+#     (이 URL 은 ``session.get`` 으로 받아 바이트로 환원된다)
+#   - Gemini           → ``{"candidates": [{"content": {"parts":
+#                         [{"inlineData": {"data": "<base64>"}}]}}]}``
+#
+# 업로드 경로(네이버 이미지서버)는 ``upload_fn`` 주입으로 0회 실호출을 검증한다.
+# 생성 바이트 → 임시 파일 → ``images.attach_images`` → ``upload_fn`` 이라는
+# **사용자 사진과 같은 길** 을 탄다. 최종 ``image_urls`` 는 CDN URL 만 담는다.
+# =========================================================================== #
+
+# PNG 1x1 투명 이미지의 실제 바이트 (매직바이트 포함). 진짜 이미지라 매직바이트
+# 검증을 통과한다 — 테스트용 가짜 문자열("fake-image-bytes")은 매직바이트 불일치로
+# 거부되므로, 업로드 경로까지 도달하려면 실제 이미지 바이트가 필요하다.
+_PNG_1X1_BYTES = (
+    b"\x89PNG\r\n\x1a\n"  # PNG signature (8 bytes)
+    b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
+    b"\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01"
+    b"\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+# PNG 1x1 의 base64 인코딩 — OpenAI b64_json / Gemini inlineData.data 형태.
+_PNG_1X1_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+
+
+def _ok_openai_b64_response() -> _FakeResponse:
+    """OpenAI Images API 정상 응답 — ★ b64_json 형태 (실제 응답 형태).
+
+    OpenAI 는 ``response_format=b64_json`` 일 때 URL 이 아닌 base64 문자열을
+    ``data[0].b64_json`` 에 담아 돌려준다. 과거 결함의 핵심은 이것을 URL 인
+    양 그대로 ``image_urls`` 에 넣은 것이었다.
+    """
+    return _FakeResponse(200, {"data": [{"b64_json": _PNG_1X1_B64}]})
+
+
+def _ok_openai_url_response(url: str = "https://provider-cdn.test/img.png") -> _FakeResponse:
+    """OpenAI Images API 정상 응답 — ``url`` 형태.
+
+    ``url`` 은 제공자의 CDN 이다. ``_normalize_to_bytes`` 가 같은 ``session`` 의
+    ``get`` 으로 받아 바이트로 환원한다.
+    """
+    return _FakeResponse(200, {"data": [{"url": url}]})
+
+
+def _ok_gemini_inline_response() -> _FakeResponse:
+    """Gemini generateContent 정상 응답 — inlineData.data 형태 (항상 base64)."""
+    return _FakeResponse(
+        200,
+        {"candidates": [{"content": {"parts": [{"inlineData": {"data": _PNG_1X1_B64}}]}}]},
+    )
+
+
+class _GetCapableSession:
+    """post + get 을 모두 기록/반환하는 fake session.
+
+    OpenAI ``url`` 응답 경로는 ``session.get(url)`` 로 이미지 바이트를 받아온다.
+    기존 ``_RecordingSession`` 은 post 만 지원해 이 경로를 밟을 수 없었다.
+    본 세션은 get 도 지원하되, get 은 PNG 바이트를 돌려준다(실제 이미지 바이트).
+    """
+
+    def __init__(self, post_response: _FakeResponse, get_content: bytes = _PNG_1X1_BYTES):
+        self._post_response = post_response
+        self._get_content = get_content
+        self.calls: list[dict] = []
+        self.get_calls: list[dict] = []
+
+    def post(self, url, **kwargs):
+        self.calls.append({"url": url, **kwargs})
+        return self._post_response
+
+    def get(self, url, **kwargs):
+        self.get_calls.append({"url": url, **kwargs})
+        # 이미지 바이트를 담은 fake response.
+        return _FakeResponse(200, text="") if False else _BytesResponse(200, self._get_content)
+
+    def close(self):
+        pass
+
+
+class _BytesResponse:
+    """바이트 본문을 갖는 fake response (``content`` 속성)."""
+
+    def __init__(self, status_code: int, content: bytes):
+        self.status_code = status_code
+        self.content = content
+        self.text = ""
+
+
+def _counting_upload_factory(cdn_prefix: str = "https://shop-phinf.pstatic.net/gen/"):
+    """``upload_fn`` fake — 호출 카운트와 CDN URL 리스트를 반환하는 클로저.
+
+    실제 ``naver_client.upload_images`` 를 대체한다. 네이버 실호출 0회 검증은
+    이 fake 가 불린 횟수로 판정한다. CDN URL prefix 는 네이버 CDN 호스트 접미사
+    (``.pstatic.net``) 를 포함해 ``_is_naver_cdn_url`` 판정을 naturally 통과한다.
+    """
+    calls: list[list[str]] = []
+
+    def upload_fn(paths: list[str]) -> list[str]:
+        calls.append(list(paths))
+        return [f"{cdn_prefix}{i}.png" for i in range(len(paths))]
+
+    return upload_fn, calls
+
+
+# --------------------------------------------------------------------------- #
+# (a) OpenAI 가 b64_json 만 줄 때 → 최종 image_urls 가 전부 CDN URL.
+# --------------------------------------------------------------------------- #
+class TestOpenAIB64JsonRoutesThroughCdn:
+    """(a) OpenAI ``b64_json`` 응답 → 바이트 → 임시 파일 → 업로드 → CDN URL.
+
+    과거 결함: ``b64_json`` 이 URL 인 양 그대로 ``image_urls`` 에 들어갔다.
+    이제 ``_decode_b64_to_bytes`` → ``_generated_bytes_to_cdn_urls`` →
+    ``images.attach_images`` → ``upload_fn`` 경로를 거쳐 CDN URL 만 담긴다.
+    최종 ``image_urls`` 에 ``base64`` 나 ``data:`` URL 이 하나도 없어야 한다.
+    """
+
+    def test_openai_b64_only_produces_only_cdn_urls(self):
+        session = _GetCapableSession(_ok_openai_b64_response())
+        upload_fn, upload_calls = _counting_upload_factory()
+        result = image_gen.generate(
+            "상세 컷",
+            needed_cuts=2,
+            config=_valid_openai_config(),
+            session=session,
+            upload_fn=upload_fn,
+        )
+        assert result["ok"] is True, f"b64_json 경로 실패: {result.get('error')}"
+        urls = result["image_urls"]
+        # ★ 0개의 base64 / data: URL — 전부 CDN URL 이어야.
+        assert len(urls) == 2, f"URL 개수가 needed_cuts(2)가 아님: {len(urls)}"
+        for u in urls:
+            assert u.startswith("https://"), f"CDN URL 이 아님: {u!r}"
+            assert "pstatic.net" in u, f"네이버 CDN 호스트가 아님: {u!r}"
+            assert not u.startswith("data:"), f"data: URL 이 섞임: {u!r}"
+            # base64 디코딩 가능한 문자열인지(=base64 덩어리) 점검 — 아니어야.
+            import base64 as _b64
+
+            try:
+                _b64.b64decode(u, validate=True)
+                # 디코딩 가능하면 base64 덩어리일 가능성 — 결함 재현.
+                assert False, f"URL 이 base64 디코딩 가능 (base64 덩어리 의심): {u!r}"
+            except (ValueError, Exception):
+                pass
+        # upload_fn 은 정확히 1회 (2개 임시 파일을 한 번에 넘김).
+        assert len(upload_calls) == 1, f"upload_fn 호출 수: {len(upload_calls)}"
+        assert len(upload_calls[0]) == 2, "한 번에 2개 경로를 넘겨야"
+
+
+# --------------------------------------------------------------------------- #
+# (b) OpenAI 가 url 을 줄 때 → 그 이미지를 받아 업로드하고 CDN URL.
+# --------------------------------------------------------------------------- #
+class TestOpenAIUrlFetchedAndUploaded:
+    """(b) OpenAI ``url`` 응답 → session.get 으로 바이트 수신 → 업로드 → CDN URL."""
+
+    def test_openai_url_is_fetched_and_uploaded_to_cdn(self):
+        session = _GetCapableSession(_ok_openai_url_response())
+        upload_fn, upload_calls = _counting_upload_factory()
+        result = image_gen.generate(
+            "상세 컷",
+            needed_cuts=1,
+            config=_valid_openai_config(),
+            session=session,
+            upload_fn=upload_fn,
+        )
+        assert result["ok"] is True, f"url 경로 실패: {result.get('error')}"
+        urls = result["image_urls"]
+        assert len(urls) == 1
+        assert urls[0].startswith("https://"), f"CDN URL 아님: {urls[0]!r}"
+        # session.get 이 한 번은 불려야 — url 을 바이트로 받아오는 경로.
+        assert (
+            len(session.get_calls) == 1
+        ), f"session.get 이 1회 불려야 (url → bytes 수신): {len(session.get_calls)}회"
+        # 업로드도 1회.
+        assert len(upload_calls) == 1
+
+
+# --------------------------------------------------------------------------- #
+# (c) Gemini inlineData.data → CDN URL (0개 base64).
+# --------------------------------------------------------------------------- #
+class TestGeminiInlineDataRoutesThroughCdn:
+    """(c) Gemini ``inlineData.data`` (항상 base64) → CDN URL.
+
+    Gemini 응답은 ``candidates[0].content.parts[*].inlineData.data`` 가 항상
+    base64 다 — URL 은 나올 수가 없다. 과거 결함에서 가장 확정적으로 깨지던
+    경로다. 본 테스트는 base64 가 그대로 흐르지 않고 CDN URL 로 환원되는지 검증.
+    """
+
+    def test_gemini_inline_data_produces_only_cdn_urls(self):
+        session = _GetCapableSession(_ok_gemini_inline_response())
+        upload_fn, upload_calls = _counting_upload_factory()
+        result = image_gen.generate(
+            "상세 컷",
+            needed_cuts=1,
+            config=_valid_gemini_config(),
+            session=session,
+            upload_fn=upload_fn,
+        )
+        assert result["ok"] is True, f"inlineData 경로 실패: {result.get('error')}"
+        urls = result["image_urls"]
+        assert len(urls) == 1
+        for u in urls:
+            assert u.startswith("https://"), f"CDN URL 이 아님: {u!r}"
+            assert not u.startswith("data:"), f"data: URL 이 섞임 (결함): {u!r}"
+        # Gemini 는 get 을 부르지 않는다 — base64 만 있으므로.
+        assert len(session.get_calls) == 0, "Gemini 경로인데 session.get 이 불림"
+        assert len(upload_calls) == 1
+
+
+# --------------------------------------------------------------------------- #
+# (d) 업로드 실패 → ok=False + 사유, listing_urls 에 안 들어간다.
+# --------------------------------------------------------------------------- #
+class TestUploadFailureReturnsOkFalse:
+    """(d) ``upload_fn`` 이 예외/빈 리스트 를 반환하면 ``ok: False`` + 사유.
+
+    fail-closed: 업로드가 실패하면 생성 결과가 상품에 들어가지 않는다.
+    깨진 이미지가 상품에 들어가는 것보다 생성이 실패한 게 낫다.
+    """
+
+    def test_upload_exception_returns_ok_false_with_reason(self):
+        session = _GetCapableSession(_ok_openai_b64_response())
+
+        def failing_upload(paths: list[str]) -> list[str]:
+            raise RuntimeError("네이버 이미지서버 장애(테스트)")
+
+        result = image_gen.generate(
+            "상세 컷",
+            needed_cuts=1,
+            config=_valid_openai_config(),
+            session=session,
+            upload_fn=failing_upload,
+        )
+        assert result["ok"] is False, "업로드 실패인데 ok=True (조용한 통과)"
+        assert isinstance(result["error"], str) and result["error"], "사유 누락"
+        # ★ 업로드 실패 시 image_urls 는 비어야 — 깨진 URL 이 들어가면 안 됨.
+        assert (
+            result["image_urls"] == []
+        ), f"업로드 실패했는데 URL 이 들어감: {result['image_urls']}"
+
+    def test_upload_empty_returns_ok_false_with_reason(self):
+        session = _GetCapableSession(_ok_openai_b64_response())
+
+        def empty_upload(paths: list[str]) -> list[str]:
+            return []  # 업로드는 됐지만 URL 0개 반환(빈 결과).
+
+        result = image_gen.generate(
+            "상세 컷",
+            needed_cuts=1,
+            config=_valid_openai_config(),
+            session=session,
+            upload_fn=empty_upload,
+        )
+        assert result["ok"] is False, "빈 업로드인데 ok=True"
+        assert result["image_urls"] == []
+
+
+# --------------------------------------------------------------------------- #
+# (e) 디코드 실패/이미지 아님 → ok=False + 사유.
+# --------------------------------------------------------------------------- #
+class TestDecodeFailureReturnsOkFalse:
+    """(e) base64 디코드 실패 / 매직바이트 불일치 → ``ok: False`` + 사유."""
+
+    def test_garbage_b64_returns_ok_false(self):
+        # base64 처럼 보이지만 디코드하면 매직바이트 불일치 (이미지가 아님).
+        # "not-an-image!!" 의 base64 — 디코드는 되지만 PNG/JPG/WEBP 가 아님.
+        garbage_b64 = "bm90LWFuLWltYWdlISE="  # base64 of "not-an-image!!"
+        bad_response = _FakeResponse(200, {"data": [{"b64_json": garbage_b64}]})
+        session = _GetCapableSession(bad_response)
+        upload_fn, upload_calls = _counting_upload_factory()
+        result = image_gen.generate(
+            "상세 컷",
+            needed_cuts=1,
+            config=_valid_openai_config(),
+            session=session,
+            upload_fn=upload_fn,
+        )
+        assert result["ok"] is False, "이미지 아닌 바튼데 ok=True"
+        assert isinstance(result["error"], str) and result["error"], "사유 누락"
+        assert result["image_urls"] == [], "이미지 아닌데 URL 이 들어감"
+        # ★ upload_fn 은 불리지 않아야 — 매직바이트 게이트에서 거부되므로.
+        assert len(upload_calls) == 0, "매직바이트 거부 전에 upload_fn 이 불림"
+
+    def test_corrupt_b64_returns_ok_false(self):
+        # base64 자체가 깨짐 — 디코드 불가.
+        corrupt_response = _FakeResponse(200, {"data": [{"b64_json": "!!!not-base64!!!"}]})
+        session = _GetCapableSession(corrupt_response)
+        upload_fn, _ = _counting_upload_factory()
+        result = image_gen.generate(
+            "상세 컷",
+            needed_cuts=1,
+            config=_valid_openai_config(),
+            session=session,
+            upload_fn=upload_fn,
+        )
+        assert result["ok"] is False, "깨진 base64 인데 ok=True"
+        assert result["image_urls"] == []
+
+
+# --------------------------------------------------------------------------- #
+# (f) prepare_listing 까지 흘렀을 때 listing_urls 전 항목 http 로 시작,
+#     상세 HTML 에 base64 가 없다.
+# --------------------------------------------------------------------------- #
+class TestPrepareListingEndToEndNoBase64Leak:
+    """(f) ``prepare_listing`` 종단 — listing_urls 전 항목 http 로 시작.
+
+    상세 HTML 에 base64 문자열이 ``<img src>`` 로 들어가지 않는지 검증.
+    ``image_gen.generate`` 의 실제 경로(b64_json → bytes → upload → CDN URL)를
+    ``generate_fn`` 없이 실モ듈로 태운다. ``session`` 과 ``upload_fn`` 만 주입.
+    """
+
+    def test_prepare_listing_no_base64_in_detail_html(self, isolated_prepared_dir, monkeypatch):
+        monkeypatch.setattr(naver_client, "load_config", lambda: _valid_openai_config())
+
+        # 원본 1장 + 부족분 1 → 생성 1 → CDN URL 1.
+        d = {
+            "name": "엔드투엔드상품",
+            "salePrice": 20000,
+            "image_sources": ["http://user/original.jpg"],
+            "generate_images": True,
+            "needed_cuts": 2,
+        }
+
+        # generate_fn 에 래퍼를 끼워넣어 upload_fn/session 주입.
+        real_generate = image_gen.generate
+        upload_fn, _ = _counting_upload_factory()
+
+        def injected_generate(prompt, *, needed_cuts=1, **kwargs):
+            # session 은 _GetCapableSession 으로, upload_fn 은 카운팅 fake 로.
+            session = _GetCapableSession(_ok_openai_b64_response())
+            return real_generate(
+                prompt,
+                needed_cuts=needed_cuts,
+                config=_valid_openai_config(),
+                session=session,
+                upload_fn=upload_fn,
+            )
+
+        payload = register.prepare_listing(
+            d, attach_fn=_fake_attach_lenient, generate_fn=injected_generate
+        )
+        urls = payload["images"]["listing_urls"]
+        # 총 2개 (원본 1 + 생성 1).
+        assert len(urls) == 2, f"URL 개수 불일치: {len(urls)}"
+        # ★ 전 항목 http 로 시작 — base64/data: URL 금지.
+        for u in urls:
+            assert u.startswith("http"), f"http 로 시작하지 않음: {u!r}"
+            assert not u.startswith("data:"), f"data: URL 누수: {u!r}"
+        # 상세 HTML 에도 base64/data: 가 없어야.
+        detail_html = str(payload.get("detail_html") or "")
+        assert "data:image" not in detail_html, "상세 HTML 에 data:image 누수"
+        # base64 PNG 시그니처("iVBORw0KGgo") 가 src 에 들어가지 않았는지.
+        assert "iVBORw0KGgo" not in detail_html, "상세 HTML 에 base64 PNG 시그니처 누수"
+
+
+# --------------------------------------------------------------------------- #
+# (g) 원본이 앞, 생성분이 뒤 (순서 회귀) — b64_json 경로에서.
+# --------------------------------------------------------------------------- #
+class TestOrderPreservedB64Route:
+    """(g) b64_json → CDN URL 경로에서도 순서가 보존된다 (원본 앞, 생성 뒤)."""
+
+    def test_originals_first_generated_after_b64_route(self, isolated_prepared_dir, monkeypatch):
+        monkeypatch.setattr(naver_client, "load_config", lambda: _valid_openai_config())
+
+        real_generate = image_gen.generate
+        upload_fn, _ = _counting_upload_factory()
+
+        def injected_generate(prompt, *, needed_cuts=1, **kwargs):
+            session = _GetCapableSession(_ok_openai_b64_response())
+            return real_generate(
+                prompt,
+                needed_cuts=needed_cuts,
+                config=_valid_openai_config(),
+                session=session,
+                upload_fn=upload_fn,
+            )
+
+        # 원본 2장 + needed_cuts=4 → 부족분 2 → 생성 2 (CDN URL 2).
+        d = {
+            "name": "순서보존B64상품",
+            "salePrice": 25000,
+            "image_sources": ["http://user/a.jpg", "http://user/b.jpg"],
+            "generate_images": True,
+            "needed_cuts": 4,
+        }
+        payload = register.prepare_listing(
+            d, attach_fn=_fake_attach_lenient, generate_fn=injected_generate
+        )
+        urls = payload["images"]["listing_urls"]
+        assert len(urls) == 4, f"URL 개수 불일치: {len(urls)}"
+        # 앞 2개는 원본(attach 가 만든 URL), 뒤 2개는 생성(upload_fn 이 만든 URL).
+        attach_urls = [u for u in urls if "cdn/test" in u]
+        gen_urls = [u for u in urls if "pstatic.net" in u]
+        assert len(attach_urls) == 2, f"원본 URL 개수 불일치: {attach_urls}"
+        assert len(gen_urls) == 2, f"생성 URL 개수 불일치: {gen_urls}"
+        # ★ 원본이 생성보다 앞이어야 — 대표이미지 규약·순서 보존.
+        assert urls.index(attach_urls[0]) < urls.index(
+            gen_urls[0]
+        ), f"생성 URL 이 원본보다 앞 (순서 위반): {urls}"
+        assert urls.index(attach_urls[1]) < urls.index(
+            gen_urls[0]
+        ), f"원본 2번이 생성 1번보다 뒤 (순서 위반): {urls}"
+
+
+# --------------------------------------------------------------------------- #
+# (h) 원본 0장 게이트 여전히 유효 — b64_json 경로 추가 후에도 원본 게이트 유지.
+# --------------------------------------------------------------------------- #
+class TestOriginalZeroGateStillValidB64Route:
+    """(h) 원본 0장이면 생성이 있어도 여전히 ``ValueError``.
+
+    안전 불변식: 원본 0장은 ``images.attach_images`` 게이트가 ``ValueError`` 로
+    차단한다. b64_json 처리 경로가 추가됐다고 이 게이트가 느슨해지면 안 된다.
+    """
+
+    def test_zero_originals_still_blocked_even_with_generation(
+        self, isolated_prepared_dir, monkeypatch
+    ):
+        monkeypatch.setattr(naver_client, "load_config", lambda: _valid_openai_config())
+        generate_calls: list = []
+
+        def fake_generate(*a, **kw):
+            generate_calls.append(1)
+            return _ok_generate(*a, **kw)
+
+        d = {
+            "name": "원본없음B64게이트",
+            "salePrice": 12000,
+            "image_sources": [],  # 원본 0장.
+            "generate_images": True,  # 생성을 원해도.
+            "needed_cuts": 3,
+        }
+        with pytest.raises(ValueError, match="image_sources"):
+            register.prepare_listing(d, attach_fn=_fake_attach_honest, generate_fn=fake_generate)
+        # 생성이 불리지 않아야 — 원본 게이트가 먼저 차단.
+        assert len(generate_calls) == 0, "원본 0장인데 generate 가 호출됨 (게이트 우회)"

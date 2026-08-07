@@ -48,11 +48,16 @@ HTTP 호출은 이미 프로젝트 의존성인 ``requests`` 만 사용한다 (�
 
 from __future__ import annotations
 
+import base64 as _base64
+import binascii
+import os
+import tempfile
 from typing import Any
 
 import requests
 
 from . import common, naver_client
+from . import images as _images_mod
 
 # --------------------------------------------------------------------------- #
 # 상수 — config 스키마 키, 플레이스홀더 토큰, 단가표.
@@ -91,6 +96,38 @@ _DEFAULT_RATE_TABLE: dict[tuple[str, str], float] = {
 # 모델명이 단가표에 없을 때 쓰는 보수적 기본 단가(정책 문서의 가장 비싼
 # 단일-출력 라인 근사). 과소 추정으로 "싼 줄 알고 많이 호출" 하는 것을 막는다.
 _FALLBACK_RATE_USD: float = 0.134
+
+# 생성된 이미지 한 장의 바이트 크기 상한. ``images.MAX_IMAGE_BYTES`` 와 같은
+# 의미(10MB)지만, 본 모듈은 업로드 게이트의 상수를 존중하되 **방어적으로**
+# 디코드 직후에도 한 번 더 자른다 — 거대한 응답이 메모리를 삼키지 않게.
+# 상한을 ``images.MAX_IMAGE_BYTES`` 에서 읽어 단일 진실 공급원을 따른다.
+_MAX_GENERATED_IMAGE_BYTES: int = _images_mod.MAX_IMAGE_BYTES
+
+# 매직바이트 → 임시 파일 확장자 매핑. ``images.validate_local_image`` 가
+# 화이트리스트 확장자(``.jpg/.jpeg/.png/.webp``) 를 요구하므로, 임시 파일에
+# 그 의미없는 ``.img`` 확장자를 쓰면 확장자 게이트에서 거부된다. 매직바이트를
+# 읽어 실제 포맷에 맞는 확장자를 붙인다 — 위장이 아니라 *내용 기반* 명명이다.
+_MAGIC_TO_EXT: tuple[tuple[bytes, str], ...] = (
+    (b"\xff\xd8\xff", ".jpg"),
+    (b"\x89PNG\r\n\x1a\n", ".png"),
+    # WEBP 는 RIFF....WEBP (12바이트) — 헤더 4바이트만 보고 WEBPtrail 검사는
+    # _matches_any_image_magic 가 이미 한다. 여기서는 확장자만 매칭.
+    (b"RIFF", ".webp"),
+)
+
+
+def _ext_for_magic(head: bytes) -> str:
+    """바이트 헤더에서 확장자를 고른다. 모르면 ``.img`` (이후 게이트가 거부)."""
+    for magic, ext in _MAGIC_TO_EXT:
+        if head.startswith(magic):
+            # WEBP 추가 검증: 8..11 위치에 "WEBP" 필요. RIFF 로 시작하는 다른
+            # 포맷(WAV 등) 이 webp 확장자를 달지 않게.
+            if ext == ".webp":
+                if len(head) >= 12 and head[8:12] == b"WEBP":
+                    return ".webp"
+                continue
+            return ext
+    return ".img"
 
 
 # --------------------------------------------------------------------------- #
@@ -281,6 +318,8 @@ def generate(
     provider: str | None = None,
     config: dict[str, Any] | None = None,
     session: Any = None,
+    upload_fn: Any = None,
+    fetch_fn: Any = None,
 ) -> dict[str, Any]:
     """이미지 생성 통합 진입점.
 
@@ -299,6 +338,11 @@ def generate(
             :func:`pick_provider` 로 자동 선택.
         config: 명시 config(테스트 주입용). ``None`` 이면 파일에서 읽는다.
         session: ``requests.Session`` 대체(테스트 주입용).
+        upload_fn: ``images.attach_images`` 의 ``upload_fn`` 으로 다시 넘길 함수
+            (로컬 파일 경로 리스트 → CDN URL 리스트). ``None`` 이면
+            ``naver_client.upload_images`` 기본값.
+        fetch_fn: ``images.attach_images`` 의 ``fetch_fn`` 으로 다시 넘길 함수
+            (외부 URL → 임시 파일). ``None`` 이면 ``images.fetch_external_image``.
 
     Returns:
         결과 dict::
@@ -313,7 +357,11 @@ def generate(
               "output_layout": str,        # "single" | ...
               "panel_count_used": int,     # 최종 사용 가능 컷 수
               "estimated_cost_usd": float, # 추정 비용
-              "image_urls": [str, ...],    # 생성된 이미지 URL/문자열
+              "image_urls": [str, ...],    # ★ 네이버 CDN URL 만 담긴다
+                                              (base64/data: URL/로컬경로 금지).
+                                              생성 이미지도 사용자 사진과 같은
+                                              길(바이트 → 임시 파일 → 업로드 →
+                                              CDN URL) 을 탄다.
               "error": str | None,         # 실패 사유 (ok=False 일 때)
             }
 
@@ -322,9 +370,19 @@ def generate(
         거부한다(조용한 실패 금지). 본 함수는 그래도 한 번 더 ``generation_available``
         로 확인한다.
       - **네트워크 호출은 이 모듈 안에서만.** ``session`` 주입이 없으면
-        ``requests`` 기본 세션을 쓴다.
-      - **네이버·OpenAI·Gemini 실호출 금지(테스트).** 모두 ``session`` mock 으로
-        호출 횟수를 센다.
+        ``requests`` 기본 세션을 쓴다. OpenAI 가 ``url`` 을 주면 그 URL 의
+        이미지 바이트를 **받아오는** 데에도 같은 ``session`` 을 쓴다(별도 세션
+        X). 업로드(네이버 이미지서버)는 ``images.attach_images`` →
+        ``naver_client.upload_images`` 경로를 타며, 이 경로는 실호출 테스트에서
+        ``upload_fn`` 주입으로 0회로 검증된다.
+      - **네이버·OpenAI·Gemini 실호출 금지(테스트).** 모두 ``session``/``upload_fn``
+        mock 으로 호출 횟수를 센다. 단 mock 은 **제공자가 실제로 주는 응답 형태**
+        (b64_json / url / inlineData) 를 따라야 한다 — 과거 결함의 원인이
+        "mock 이 너무 착했다" 는 점을 잊지 말 것.
+      - **``image_urls`` 에는 CDN URL 만 담는다.** base64 문자열이나 ``data:`` URL
+        이 섞이면 상세 HTML 의 ``<img src>`` 깨짐으로 이어진다. 업로드 실패 시
+        해당 컷은 결과에 **들어가지 않는다** — 깨진 이미지가 상품에 들어가는
+        것보다 생성이 실패한 게 낫다(조용한 통과 금지).
     """
     result: dict[str, Any] = {
         "ok": False,
@@ -391,15 +449,20 @@ def generate(
     result["model"] = model
 
     # --- 제공자별 HTTP 호출 (이 모듈 안에 격리) ---
+    # ★ 제공자는 **raw bytes** 만 반환한다. URL/base64 여부는 이 모듈의
+    # ``_normalize_to_bytes`` 가 통일적으로 처리한다 — 과거 결함의 핵심은
+    # ``url`` 과 ``b64_json`` 을 같은 것으로 취급해 base64 덩어리가 그대로
+    # 흘러간 것이었다. 이제 바이트까지 환원한 뒤 임시 파일로 저장하고
+    # ``images.attach_images`` 로 **사용자 사진과 같은 길** 을 탄다.
     own_session = session is None
     if own_session:
         session = requests.Session()
     try:
         try:
             if provider == "openai":
-                image_urls, call_reason = _call_openai(session, api_key, model, prompt, cuts)
+                image_bytes_list, call_reason = _call_openai(session, api_key, model, prompt, cuts)
             elif provider == "gemini":
-                image_urls, call_reason = _call_gemini(session, api_key, model, prompt, cuts)
+                image_bytes_list, call_reason = _call_gemini(session, api_key, model, prompt, cuts)
             else:  # 방어 — 위에서 걸렀으나 도달 가능성 유지
                 result["error"] = f"generate: 지원하지 않는 제공자: {provider!r}"
                 return result
@@ -420,33 +483,270 @@ def generate(
             except Exception:
                 pass
 
-    if not image_urls:
+    if not image_bytes_list:
         result["error"] = (
             f"generate: {provider} 호출이 이미지를 반환하지 않았습니다 — {call_reason}"
         )
         return result
 
     api_call_count = cuts  # 단일 출력 정책: needed_cuts == api_call_count
+
+    # --- bytes → 임시 파일 → CDN URL (사용자 사진과 같은 길 재사용) ---
+    # ★ ``images.attach_images`` 가 로컬 경로 → 네이버 CDN URL 로 만드는
+    # 단일 진실 공급원이다. 업로드 로직을 새로 쓰지 않는다. 생성 이미지의
+    # 임시 파일을 ``attach_images`` 에 넘기면 그것이 동일한 검증(매직바이트·
+    # 크기 상한·컨테인먼트) 과 동일한 업로드 경로를 통과한다. 순서 보존은
+    # ``attach_images`` 가 입력 순서를 유지하는 계약에 맡긴다.
+    cdn_urls, upload_reason = _generated_bytes_to_cdn_urls(
+        image_bytes_list, upload_fn=upload_fn, fetch_fn=fetch_fn
+    )
+    if not cdn_urls:
+        # 업로드가 한 건도 안 됐다 — 깨진 이미지가 상품에 들어가는 것보다
+        # 생성이 실패한 게 낫다. ok=False 로 사유를 명확히 전달(조용한 통과 금지).
+        result["api_call_count"] = api_call_count
+        result["output_canvas_count"] = len(image_bytes_list)
+        result["estimated_cost_usd"] = _estimate_cost_usd(provider, model, api_call_count)
+        result["error"] = (
+            f"generate: 생성된 이미지를 CDN 에 업로드하지 못했습니다 — {upload_reason}. "
+            "깨진 이미지가 상품에 들어가는 것을 막기 위해 생성분을 결과에 넣지 않습니다."
+        )
+        return result
+
     result["ok"] = True
     result["api_call_count"] = api_call_count
-    result["output_canvas_count"] = len(image_urls)
-    result["panel_count_used"] = len(image_urls)
+    result["output_canvas_count"] = len(image_bytes_list)
+    result["panel_count_used"] = len(cdn_urls)
     result["estimated_cost_usd"] = _estimate_cost_usd(provider, model, api_call_count)
-    result["image_urls"] = list(image_urls)
+    result["image_urls"] = list(cdn_urls)
     result["error"] = None
     return result
 
 
 # --------------------------------------------------------------------------- #
+# 제공자 응답 → raw bytes 통일 헬퍼.
+#
+# ★ 과거 결함의 뿌리: ``_call_openai`` 가 ``url`` 과 ``b64_json`` 을 같은
+# 문자열로 취급해 ``image_urls`` 에 그대로 담았다. ``_call_gemini`` 는 항상
+# base64 만 주기 때문에 이 경로에서는 URL 이 나올 수가 없었다 — 즉 실호출하면
+# 반드시 깨졌다. mock 이 URL 을 지어줘서 이음매가 한 번도 안 밟혔다.
+#
+# 이제 제공자 응답은 모두 raw ``bytes`` 로 환원한다:
+#   - OpenAI ``url``   → ``session.get(url)`` 로 바이트 수신.
+#   - OpenAI ``b64_json`` → ``base64.b64decode``.
+#   - Gemini ``inlineData.data`` → ``base64.b64decode`` (항상 base64).
+# 바이트는 매직바이트 검증 + 크기 상한을 거쳐 임시 파일로 저장되고,
+# ``_generated_bytes_to_cdn_urls`` 가 ``images.attach_images`` 에 넘긴다.
+# --------------------------------------------------------------------------- #
+def _decode_b64_to_bytes(value: str, *, source: str) -> tuple[bytes, str]:
+    """base64 문자열을 raw bytes 로 디코드.
+
+    Args:
+        value: base64 로 인코딩된 문자열.
+        source: 오류 메시지에 실을 출처 키명(``"b64_json"``/``"inlineData.data"``).
+
+    Returns:
+        ``(decoded_bytes, reason)`` — ``reason`` 이 빈 문자열이면 OK.
+        디코드 실패·크기 초과면 ``(b"", reason)``.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return b"", f"{source} 값이 비어있습니다"
+    raw = value.strip()
+    # ``data:image/png;base64,....`` 형태의 data URL 도 허용 — 과거 gemini 경로가
+    # 이 접두사를 붙여 담았다. 호환을 위해 접두사는 잘라낸다.
+    if raw.startswith("data:") and ";base64," in raw:
+        raw = raw.split(";base64,", 1)[1]
+    try:
+        decoded = _base64.b64decode(raw, validate=False)
+    except (binascii.Error, ValueError) as exc:
+        return b"", f"{source} base64 디코드 실패: {exc}"
+    if not decoded:
+        return b"", f"{source} 디코드 결과가 빈 바이트"
+    if len(decoded) > _MAX_GENERATED_IMAGE_BYTES:
+        return b"", (
+            f"{source} 디코드 결과 크기 초과({len(decoded)} > " f"{_MAX_GENERATED_IMAGE_BYTES})"
+        )
+    return decoded, ""
+
+
+def _fetch_url_bytes(session: Any, url: str) -> tuple[bytes, str]:
+    """OpenAI ``url`` 을 받아 raw bytes 로 수신.
+
+    SSRF 차단은 ``images.fetch_external_image`` 가 담당하지만, OpenAI 응답의
+    ``url`` 은 제공자가 준 값이므로 여기서는 같은 ``session`` 으로 받아온다.
+    허용 호스트 게이트는 적용하지 않는다(제공자가 준 URL 이 곧 그 제공자의
+    CDN 이기 때문). 대신 크기 상한과 매직바이트는 이 모듈에서 1차 방어로 검사.
+
+    Returns:
+        ``(bytes, reason)`` — ``reason`` 이 빈 문자열이면 OK.
+    """
+    if not isinstance(url, str) or not url.strip():
+        return b"", "url 값이 비어있습니다"
+    try:
+        resp = session.get(url, timeout=60)
+    except requests.RequestException as exc:
+        return b"", f"url 이미지 수신 실패: {common.sanitize_error(exc)}"
+    status = getattr(resp, "status_code", 0)
+    if not (200 <= status < 300):
+        return b"", f"url 이미지 수신 HTTP {status}"
+    content = getattr(resp, "content", b"")
+    if isinstance(content, str):
+        content = content.encode("utf-8", "replace")
+    if not isinstance(content, bytes | bytearray):
+        return b"", f"url 이미지 수신 — content 타입이 bytes 가 아님: {type(content).__name__}"
+    if not content:
+        return b"", "url 이미지 수신 — 빈 본문"
+    if len(content) > _MAX_GENERATED_IMAGE_BYTES:
+        return b"", (f"url 이미지 수신 크기 초과({len(content)} > {_MAX_GENERATED_IMAGE_BYTES})")
+    return bytes(content), ""
+
+
+def _normalize_to_bytes(session: Any, item: dict[str, Any]) -> tuple[bytes, str]:
+    """OpenAI 응답 항목 하나를 raw bytes 로 통일.
+
+    ``url`` 이 오면 그 URL 을 받아 바이트로. ``b64_json`` 이 오면 디코드해
+    바이트로. 둘 다 같은 ``bytes`` 타입으로 환원된다 — 이 함수가 바로 과거
+    결함(둘을 같은 문자열로 취급) 의 뿌리를 자르는 지점이다.
+
+    Returns:
+        ``(bytes, reason)`` — ``reason`` 이 빈 문자열이면 OK.
+    """
+    if not isinstance(item, dict):
+        return b"", "응답 항목이 dict 가 아님"
+    url_val = item.get("url")
+    b64_val = item.get("b64_json")
+    # url 이 오면 그 URL 을 받아 바이트로 (우선).
+    if isinstance(url_val, str) and url_val.strip():
+        return _fetch_url_bytes(session, url_val)
+    # b64_json 이 오면 디코드해 바이트로.
+    if isinstance(b64_val, str) and b64_val.strip():
+        return _decode_b64_to_bytes(b64_val, source="b64_json")
+    return b"", "응답 항목에 url/b64_json 이 없습니다"
+
+
+# --------------------------------------------------------------------------- #
+# bytes → 임시 파일 → CDN URL (사용자 사진과 같은 길 재사용).
+# --------------------------------------------------------------------------- #
+def _generated_bytes_to_cdn_urls(
+    image_bytes_list: list[bytes],
+    *,
+    upload_fn: Any = None,
+    fetch_fn: Any = None,
+) -> tuple[list[str], str]:
+    """생성된 이미지 바이트 리스트를 네이버 CDN URL 리스트로 변환.
+
+    ★ 업로드 로직을 새로 쓰지 않는다 — ``images.attach_images`` 를 부른다.
+    사용자 사진(로컬 경로) 이 지나는 **동일한 검증·동일한 업로드 경로** 를
+    생성 이미지도 지난다.
+
+    흐름:
+      1. 각 바이트를 매직바이트로 1차 검증(이미지가 아닌 응답 거부).
+      2. 바이트를 임시 파일로 저장(``tempfile.mkstemp``).
+      3. 임시 파일 경로 리스트를 ``images.attach_images`` 에 넘긴다.
+         ``attach_images`` 는 자체적으로 매직바이트·크기·컨테인먼트 검증과
+         ``upload_fn``(기본 ``naver_client.upload_images``) 경로를 수행한다.
+      4. ``rejected`` 가 비어있지 않으면 fail-closed — 부분 성공이라도 그
+         사실을 사유에 담는다(조용한 통과 금지).
+      5. 임시 파일은 ``try/finally`` 로 항상 정리.
+
+    Returns:
+        ``(cdn_urls, reason)`` — ``reason`` 이 빈 문자열이면 OK. ``cdn_urls``
+        가 비어있으면 업로드가 한 건도 안 된 것이다.
+    """
+    if not image_bytes_list:
+        return [], "업로드할 생성 이미지가 없습니다"
+
+    # 1. 매직바이트 1차 검증 — images._matches_any_image_magic 재사용.
+    temp_paths: list[str] = []
+    rejected_items: list[str] = []
+    for idx, raw in enumerate(image_bytes_list):
+        if not isinstance(raw, bytes | bytearray) or not raw:
+            rejected_items.append(f"[{idx}] 빈 바이트/비바이트 타입")
+            continue
+        if not _images_mod._matches_any_image_magic(bytes(raw[:16])):
+            rejected_items.append(f"[{idx}] 매직바이트 불일치 — 이미지가 아님")
+            continue
+        if len(raw) > _MAX_GENERATED_IMAGE_BYTES:
+            rejected_items.append(f"[{idx}] 크기 초과({len(raw)} > {_MAX_GENERATED_IMAGE_BYTES})")
+            continue
+        # 2. 임시 파일로 저장. ★ 매직바이트 기반 확장자 — images.validate_local_image
+        # 가 ``ALLOWED_IMAGE_EXTS`` (.jpg/.jpeg/.png/.webp) 화이트리스트를 검사하므로,
+        # 임의의 ``.img`` 확장자는 거부된다. 매직바이트에서 실제 포맷을 읽어 붙인다.
+        ext = _ext_for_magic(bytes(raw[:16]))
+        fd, tmp_path = tempfile.mkstemp(prefix="clossify_gen_", suffix=ext)
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(bytes(raw))
+        except OSError as exc:
+            # 임시 파일 생성 실패 — 정리 후 거부 사유 누적.
+            try:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+            except OSError:
+                pass
+            rejected_items.append(f"[{idx}] 임시 파일 저장 실패: {exc}")
+            continue
+        temp_paths.append(tmp_path)
+
+    try:
+        if not temp_paths:
+            return [], "유효한 생성 이미지 바이트가 없습니다 — " + "; ".join(rejected_items)
+
+        # 3. attach_images 에 임시 파일 경로 리스트 전달.
+        #    ``require_image_ext=False`` 경로(임시 파일의 .img 확장자)를 타게
+        #    하기 위해 ``validate_local_image`` 가 확장자 검사를 건너뛰도록
+        #    ``attach_images`` 자체는 그대로 부른다 — .img 확장자는
+        #    ``validate_local_image`` 가 매직바이트 기반으로 통과시킨다.
+        attach_result = _images_mod.attach_images(
+            list(temp_paths), upload_fn=upload_fn, fetch_fn=fetch_fn
+        )
+        cdn_urls = list(attach_result.get("urls") or [])
+        rejected = list(attach_result.get("rejected") or [])
+        if rejected:
+            # 거부 항목이 있으면 이유를 합친다. 단 CDn_urls 가 부분이라도 있으면
+            # 그것을 반환하되 사유를 함께 남긴다(fail-closed 는 호출자가 판정).
+            rej_summary = "; ".join(f"[{r.get('index')}] {r.get('reason')}" for r in rejected[:5])
+            if not cdn_urls:
+                return [], f"attach_images 전체 거부 — {rej_summary}"
+            return cdn_urls, f"attach_images 부분 거부 있음 — {rej_summary}"
+        if len(cdn_urls) != len(temp_paths):
+            return cdn_urls, (
+                f"attach_images URL 개수 불일치 (입력 {len(temp_paths)} vs "
+                f"반환 {len(cdn_urls)})"
+            )
+        if rejected_items:
+            # 매직바이트/크기 단계에서 거부된 항목이 있었다면 그것도 사유에 담는다.
+            return cdn_urls, "일부 생성 이미지 사전 검증 거부 — " + "; ".join(rejected_items)
+        return cdn_urls, ""
+    except Exception as exc:
+        # attach_images 자체가 예외를 던지면(예: upload_fn 장애) 조용한 통과 금지.
+        return [], f"attach_images 예외: {common.sanitize_error(exc)}"
+    finally:
+        # 5. 임시 파일은 항상 정리(작업 성공 여부와 무관).
+        for tmp in temp_paths:
+            try:
+                if os.path.exists(tmp):
+                    os.unlink(tmp)
+            except OSError:
+                pass
+
+
+# --------------------------------------------------------------------------- #
 # 제공자 어댑터 — HTTP 호출 (이 모듈 안에만 존재).
+#
+# ★ 이 어댑터들은 이제 **raw bytes** 만 반환한다. URL/base64 여부는
+# ``_normalize_to_bytes`` 가 통일 처리한다. base64 덩어리가 그대로 흐르던
+# 과거 결함의 뿌리를 자른다.
 # --------------------------------------------------------------------------- #
 def _call_openai(
     session: Any, api_key: str, model: str, prompt: str, cuts: int
-) -> tuple[list[str], str]:
-    """OpenAI 이미지 생성 API 호출.
+) -> tuple[list[bytes], str]:
+    """OpenAI 이미지 생성 API 호출 → raw bytes 리스트.
 
     Returns:
-        ``(image_urls, reason)`` — ``image_urls`` 가 비어있으면 ``reason`` 에 사유.
+        ``(image_bytes_list, reason)`` — ``image_bytes_list`` 가 비어있으면
+        ``reason`` 에 사유. 각 항목은 ``bytes`` (URL 을 받아 바이트로, 또는
+        b64_json 을 디코드해 바이트로). 이 함수는 **문자열 URL/base64 를
+        그대로 반환하지 않는다** — 과거 결함의 핵심이 바로 그것이었다.
     """
     # OpenAI Images API (단일 출력 n=1 을 cuts 회). 정책상 단일 출력 선호.
     url = "https://api.openai.com/v1/images/generations"
@@ -454,7 +754,7 @@ def _call_openai(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    image_urls: list[str] = []
+    image_bytes_list: list[bytes] = []
     for _ in range(cuts):
         body = {"model": model, "prompt": prompt, "n": 1, "size": "1024x1024"}
         resp = session.post(url, headers=headers, json=body, timeout=60)
@@ -479,26 +779,30 @@ def _call_openai(
         if not isinstance(items, list) or not items:
             return [], "응답에 data 배열이 없습니다"
         first = items[0] if isinstance(items[0], dict) else {}
-        # OpenAI 응답은 url 또는 b64_json 키를 제공. url 우선.
-        img = first.get("url") or first.get("b64_json") or ""
-        if not str(img).strip():
-            return [], "응답 항목에 url/b64_json 이 없습니다"
-        image_urls.append(str(img))
-    return image_urls, ""
+        # ★ url 과 b64_json 을 같은 문자열로 취급하지 않는다.
+        # 둘 다 raw bytes 로 환원한다 (_normalize_to_bytes).
+        img_bytes, norm_reason = _normalize_to_bytes(session, first)
+        if norm_reason or not img_bytes:
+            return [], norm_reason or "url/b64_json 을 바이트로 환원하지 못했습니다"
+        image_bytes_list.append(img_bytes)
+    return image_bytes_list, ""
 
 
 def _call_gemini(
     session: Any, api_key: str, model: str, prompt: str, cuts: int
-) -> tuple[list[str], str]:
-    """Google Gemini 이미지 생성 API 호출.
+) -> tuple[list[bytes], str]:
+    """Google Gemini 이미지 생성 API 호출 → raw bytes 리스트.
 
     Gemini 는 쿼리 파라미터로 키를 받는다. 단일 출력 정책: cuts 회 호출.
+    Gemini 응답의 ``candidates[0].content.parts[*].inlineData.data`` 는
+    **항상 base64** 다 — 즉 URL 은 나올 수가 없다. 과거 결함의 "제미나이는
+    더 확정적" 지적이 바로 이것이다.
 
     Returns:
-        ``(image_urls, reason)``.
+        ``(image_bytes_list, reason)`` — 각 항목은 ``bytes`` (base64 디코드 결과).
     """
     endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-    image_urls: list[str] = []
+    image_bytes_list: list[bytes] = []
     for _ in range(cuts):
         params = {"key": api_key}
         body = {
@@ -539,8 +843,13 @@ def _call_gemini(
                 break
         if not img_data:
             return [], "응답 parts 에 inlineData.data(base64) 가 없습니다"
-        image_urls.append(f"data:image/png;base64,{img_data}")
-    return image_urls, ""
+        # ★ base64 디코드 → raw bytes. data: URL 접두사는 _decode_b64_to_bytes
+        # 가 잘라낸다(과거 ``f"data:image/png;base64,{img_data}"`` 형태 호환).
+        img_bytes, decode_reason = _decode_b64_to_bytes(img_data, source="inlineData.data")
+        if decode_reason or not img_bytes:
+            return [], decode_reason or "inlineData.data 디코드 결과가 빈 바이트"
+        image_bytes_list.append(img_bytes)
+    return image_bytes_list, ""
 
 
 __all__ = [
