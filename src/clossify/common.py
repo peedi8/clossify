@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from importlib.resources import files as _ir_files
 from pathlib import Path
 
@@ -262,3 +263,108 @@ def _resolve_instruction(*candidates):
         if text:
             return text
     return ""
+
+
+# ---------------------------------------------------------------------------
+# Secret/text sanitization — single source of truth.
+#
+# 이 모듈(``common``)은 DAG 의 루트로, 모든 모듈이 import 할 수 있다.
+# 따라서 민감 정보 정화 규칙을 **여기에 단일 위치**로 둔다. 과거에는
+# ``mcp_server._sanitize_text``/``_SENSITIVE_PATTERNS`` 가 유일했으나,
+# ``image_gen`` 등 ``mcp_server`` 를 import 할 수 없는 모듈에서도 같은
+# 규칙이 필요해지면서 규칙이 두 벌로 갈라질 위험이 있었다. 이제
+# ``common`` 이 단일 진실 공급원이고, ``mcp_server`` 는 이곳에서 재노출
+# 해 기존 호출부를 유지한다.
+#
+# 정화 정책(불변):
+#   - **값만 가린다.** 사유(예외 타입·HTTP 상태·오류 코드)는 남긴다.
+#   - **설정된 키 값만 가리는 것으로는 부족하다** — 사용자가 방금 오타
+#     낸 키 값도 오류 응답 본문에 실려 올 수 있으므로, 키 *형태* 를
+#     패턴으로 가린다(``sk-...``·긴 base64/hex·``Bearer ...``).
+#   - **조용한 실패로 바꾸지 않는다.** 정화 후에도 "무엇이 잘못됐는지" 는
+#     반환·로그에 보이게 둔다.
+# ---------------------------------------------------------------------------
+
+# traceback/에러 메시지에서 제거해야 할 민감 패턴.
+SENSITIVE_PATTERNS: list[re.Pattern[str]] = [
+    # OpenAI 스타일 키 (sk- 접두사). 응답 본문에 실린 "잘못된 키" 도 가림.
+    re.compile(r"(sk-[A-Za-z0-9_\-]{8,})", re.IGNORECASE),
+    # Google API 키 스타일 (AIza 접두사).
+    re.compile(r"(AIza[A-Za-z0-9_\-]{8,})", re.IGNORECASE),
+    # Bearer 토큰.
+    re.compile(r"(Bearer\s+[A-Za-z0-9_\-\.]+)", re.IGNORECASE),
+    # key=value 형태의 시크릿 (api_key=..., client_secret: ..., token=..., 등)
+    # 콜론(:) 또는 등호(=) 구분자 모두 매칭. 값 부분은 4자까지만 노출(표식용).
+    re.compile(
+        r"((?:api[_\-]?key|client[_\-]?secret|access[_\-]?token|auth[_\-]?token|"
+        r"secret[_\-]?key|password|passwd|pwd|credential|private[_\-]?key|"
+        r"token|secret|apikey)"
+        r"\s*[:=]\s*)([^\s\"'<>,;]{5,})",
+        re.IGNORECASE,
+    ),
+    # 긴 base64/hex 시크릿 (32자 이상, base64 알파벳). 이미지 데이터가 아닌
+    # "키처럼 생긴" 긴 토큰을 가린다. data: URL (이미지) 은 슬래시/쉼표를
+    # 포함하므로 이 패턴에 안 걸린다.
+    re.compile(r"(?<![A-Za-z0-9+/])([A-Za-z0-9+/]{40,}={0,2})(?![A-Za-z0-9+/])"),
+    # 긴 hex 토큰 (32자 이상 16진수). OAuth client_secret 등.
+    re.compile(r"\b([0-9a-fA-F]{32,})\b"),
+    # Windows 파일시스템 경로 전체 (드라이브 문자 포함).
+    re.compile(
+        r"([A-Za-z]:[\\/](?:Users|home|private|secret|config|\.local|Desktop|Documents)[\\/])[^\"'<>\s]+",
+        re.IGNORECASE,
+    ),
+    # POSIX 시스템/사용자 디렉토리 경로.
+    re.compile(
+        r"(/(?:home|Users|etc|var|root|tmp|opt|srv|private|secret)/[^\"'<>\s]+)", re.IGNORECASE
+    ),
+    # traceback 헤더 및 File 프레임.
+    re.compile(r"Traceback\s*\(most\s+recent\s+call\s+last\)", re.IGNORECASE),
+    re.compile(r'(File\s+"[^"]+",\s*line\s+\d+[^\n]*)', re.IGNORECASE),
+]
+
+
+def sanitize_text(text: str) -> str:
+    """traceback/메시지에서 민감 정보(시크릿, 사용자 경로 등)를 마스킹한다.
+
+    단일 진실 공급원: 모든 모듈(``mcp_server``·``image_gen``·기타)은 이
+    함수를 쓴다. 규칙이 두 벌로 갈라지지 않게 한다.
+
+    정책:
+      - **값만 가린다.** 사유(예외 타입·HTTP 상태·오류 코드)는 남긴다.
+      - 조용한 실패로 바꾸지 않는다 — 호출자가 사유를 결과에 담아야 한다.
+    """
+    if not isinstance(text, str):
+        text = str(text)
+    for pat in SENSITIVE_PATTERNS:
+        if pat.groups >= 2:
+            # key=value 패턴: 키 이름은 유지, 값만 [REDACTED].
+            text = pat.sub(lambda m: m.group(1) + "[REDACTED]", text)
+        else:
+            text = pat.sub("[REDACTED]", text)
+    return text
+
+
+def sanitize_error(exc: BaseException) -> str:
+    """예외 객체로부터 타입+메시지를 추출해 정화된 문자열을 반환한다.
+
+    traceback 전체를 반환/로그에 노출하면 민감한 경로/키가 노출될 수
+    있으므로 예외 타입명과 메시지만 간결하게. 사유(예외 타입명)는 남긴다.
+    """
+    type_name = type(exc).__name__
+    msg = sanitize_text(str(exc))
+    return f"{type_name}: {msg}"
+
+
+def sanitize_provider_response(text: str) -> str:
+    """제공자(OpenAI/Gemini 등) 응답 본문에서 키 값을 가린다.
+
+    OpenAI 는 **잘못된 API 키를 오류 메시지에 담아 돌려주는** 사례가
+    있어, 그 본문을 가공 없이 반환·로그에 싣는 것은 키 유출 경로가
+    된다. 본 함수는 :func:`sanitize_text` 와 같은 규칙을 적용해
+    키 *형태* 를 가리되, 오류 사유(HTTP 상태·메시지 골격)는 남긴다.
+
+    설정된 키 값만 지우는 것으로는 부족하다 — 사용자가 방금 오타 낸
+    키 값도 응답에 실려 올 수 있다. 따라서 **키처럼 생긴 문자열 패턴**
+    을 가린다.
+    """
+    return sanitize_text(text)

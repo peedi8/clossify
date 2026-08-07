@@ -34,6 +34,16 @@
 의존 방향: ``common``·``naver_client`` 만 import 가능. ``image_gen`` 은
 ``images``/``mcp_server``/``register`` 가 import 해도 된다. **새 의존성 금지** —
 HTTP 호출은 이미 프로젝트 의존성인 ``requests`` 만 사용한다 (제공자 SDK 설치 금지).
+
+보안 규율 (추가 — 제공자 응답 본문 정화):
+  - OpenAI 는 **잘못된 API 키를 오류 메시지에 담아 돌려주는** 사례가 있다.
+    우리가 그 응답 본문을 가공 없이 반환·로그에 싣는 것은 키 유출 경로가
+    된다. 제공자 응답 본문을 ``common.sanitize_provider_response`` 로
+    정화한 뒤 사유에 싣는다.
+  - 정화 규칙은 ``common.sanitize_text`` 의 단일 진실 공급원을 따른다
+    (``mcp_server._sanitize_text`` 와 같은 규칙 — 규칙이 두 벌로 갈라지지
+    않게 ``common`` 에 둔다). ``image_gen`` 은 ``mcp_server`` 를 import 할
+    수 없으므로 ``common`` 에서 가져온다.
 """
 
 from __future__ import annotations
@@ -42,7 +52,7 @@ from typing import Any
 
 import requests
 
-from . import naver_client
+from . import common, naver_client
 
 # --------------------------------------------------------------------------- #
 # 상수 — config 스키마 키, 플레이스홀더 토큰, 단가표.
@@ -394,11 +404,14 @@ def generate(
                 result["error"] = f"generate: 지원하지 않는 제공자: {provider!r}"
                 return result
         except requests.RequestException as exc:
-            # 네트워크 예외 — 조용히 통과하지 않고 사유 반환.
-            result["error"] = f"generate: {provider} 호출 중 네트워크 오류: {exc}"
+            # 네트워크 예외 — 조용히 통과하지 않고 사유 반환. 예외 텍스트에
+            # 응답 본문이 섞일 수 있으므로 정화한다(예: HTTPError 가 응답을 담음).
+            result["error"] = (
+                f"generate: {provider} 호출 중 네트워크 오류: {common.sanitize_error(exc)}"
+            )
             return result
         except Exception as exc:  # 방어 — 사유를 반환에 담는다 (조용한 통과 금지).
-            result["error"] = f"generate: {provider} 호출 중 예외: {exc}"
+            result["error"] = f"generate: {provider} 호출 중 예외: {common.sanitize_error(exc)}"
             return result
     finally:
         if own_session:
@@ -453,7 +466,10 @@ def _call_openai(
                 text = resp.text if hasattr(resp, "text") else str(resp.content)
             except Exception:
                 pass
-            return [], f"HTTP {status}: {text[:200]}"
+            # 제공자 응답 본문을 가공 없이 싣지 않는다 — OpenAI 는 잘못된 키를
+            # 오류 메시지에 담아 돌려주는 사례가 있어 키 유출 경로가 된다.
+            # 사유(HTTP 상태·메시지 골격)는 남기고, 값만 정화한다.
+            return [], f"HTTP {status}: {common.sanitize_provider_response(text[:200])}"
         data = {}
         try:
             data = resp.json() if hasattr(resp, "json") else {}
@@ -497,7 +513,8 @@ def _call_gemini(
                 text = resp.text if hasattr(resp, "text") else str(resp.content)
             except Exception:
                 pass
-            return [], f"HTTP {status}: {text[:200]}"
+            # 제공자 응답 본문 정화 — 키 유출 경로 차단. 사유는 남긴다.
+            return [], f"HTTP {status}: {common.sanitize_provider_response(text[:200])}"
         data = {}
         try:
             data = resp.json() if hasattr(resp, "json") else {}

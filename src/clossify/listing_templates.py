@@ -179,35 +179,125 @@ _TEMPLATE_FIELD_KEYS: tuple[str, ...] = (
 # 고시 본문 노드에서 **상품 특정값이라 담지 않는** 키.
 # itemName(=상품명) 은 상품마다 다르고, productInfoProvidedNoticeType 은
 # 템플릿의 notice_type 메타로 이미 저장하므로 본문에서는 뺀다.
+# 정책: "상품마다 달라지는 식별값만 뺀다." 이 목록 외에 새로 제외할 필드를
+# 늘리지 않는다 — 무엇을 뺄지는 정책이고, 지금 정책은 이 세 가지다.
 _NOTICE_BODY_SKIP_KEYS: frozenset[str] = frozenset(
     {"itemName", "productInfoProvidedNoticeType", "name"}
 )
 
+# camelCase → snake_case 수동 별칭 후보.
+# 정본(``data/notice_types.json``)에 있는 camelCase 필드는 **전부** 후보가
+# 되되, top-level common 입력 키로 쓰이는 snake_case 별칭을 같이 후보로
+# 둔다. 이 매핑은 ``naver_client._notice_defaults`` 가 읽는 키 일관성을
+# 유지한다 — 새 별칭을 만들지 않는다(단일 진실 공급원).
+# 본 매핑에 없는 camelCase 필드는 (camelCase, (camelCase,)) 만 후보가 된다.
+_NOTICE_BODY_SNAKE_ALIASES: dict[str, tuple[str, ...]] = {
+    # 공통 5필드.
+    "returnCostReason": ("return_cost_reason",),
+    "noRefundReason": ("no_refund_reason",),
+    "qualityAssuranceStandard": ("quality_assurance_standard",),
+    "compensationProcedure": ("compensation_procedure",),
+    "troubleShootingContents": ("trouble_shooting_contents",),
+    # AS/제조 관련.
+    "manufactureDate": ("manufacture_date",),
+    "modelName": ("model_name",),
+    "certDetail": ("cert_detail",),
+    "madeIn": ("made_in", "origin_content"),
+    "safetyStandard": ("safety_standard",),
+}
+
+
+def _camel_to_snake(name: str) -> str:
+    """camelCase → snake_case 변환(단순 규칙 기반).
+
+    정본 필드명(예: ``returnCostReason``) 에서 top-level common 입력 키
+    후보(``return_cost_reason``) 를 만들 때 쓴다. 본 함수는 *후보를 만들 뿐*
+    이며, 실제 매핑의 단일 진실 공급원은 ``_NOTICE_BODY_SNAKE_ALIASES``
+    와 ``naver_client._notice_defaults`` 다.
+    """
+    out: list[str] = []
+    for ch in name:
+        if ch.isupper():
+            if out:
+                out.append("_")
+            out.append(ch.lower())
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+# ---------------------------------------------------------------------------
 # 고시 본문 후보 입력 키(상품 입력 dict 에서 어디서 읽을지).
-# naver_client._notice_defaults / register._build_register_product_dict 가
-# 읽는 키를 그대로 쓴다 — 새 별칭을 만들지 않는다.
-_NOTICE_BODY_FIELD_CANDIDATES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    # 공통 5필드 (camelCase 고시 필드명).
-    ("returnCostReason", ("returnCostReason", "return_cost_reason")),
-    ("noRefundReason", ("noRefundReason", "no_refund_reason")),
-    ("qualityAssuranceStandard", ("qualityAssuranceStandard", "quality_assurance_standard")),
-    ("compensationProcedure", ("compensationProcedure", "compensation_procedure")),
-    ("troubleShootingContents", ("troubleShootingContents", "trouble_shooting_contents")),
-    # AS/제조 관련 고시 본문 필드(값이 있을 때만).
-    ("afterServiceDirector", ("afterServiceDirector",)),
-    ("customerServicePhoneNumber", ("customerServicePhoneNumber",)),
-    ("manufacturer", ("manufacturer",)),
-    ("importer", ("importer",)),
-    ("manufactureDate", ("manufactureDate", "manufacture_date")),
-    ("modelName", ("modelName", "model_name")),
-    ("certDetail", ("certDetail", "cert_detail")),
-    ("madeIn", ("madeIn", "made_in", "origin_content")),
-    # FURNITURE 등 타입별 필드(사용자가 준 값만).
-    ("material", ("material", "fabric")),
-    ("size", ("size", "dimensions")),
-    ("components", ("components", "composition")),
-    ("safetyStandard", ("safetyStandard", "safety_standard")),
-)
+#
+# **정본(``data/notice_types.json``)에서 읽는다.** 과거에는 17개 필드를
+# 하드코딩했으나, 정본에 120개 필드가 있어 107개가 조용히 버려지는 결함이
+# 있었다(식품·화장품 판매자는 템플릿을 저장해도 대부분이 안 담겼다).
+#
+# 이제 ``data/notice_types.json`` 의 verified 35타입 전체에서 선언된 모든
+# camelCase 필드의 합집합을 후보로 둔다. ``naver_client._load_notice_type_specs``
+# 가 이미 이 파일을 캐싱해 읽으므로, 같은 단일 진실 공급원을 따른다(코드를
+# 읽고 확인 — 이 파일은 ``common.package_data_path`` + ``importlib.resources``
+# 관례를 쓴다).
+#
+# snake_case 별칭 후보(``return_cost_reason`` 등)는 기존 관례를 유지한다.
+# ---------------------------------------------------------------------------
+_NOTICE_BODY_FIELD_CANDIDATES_CACHE: tuple[tuple[str, tuple[str, ...]], ...] | None = None
+
+
+def _load_notice_body_field_candidates() -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """``data/notice_types.json`` 에서 고시 본문 후보 필드를 읽는다(캐싱).
+
+    verified 35타입 전체의 ``fields`` 배열 합집합을 구성한다. 각 camelCase
+    필드는 (camelCase, (camelCase, snake_case...)) 튜플이 된다. snake_case
+    별칭은 ``_NOTICE_BODY_SNAKE_ALIASES`` 우선, 없으면 ``_camel_to_snake``
+    자동 변환.
+
+    정본 읽기가 실패하면 **빈 튜플**을 반환하지 않고 **방어적 폴백**으로
+    공통 5필드만 반환한다 — 조용한 누락(전체 필드가 사라지는)보다 안전하다.
+    다만 이 폴백은 ``naver_client`` 로더와 같은 예외를 전파하지 않으므로
+    호출자가 결과 메타에서 후보 개수를 볼 수 있게 한다.
+    """
+    global _NOTICE_BODY_FIELD_CANDIDATES_CACHE
+    if _NOTICE_BODY_FIELD_CANDIDATES_CACHE is not None:
+        return _NOTICE_BODY_FIELD_CANDIDATES_CACHE
+    try:
+        from . import naver_client as _nc
+
+        specs = _nc._load_notice_type_specs()
+    except Exception:
+        specs = []
+    seen: dict[str, tuple[str, ...]] = {}
+    for entry in specs:
+        if not isinstance(entry, dict):
+            continue
+        fields = entry.get("fields")
+        if not isinstance(fields, list):
+            continue
+        for field in fields:
+            if not isinstance(field, str):
+                continue
+            camel = field.strip()
+            if not camel or camel in seen:
+                continue
+            aliases = _NOTICE_BODY_SNAKE_ALIASES.get(camel)
+            if aliases is None:
+                snake = _camel_to_snake(camel)
+                aliases = (snake,) if snake and snake != camel else ()
+            seen[camel] = (camel, *aliases)
+    candidates = tuple((camel, p_keys) for camel, p_keys in seen.items())
+    _NOTICE_BODY_FIELD_CANDIDATES_CACHE = candidates
+    return candidates
+
+
+def _notice_body_field_candidates() -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """고시 본문 후보를 반환(테스트 주입 가능한 thin wrapper).
+
+    ``_load_notice_body_field_candidates`` 가 정본에서 읽은 후보를 캐싱한다.
+    본 함수는 그 결과를 반환한다 — 모듈 수준 상수 대신 함수로 둬서 테스트가
+    monkeypatch 하기 쉽게 한다(정본 파일을 일시적으로 바꾸지 않아도 됨).
+    """
+    return _load_notice_body_field_candidates()
+
 
 # AS 정보(afterServiceInfo) 후보 입력 키.
 _AS_INFO_CANDIDATES: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -276,6 +366,7 @@ def _extract_notice_body(product: dict[str, Any]) -> dict[str, Any]:
     사용자가 두 자리 중 어디에 값을 넣었든 잡는다.
     """
     body: dict[str, Any] = {}
+    candidates = _notice_body_field_candidates()
     # (1) ``product.notice.<node>`` 에서 camelCase 필드를 읽는다.
     user_notice = product.get("notice")
     if isinstance(user_notice, dict):
@@ -284,13 +375,13 @@ def _extract_notice_body(product: dict[str, Any]) -> dict[str, Any]:
                 continue
             if node_key in ("productInfoProvidedNoticeType", "notice_type"):
                 continue
-            for camel_field, _ in _NOTICE_BODY_FIELD_CANDIDATES:
+            for camel_field, _ in candidates:
                 if camel_field in _NOTICE_BODY_SKIP_KEYS:
                     continue
                 if camel_field in node_value and _has_text(node_value.get(camel_field)):
                     body[camel_field] = node_value.get(camel_field)
     # (2) top-level common 키 후보.
-    for camel_field, p_keys in _NOTICE_BODY_FIELD_CANDIDATES:
+    for camel_field, p_keys in candidates:
         if camel_field in _NOTICE_BODY_SKIP_KEYS:
             continue
         if camel_field in body:
@@ -440,10 +531,16 @@ def save_template(
             {"ok": True, "name": str, "notice_type": str,
              "saved_keys": [...],   # 저장된 섹션명 목록
              "skipped_keys": [...], # 입력에 있었으나 안 담는 키(상품특정/비밀)
+             "notice_field_summary": {  # 고시 본문 가시성(조용한 누락 방지)
+                 "filled_count": int,       # 채워진 고시 필드 수
+                 "candidate_total": int,    # 정본 후보 총수(120 etc.)
+                 "filled_fields": [...]     # 채워진 필드명(값 아님)
+             },
              "path": str, "backup_path": str, "created_at": str}
 
-        ``saved_keys`` / ``skipped_keys`` 는 섹션/키 *이름* 만 담는다. 값은
-        절대 담지 않는다(비밀값 비노출 — 결과가 로그/반환에 흘러도 안전).
+        ``saved_keys`` / ``skipped_keys`` / ``filled_fields`` 는 섹션/키/필드
+        *이름* 만 담는다. 값은 절대 담지 않는다(비밀값 비노출 — 결과가
+        로그/반환에 흘러도 안전).
     """
     sane_name = _validate_name(name)
     sane_type = _validate_notice_type(notice_type)
@@ -460,6 +557,16 @@ def save_template(
     # 빈 섹션은 저장은 하되 결과에 "빈 섹션" 임을 드러낸다(사용자가 뭘 넣었는지
     # 알 수 있게 — 조용한 빈 값 금지).
     saved_sections = [k for k, v in fields.items() if isinstance(v, dict) and v]
+
+    # 고시 본문 가시성 — 얼마나 많은 필드가 채워졌는지, 정본에 몇 개 후보가
+    # 있었는지를 결과에 싣는다. 과거에는 17개 하드코딩 필드만 쓰고 나머지는
+    # 조용히 버려서, 사용자가 "식품 필드를 넣었는데 안 담겼다" 는 결함을
+    # 알 수 없었다. 이제 후보 총수·채워진 수·채워진 필드명(값 아님) 을 보여준다.
+    notice_body_filled = fields["productInfoProvidedNotice"]
+    notice_filled_names = (
+        sorted(notice_body_filled.keys()) if isinstance(notice_body_filled, dict) else []
+    )
+    notice_candidate_total = len(_notice_body_field_candidates())
 
     # 입력에 있었으나 안 담은 키(상품 특정값/비밀값/경계 애매) 목록 —
     # 사용자가 "내가 준 값이 다 저장됐다" 고 착각하지 않게.
@@ -539,6 +646,13 @@ def save_template(
         "notice_type": sane_type,
         "saved_keys": saved_sections,
         "skipped_keys": sorted(set(skipped)),
+        # 고시 본문 가시성 — 필드 *이름* 만(값 안 담음). 사용자가 "내가 넣은
+        # 식품/화장품 필드가 담겼는지" 확인할 수 있게.
+        "notice_field_summary": {
+            "filled_count": len(notice_filled_names),
+            "candidate_total": notice_candidate_total,
+            "filled_fields": notice_filled_names,
+        },
         "path": str(path),
         "backup_path": backup_path,
         "created_at": created_at,
@@ -763,8 +877,12 @@ def _node_key_for_type(notice_type: str) -> str:
 
 
 def _top_level_keys_for(field: str) -> tuple[str, ...]:
-    """고시 camelCase 필드명 → top-level common 입력 키 후보."""
-    for camel, p_keys in _NOTICE_BODY_FIELD_CANDIDATES:
+    """고시 camelCase 필드명 → top-level common 입력 키 후보.
+
+    ``_notice_body_field_candidates()`` (정본에서 읽는 동적 후보) 에서
+    찾는다 — 과거 하드코딩 상수를 쓰지 않는다.
+    """
+    for camel, p_keys in _notice_body_field_candidates():
         if camel == field:
             return p_keys
     return ()

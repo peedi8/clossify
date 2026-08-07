@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from typing import Any
 
 from mcp.server import MCPServer
@@ -57,48 +56,12 @@ _MAX_IMAGE_BYTES = 10 * 1024 * 1024
 # --------------------------------------------------------------------------- #
 # Fix 7 — 에러 sanitization
 # --------------------------------------------------------------------------- #
-# traceback/에러 메시지에서 제거해야 할 민감 패턴.
-_SENSITIVE_PATTERNS = [
-    # 시크릿/토큰류
-    re.compile(r"(sk-[A-Za-z0-9_\-]{8,})", re.IGNORECASE),
-    re.compile(r"(AIza[A-Za-z0-9_\-]{8,})", re.IGNORECASE),
-    re.compile(r"(Bearer\s+[A-Za-z0-9_\-\.]+)", re.IGNORECASE),
-    # key=value 형태의 시크릿 (api_key=..., client_secret: ..., token=..., 등)
-    # 콜론(:) 또는 등호(=) 구분자 모두 매칭. 값 부분은 4자까지만 노출(표식용).
-    re.compile(
-        r"((?:api[_\-]?key|client[_\-]?secret|access[_\-]?token|auth[_\-]?token|"
-        r"secret[_\-]?key|password|passwd|pwd|credential|private[_\-]?key|"
-        r"token|secret|apikey)"
-        r"\s*[:=]\s*)([^\s\"'<>,;]{5,})",
-        re.IGNORECASE,
-    ),
-    # Windows 파일시스템 경로 전체 (드라이브 문자 포함, 사용자명/비사용자명 무관)
-    re.compile(
-        r"([A-Za-z]:[\\/](?:Users|home|private|secret|config|\.local|Desktop|Documents)[\\/])[^\"'<>\s]+",
-        re.IGNORECASE,
-    ),
-    # POSIX 시스템/사용자 디렉토리 경로
-    re.compile(
-        r"(/(?:home|Users|etc|var|root|tmp|opt|srv|private|secret)/[^\"'<>\s]+)", re.IGNORECASE
-    ),
-    # traceback 헤더 및 File 프레임 (독립적으로도 매칭)
-    re.compile(r"Traceback\s*\(most\s+recent\s+call\s+last\)", re.IGNORECASE),
-    re.compile(r'(File\s+"[^"]+",\s*line\s+\d+[^\n]*)', re.IGNORECASE),
-]
-
-
-def _sanitize_text(text: str) -> str:
-    """traceback/메시지에서 민감 정보(시크릿, 사용자 경로 등)를 마스킹한다."""
-    if not isinstance(text, str):
-        text = str(text)
-    for pat in _SENSITIVE_PATTERNS:
-        if pat.groups >= 2:
-            # key=value 패턴: 키 이름은 유지, 값만 [REDACTED].
-            text = pat.sub(lambda m: m.group(1) + "[REDACTED]", text)
-        else:
-            text = pat.sub("[REDACTED]", text)
-    return text
-
+# 정화 규칙의 단일 진실 공급원은 ``common`` 이다(모든 모듈이 import 가능).
+# 과거에는 이 모듈이 ``_SENSITIVE_PATTERNS``/``_sanitize_text`` 를 직접
+# 정의했으나, ``image_gen`` 등 하위 모듈에서도 같은 규칙이 필요해지면서
+# 규칙이 두 벌로 갈라질 위험이 있었다. 이제 ``common`` 에서 재노출해 기존
+# 호출부(``_sanitize_text``/``_sanitize_error``) 를 그대로 유지한다.
+_SENSITIVE_PATTERNS = common.SENSITIVE_PATTERNS
 
 # raw API 응답에서 LLM에게 노출해도 안전한 키만 남기고 나머지는 제거.
 # 네이버 커머스 API 에러 응답에서 디버그에 유용한 최소 필드만 허용.
@@ -118,6 +81,16 @@ _SAFE_BODY_KEYS = frozenset(
         naver_client.SELLER_TAG_AUTOSTRIP_KEY,
     }
 )
+
+
+def _sanitize_text(text: str) -> str:
+    """``common.sanitize_text`` 의 단일 진실 공급원 재노출(호환 별칭)."""
+    return common.sanitize_text(text)
+
+
+def _sanitize_error(exc: BaseException) -> str:
+    """``common.sanitize_error`` 의 단일 진실 공급원 재노출(호환 별칭)."""
+    return common.sanitize_error(exc)
 
 
 def _sanitize_body(body: Any, _depth: int = 0) -> Any:
@@ -146,17 +119,6 @@ def _sanitize_body(body: Any, _depth: int = 0) -> Any:
     if isinstance(body, str):
         return _sanitize_text(body)
     return body
-
-
-def _sanitize_error(exc: BaseException) -> str:
-    """예외 객체로부터 타입+메시지를 추출해 sanitized 문자열을 반환한다.
-
-    traceback 전체를 LLM 에게 노출하면 민감한 경로/키가 노출될 수 있으므로
-    예외 타입명과 메시지만 간결하게.
-    """
-    type_name = type(exc).__name__
-    msg = _sanitize_text(str(exc))
-    return f"{type_name}: {msg}"
 
 
 # check_config 가 "아직 설정되지 않음" 으로 간주하는 플레이스홀더 값들.
