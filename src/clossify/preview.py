@@ -33,9 +33,33 @@ from __future__ import annotations
 import datetime
 import html
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from . import naver_client, qa_agents
+
+# ---------------------------------------------------------------------------
+# 미리보기 모드.
+#
+# **왜 두 모드인가**: 미리보기 HTML 은 두 곳에서 소비된다 — MCP 우측 패널(정적
+# 미리보기)과 브라우저 창(승인/편집 조작). 패널은 JS 를 실행하지 않고 폼도
+# 제출할 수 없다. 그런데 이전에는 한 가지 HTML 을 양쪽에 썼다 — 패널에
+# ``contenteditable``·``<button>``·``<input>``·``<script>`` 가 "누를 수 있게
+# 생겼는데 아무 반응이 없는" 죽은 UI 가 됐다(최근 승인 버튼의 거짓 성공과 같은
+# 계열 — "불가능을 가능처럼 표시").
+#
+# 안전한 쪽이 기본이다: 모드 인자 없이 부르면 **보기 전용**이 나간다. 모르고
+# 패널에 뿌려도 죽은 UI 가 나가지 않는다. 조작 모드는 브라우저로 가는 경로가
+# **명시적으로** 전환해야만 나온다.
+#
+# 의미:
+#   - ``"view_only"`` — 패널용. ``<script>``·``contenteditable``·``<button>``·
+#     ``<input>``·``onclick``·``addEventListener`` 가 **0개**. 상품 정보(상품명·
+#     가격·이미지·상세 본문·고시)는 조작 모드와 동일하게 보인다. "보기 전용"
+#     표기와 "브라우저 창에서 조작" 안내가 들어간다.
+#   - ``"interactive"`` — 브라우저용. 현재 거동 유지(승인 폼 POST · hidden 토큰 ·
+#     클립보드 편집 바). 회귀 금지.
+# ---------------------------------------------------------------------------
+PreviewMode = Literal["view_only", "interactive"]
 
 # ---------------------------------------------------------------------------
 # 미리보기 파일 경로.
@@ -201,6 +225,13 @@ body{margin:0;padding:24px;background:#f5f5f5;font-family:-apple-system,
 .preview-note{margin-top:32px;padding:14px;background:#eef6ff;border-radius:6px;
   color:#1a4d8f;font-size:12px;line-height:1.7}
 .preview-note strong{color:#0b3d7a}
+"""
+
+# 조작 모드 전용 CSS — 보기 전용 모드에서는 이 블록 전체를 뺀다(죽은 CSS 방지).
+# 클래스 정의가 없으면 보기 전용 HTML 을 grep 해도 ".edit-field" 등의 단어가
+# 아예 등장하지 않는다(티켓 계약의 "누를 수 있게 생긴 것 0개" 를 글자 그대로
+# 만족).
+_PREVIEW_CSS_INTERACTIVE = """
 /* 직접 편집 필드. 정확한 값을 이미 아는 수정은 페이지에서 고치는 쪽이 빠르다.
    변경(원본과 다른) 필드는 테두리/배경으로 조용히 표시한다. */
 .edit-field{outline:none;border-radius:3px;padding:1px 4px;margin:-1px -4px;
@@ -239,6 +270,15 @@ body{margin:0;padding:24px;background:#f5f5f5;font-family:-apple-system,
 .approval-btn-approve-edit:hover{background:#1557b0}
 .approval-btn:disabled{background:#bbb;cursor:default}
 .approval-status{flex:1 1 100%;font-size:13px;color:#1a4d8f;min-height:1.2em}
+"""
+
+# 보기 전용 배너 CSS — 보기 전용(패널) 모드에서만 나타난다. 인터랙티브 요소가
+# 이 화면에 없다는 사실을 분명히 한다(죽은 UI 방지).
+_PREVIEW_CSS_VIEW_ONLY = """
+.view-only-banner{background:#fff8e1;border:1px solid #ffe082;color:#7a5900;
+  padding:12px 16px;border-radius:8px;margin-bottom:20px;font-size:13px;
+  line-height:1.6}
+.view-only-banner strong{color:#5d4400}
 """
 
 
@@ -353,6 +393,12 @@ def _render_images(listing_urls: list[str]) -> str:
     외부 리소스이며, 스타일시트·폰트·스크립트는 여전히 인라인만 쓴다.
 
     첫 번째 이미지가 대표 이미지이며 '대표' 배지로 표시한다.
+
+    본 함수는 **조작 모드**용이다. ``onerror`` 인라인 핸들러가 있어 CDN 이미지
+    로드 실패 시 박스를 숨긴다. 보기 전용 모드는 ``_render_images_readonly``
+    를 쓴다 — 이벤트 핸들러 속성(``onerror``)도 빠진다(티켓 계약: ``onclick``
+    /``addEventListener`` 0건 — 인라인 이벤트 핸들러 속성까지 0개로 범위를
+    좁힌다, 더 안전한 쪽).
     """
     if not listing_urls:
         return '<p class="preview-meta">(이미지 없음)</p>'
@@ -370,6 +416,102 @@ def _render_images(listing_urls: list[str]) -> str:
         )
     parts.append("</div>")
     return "\n".join(parts)
+
+
+def _render_images_readonly(listing_urls: list[str]) -> str:
+    """보기 전용 모드의 이미지 갤러리 HTML.
+
+    조작 모드의 ``_render_images`` 와 **동일한 정보**(같은 URL·같은 대표 배지·
+    같은 순서)를 보여주되 이벤트 핸들러 속성(``onerror``)을 뺀다. 티켓 계약이
+    ``onclick``/``addEventListener`` 0건이지만, 보기 전용 모드는 더 엄격하게
+    **모든 인라인 이벤트 핸들러 속성**을 0개로 유지한다 — 보기 전용 HTML 이
+    실행 가능한 코드를 품는 경로를 원천 차단.
+
+    이미지 로드 실패 시 박스가 빈 칸으로 남는다(조작 모드처럼 숨겨지지 않는다).
+    이것은 정보 손실이 아니다 — 빈 칸도 "이미지가 있어야 할 자리" 라는 정보를
+    주며, 판매자가 브라우저로 직접 확인할 수 있다.
+    """
+    if not listing_urls:
+        return '<p class="preview-meta">(이미지 없음)</p>'
+    parts = ['<div class="preview-images">']
+    for idx, url in enumerate(listing_urls):
+        safe_url = html.escape(str(url), quote=True)
+        badge = ""
+        if idx == 0:
+            badge = '<span class="preview-badge">대표</span>'
+        parts.append(
+            f'<div class="preview-image">{badge}'
+            f'<img src="{safe_url}" alt="상품 이미지 {idx + 1}" loading="lazy" />'
+            f"</div>"
+        )
+    parts.append("</div>")
+    return "\n".join(parts)
+
+
+def _render_notice_table_readonly(rows: list[dict[str, str]]) -> str:
+    """보기 전용 모드의 고시 정보 표 HTML.
+
+    조작 모드의 ``_render_notice_table`` 과 **동일한 값·동일한 출처 표시**를
+    보여주되 값 칸을 ``contenteditable`` 이 아니라 순수 텍스트 ``<td>`` 로
+    렌더한다. ``data-field``/``data-original`` 속성도 뺀다 — 보기 전용 HTML 은
+    편집 단서 자체를 품지 않는다(죽은 UI 가 아니라 처음부터 UI 가 아님).
+
+    빈 값 표시는 "(비어 있음)" 텍스트로 통일한다 — 조작 모드의 "(클릭해 입력)"
+    안내는 행동을 유도하므로 보기 전용에서는 빼고, 비어 있다는 사실만 알린다.
+    """
+    if not rows:
+        return '<p class="preview-meta">(고시 정보 없음)</p>'
+    parts = [
+        '<table class="notice-table">',
+        "<thead><tr><th>고시 필드</th><th>값</th><th>출처</th></tr></thead>",
+        "<tbody>",
+    ]
+    missing_count = 0
+    for row in rows:
+        field = row["field"]
+        value = row["value"]
+        source = row["source"]
+        is_missing = not value
+        if is_missing:
+            missing_count += 1
+        cls = " missing-row" if is_missing else ""
+        parts.append(f'<tr class="notice-row{cls}">')
+        parts.append(f"<th>{html.escape(field)}</th>")
+        if value:
+            parts.append(f"<td>{html.escape(value)}</td>")
+        else:
+            parts.append('<td><em style="color:#999">(비어 있음)</em></td>')
+        if source == "사용자 입력":
+            parts.append('<td><span class="source-user">사용자 입력</span></td>')
+        elif source == "설정 기본값":
+            parts.append('<td><span class="source-config">설정 기본값</span></td>')
+        else:
+            parts.append('<td><span class="source-missing">미제공</span></td>')
+        parts.append("</tr>")
+    parts.append("</tbody></table>")
+    if missing_count > 0:
+        parts.append(
+            f'<div class="missing-banner">필수 고시 항목 중 {missing_count}개가 '
+            "비어 있습니다. 등록 단계의 컴플라이언스 검사가 이 필드를 요구하면 "
+            "등록이 거부됩니다.</div>"
+        )
+    return "\n".join(parts)
+
+
+def _view_only_banner_html() -> str:
+    """보기 전용 모드임을 알리고 조작이 가능한 자리를 안내하는 배너.
+
+    **과장 금지**: 이 배너는 "보기 전용" 임을 사실대로 알린다. 브라우저 창에서
+    조작(편집·승인)이 가능하다는 안내만 넣고, 없는 기능을 있는 것처럼 말하지
+    않는다. 인라인 이벤트 핸들러(``onclick`` 등)를 쓰지 않는다 — 배너 자체가
+    보기 전용 HTML 의 계약을 깨면 안 된다.
+    """
+    return (
+        '<div class="view-only-banner">'
+        "<strong>보기 전용 화면</strong> — 이 화면에서는 값을 고치거나 승인할 수 없습니다. "
+        "편집·승인은 이 미리보기를 브라우저 창에서 열 때 가능합니다."
+        "</div>"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -583,42 +725,65 @@ def render_preview_html(
     product_key: str | None = None,
     approval_token: str | None = None,
     approval_port: int | None = None,
+    mode: PreviewMode = "view_only",
 ) -> str:
     """prepared payload 로부터 미리보기 HTML 문자열을 만든다.
 
-        본 함수는 외부 CSS/JS/폰트를 참조하지 않는 단일 HTML 문자열을 반환한다.
-        상품 이미지는 네이버 CDN 의 ``<img src>`` 로 렌더된다 — 사진이 실제
-        상품과 일치하는지 사람이 확인하는 것이 이 화면의 핵심 목적이다.
-        상세 HTML(``payload.detail_html``)은 ``<iframe srcdoc="...">`` 으로
-        끼워넣는다 — iframe 의 srcdoc 은 인라인 문서이므로 네트워크 요청을
+    본 함수는 외부 CSS/JS/폰트를 참조하지 않는 단일 HTML 문자열을 반환한다.
+    상품 이미지는 네이버 CDN 의 ``<img src>`` 로 렌더된다 — 사진이 실제
+    상품과 일치하는지 사람이 확인하는 것이 이 화면의 핵심 목적이다.
+    상세 HTML(``payload.detail_html``)은 ``<iframe srcdoc="...">`` 으로
+    끼워넣는다 — iframe 의 srcdoc 은 인라인 문서이므로 네트워크 요청을
     일으키지 않는다.
 
-        상품명·판매가·고시 값·태그는 페이지에서 **직접 편집**할 수 있다. 편집한
-        내용은 [수정사항 복사] 버튼으로 클립보드에 담아 채팅에 붙여넣어야 반영된다.
-        ``product_key`` 가 주어지면 클립보드 페이로드에 포함되어 모델이 어느
-        상품인지 정확히 식별할 수 있다.
+    **두 모드** 로 나뉜다(티켓: 보기 전용(패널)과 조작(브라우저)을 가른다):
 
-        ``approval_token`` 과 ``approval_port`` 가 모두 주어지면(설정
-        ``enable_local_approval`` 켜짐 + 포트 확정 후), [승인] / [수정 후 승인]
-        버튼이 페이지에 포함된다. 이 버튼은 ``http://127.0.0.1:<port>/`` 로
-        POST 요청을 보내 승인을 전달한다. 둘 중 하나라도 없으면 승인 바는
-        렌더되지 않는다(기본 OFF).
+    - ``mode="view_only"`` (**기본값**) — MCP 우측 패널용 정적 미리보기. 이 모드는
+      ``<script>``·``contenteditable``·``<button>``·``<input>``·``onclick``·
+      ``addEventListener`` 가 **0개** 나온다 — 패널은 JS 를 실행하지도 폼을
+      제출하지도 못하므로, "누를 수 있게 생겼는데 안 눌리는" 죽은 UI 를
+      원천 차단한다. 상품 정보(상품명·가격·이미지·상세 본문·고시)는 조작 모드와
+      **동일하게** 보인다(정보 손실 없음). "보기 전용" 표기와 "조작은 브라우저
+      창에서" 안내가 들어간다. **안전한 쪽이 기본** — 모르고 패널에 뿌려도
+      죽은 UI 가 나가지 않는다.
 
-        Args:
-            payload: prepared payload dict.
-            api_payload: 등록 단계가 만들 페이로드(``naver_client.build_payload``
-                결과). 고시 타입·출처 표시를 위해 쓴다. 없으면 payload 에서
-                최소 정보만 읽는다.
-            product_key: prepared payload 의 product_key. 클립보드 수정사항 페이
-                로드에 포함된다(모델이 어느 상품인지 확실히 알도록).
-            approval_token: 로컬 승인 다리의 일회용 토큰. ``approval_port`` 와
-                함께 주어져야 승인 바가 렌더된다.
-            approval_port: 로컬 승인 서버의 포트. ``approval_token`` 과 함께
-                주어져야 승인 바가 렌더된다.
+    - ``mode="interactive"`` — 브라우저 창용. 상품명·판매가·고시 값·태그를
+      페이지에서 직접 편집할 수 있고 [수정사항 복사] 버튼으로 클립보드에
+      담아 채팅에 붙여넣어야 반영된다. ``approval_token``/``approval_port`` 까지
+      주어지면 [승인] / [수정 후 승인] 버튼이 추가된다(순수 HTML 폼 POST,
+      hidden 토큰). 회귀 금지.
 
-        Returns:
-            완전한 HTML 문서 문자열.
+    호출부 배정(어느 경로가 어느 모드인지):
+      - ``register.prepare_listing`` → 최초 prepared 생성 직후. **보기 전용**.
+        이 파일이 MCP 우측 패널에 바로 표시되기 때문.
+      - ``mcp_server.register_product`` (승인 대기 진입) → 로컬 승인 서버를
+        띄운 직후 파일을 갱신할 때. **조작 모드**. 사용자가 브라우저에서
+        [승인] 버튼을 누르는 자리다.
+      - 단위 테스트(``test_preview_edit``/``test_approval_form_post``) →
+        **조작 모드** 명시 호출(회귀 검증).
+
+    Args:
+        payload: prepared payload dict.
+        api_payload: 등록 단계가 만들 페이로드(``naver_client.build_payload``
+            결과). 고시 타입·출처 표시를 위해 쓴다. 없으면 payload 에서
+            최소 정보만 읽는다.
+        product_key: prepared payload 의 product_key. 조작 모드에서 클립보드
+            수정사항 페이로드에 포함된다(모델이 어느 상품인지 확실히 알도록).
+        approval_token: 로컬 승인 다리의 일회용 토큰. ``approval_port`` 와
+            함께 주어져야 승인 바가 렌더된다(**조작 모드에서만 의미 있음** —
+            보기 전용 모드에서는 무시되고 승인 바가 나오지 않는다).
+        approval_port: 로컬 승인 서버의 포트. ``approval_token`` 과 함께
+            주어져야 승인 바가 렌더된다(조작 모드에서만).
+        mode: ``"view_only"`` (기본) 또는 ``"interactive"``. 위 참조.
+
+    Returns:
+        완전한 HTML 문서 문자열.
     """
+    # mode 정규화. 알 수 없는 값은 안전한 쪽(보기 전용)으로 강등 — 로깅/경고
+    # 없이 조용히 바꾼다(호출자가 잘못 줘도 죽은 UI 가 나가지 않게).
+    if mode != "interactive":
+        mode = "view_only"
+
     product = payload.get("product") if isinstance(payload.get("product"), dict) else {}
     name = str(product.get("name") or "")
     sale_price = product.get("salePrice")
@@ -648,7 +813,7 @@ def render_preview_html(
     # 생성 시각(UTC).
     generated_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
-    # 태그(편집 가능). payload.product.tags 가 스마트스토어 검색태그 목록이다.
+    # 태그. payload.product.tags 가 스마트스토어 검색태그 목록이다.
     tags_list = product.get("tags") if isinstance(product.get("tags"), list) else []
     tags_value = ", ".join(str(t) for t in tags_list if t)
 
@@ -665,6 +830,8 @@ def render_preview_html(
         price_display = "(가격 미지정)"
         price_original = ""
 
+    interactive = mode == "interactive"
+
     parts = [
         "<!DOCTYPE html>",
         '<html lang="ko">',
@@ -676,48 +843,62 @@ def render_preview_html(
         " 미리보기</title>",
         "<style>",
         _PREVIEW_CSS,
+        # 보기 전용 배너 CSS 는 보기 전용 모드에서만. 조작 모드 전용 CSS
+        # (.edit-field 등) 는 조작 모드에서만 — 죽은 CSS 까지 0개로.
+        _PREVIEW_CSS_VIEW_ONLY if not interactive else _PREVIEW_CSS_INTERACTIVE,
         "</style>",
         "</head>",
         "<body>",
         '<div class="preview-wrap">',
     ]
 
-    # 판매상태 배너 — 가장 눈에 띄는 최상단 위치.
-    # 판매중지로 올리려는데 판매중으로 나가는 조용한 잘못된 상태를
-    # 사람이 한눈에 잡을 수 있게 한다.
+    # 보기 전용 배너 — 보기 전용 모드에서만. 패널에 표시될 때 "조작 불가" 임을
+    # 분명히 하고 조작이 가능한 자리(브라우저 창)를 안내한다. 인라인 이벤트
+    # 핸들러 없이 순수 텍스트 배너.
+    if not interactive:
+        parts.append(_view_only_banner_html())
+
+    # 판매상태 배너 — 가장 눈에 띄는 최상단 위치. 두 모드 공통.
     parts.append(_status_banner(status))
 
-    # 헤더: 상품명(편집 가능)·판매상태·판매가(편집 가능).
+    # 헤더: 상품명·판매상태·판매가.
+    # 조작 모드: 상품명/판매가 칸이 contenteditable. 보기 전용 모드: 순수 텍스트.
     parts.append('<div class="preview-header">')
-    # 상품명: contenteditable. data-original 은 quote 이스케이프.
     name_display = name or "(상품명 없음)"
-    parts.append(
-        '<h1 class="preview-title">'
-        f'<span class="edit-field" contenteditable="true" '
-        f'data-field="상품명" data-original="{html.escape(name, quote=True)}">'
-        f"{html.escape(name_display)}</span></h1>"
-    )
+    if interactive:
+        parts.append(
+            '<h1 class="preview-title">'
+            f'<span class="edit-field" contenteditable="true" '
+            f'data-field="상품명" data-original="{html.escape(name, quote=True)}">'
+            f"{html.escape(name_display)}</span></h1>"
+        )
+    else:
+        parts.append(f'<h1 class="preview-title">{html.escape(name_display)}</h1>')
     parts.append('<div class="preview-meta">')
     parts.append(f"<strong>카테고리 ID:</strong> {html.escape(category_id or '(미지정)')} ")
     parts.append(_status_badge(status))
     parts.append("<br />")
-    # 판매가: contenteditable. 쉼표 없는 원본 숫자를 data-original 로.
-    parts.append(
-        '<span class="preview-price">'
-        f'<span class="edit-field" contenteditable="true" '
-        f'data-field="판매가" data-original="{html.escape(price_original, quote=True)}">'
-        f"{html.escape(price_display)}</span></span>"
-    )
+    if interactive:
+        parts.append(
+            '<span class="preview-price">'
+            f'<span class="edit-field" contenteditable="true" '
+            f'data-field="판매가" data-original="{html.escape(price_original, quote=True)}">'
+            f"{html.escape(price_display)}</span></span>"
+        )
+    else:
+        parts.append(f'<span class="preview-price">{html.escape(price_display)}</span>')
     parts.append("</div>")
     parts.append("</div>")  # preview-header
 
     # 이미지 섹션 (읽기 전용 — 사진은 URL 로만 확인).
     parts.append('<div class="preview-section">')
     parts.append("<h2>이미지</h2>")
-    parts.append(_render_images(listing_urls))
+    parts.append(
+        _render_images_readonly(listing_urls) if not interactive else _render_images(listing_urls)
+    )
     parts.append("</div>")
 
-    # 상세 페이지 섹션 (iframe srcdoc — 외부 리소스 참조 없음).
+    # 상세 페이지 섹션 (iframe srcdoc — 외부 리소스 참조 없음). 두 모드 공통.
     parts.append('<div class="preview-section">')
     parts.append("<h2>상세 페이지 (렌더 결과)</h2>")
     if detail_html:
@@ -728,7 +909,7 @@ def render_preview_html(
         parts.append('<p class="preview-meta">(상세 HTML 없음)</p>')
     parts.append("</div>")
 
-    # 고시 정보 섹션 (값 칸 편집 가능).
+    # 고시 정보 섹션. 조작 모드: 값 칸 편집 가능. 보기 전용: 순수 텍스트 칸.
     parts.append('<div class="preview-section">')
     parts.append("<h2>상품정보제공고시</h2>")
     parts.append(
@@ -736,7 +917,11 @@ def render_preview_html(
         f"{html.escape(notice_type_label)}"
         f" ({html.escape(notice_type or '미확정')})</p>"
     )
-    parts.append(_render_notice_table(notice_rows))
+    parts.append(
+        _render_notice_table_readonly(notice_rows)
+        if not interactive
+        else _render_notice_table(notice_rows)
+    )
     parts.append(
         '<p class="preview-meta"><span class="source-config">설정 기본값</span>'
         " 표시가 있는 필드는 판매자가 입력하지 않았지만 config 의 "
@@ -745,19 +930,22 @@ def render_preview_html(
     )
     parts.append("</div>")
 
-    # 태그 섹션 (편집 가능). 검색태그(sellerTags) — 쉼표 구분.
+    # 태그 섹션. 조작 모드: 편집 가능(contenteditable). 보기 전용: 텍스트.
     parts.append('<div class="preview-section">')
     parts.append("<h2>검색태그</h2>")
-    parts.append('<p class="preview-meta">쉼표로 구분. (예: 겨울, 후드티, 기모)</p>')
-    parts.append(
-        '<p class="preview-meta"><span class="edit-field" contenteditable="true" '
-        f'data-field="태그" data-original="{html.escape(tags_value, quote=True)}">'
-        f"{html.escape(tags_value) or '<em style=\"color:#999\">(태그 없음 — 클릭해 입력)</em>'}"
-        "</span></p>"
-    )
+    if interactive:
+        parts.append('<p class="preview-meta">쉼표로 구분. (예: 겨울, 후드티, 기모)</p>')
+        parts.append(
+            '<p class="preview-meta"><span class="edit-field" contenteditable="true" '
+            f'data-field="태그" data-original="{html.escape(tags_value, quote=True)}">'
+            f"{html.escape(tags_value) or '<em style=\"color:#999\">(태그 없음 — 클릭해 입력)</em>'}"
+            "</span></p>"
+        )
+    else:
+        parts.append(f'<p class="preview-meta">{html.escape(tags_value) or "(태그 없음)"}</p>')
     parts.append("</div>")
 
-    # 안내문.
+    # 안내문 (두 모드 공통 — 미리보기의 본 목적 안내).
     parts.append('<div class="preview-note">')
     parts.append("<strong>이 화면은 판매자가 직접 눈으로 확인하는 용도입니다.</strong><br />")
     parts.append(
@@ -772,69 +960,75 @@ def render_preview_html(
     )
     parts.append("</div>")
 
-    # 직접 편집 바: [수정사항 복사] 버튼 + 클립보드 폴백 textarea.
-    # product_key 를 페이지에 숨겨둔다(클립보드 페이로드에 포함용).
-    safe_pkey = html.escape(str(product_key or ""), quote=True)
-    parts.append(
-        '<div class="edit-bar">'
-        '<span id="edit-product-key" class="edit-product-key" '
-        f'data-value="{safe_pkey}"></span>'
-        '<button type="button" id="edit-copy-btn" class="edit-copy-btn">'
-        "수정사항 복사</button>"
-        '<span class="edit-bar-note">'
-        "<strong>이 화면에서의 수정은 복사해 채팅에 붙여넣어야 반영됩니다.</strong> "
-        "여기서 고치고 닫으면 저장되지 않습니다."
-        "</span>"
-        '<span id="edit-status" class="edit-status"></span>'
-        '<div id="edit-fallback" class="edit-fallback">'
-        '<textarea id="edit-fallback-textarea" readonly></textarea>'
-        '<p class="edit-fallback-note">'
-        "클립보드 복사가 막혔습니다(file:// 페이지). 위 상자를 Ctrl+C 로 복사해 "
-        "채팅에 붙여넣으세요."
-        "</p>"
-        "</div>"
-        "</div>"
-    )
-
-    # 로컬 승인 바: approval_token 과 approval_port 가 모두 있을 때만 렌더.
-    # 기본 OFF — 설정이 꺼져 있으면 token/port 가 None 이므로 이 바는 나오지
-    # 않는다. 기존 클립보드 경로(수정사항 복사)는 그대로 동작한다.
-    if approval_token and approval_port:
-        safe_token = html.escape(str(approval_token), quote=True)
-        # 순수 HTML 폼 POST. enctype 생략 = application/x-www-form-urlencoded
-        # (CORS 프리플라이트를 유발하지 않는 "simple request" 조건). 커스텀
-        # 헤더는 일절 없다 — 토큰은 hidden 필드로 본문에 보낸다.
-        # [승인] 은 type="submit" 이고 JS 가 없어도 폼이 전송된다. [수정 후 승인]
-        # 도 type="submit" 이며 JS 가 hidden edits[...] 필드를 채운 뒤 폼이 전송된다.
-        action = f"http://127.0.0.1:{int(approval_port)}/"
+    # 직접 편집 바·승인 바·스크립트 — 조작 모드에서만.
+    # 보기 전용 모드는 여기서 아무것도 더 붙이지 않고 문서를 닫는다.
+    if interactive:
+        # 직접 편집 바: [수정사항 복사] 버튼 + 클립보드 폴백 textarea.
+        # product_key 를 페이지에 숨겨둔다(클립보드 페이로드에 포함용).
+        safe_pkey = html.escape(str(product_key or ""), quote=True)
         parts.append(
-            '<div class="approval-bar">'
-            '<span class="approval-bar-note">'
-            "<strong>[승인] 버튼을 누르면 이 상품이 등록됩니다.</strong><br />"
-            "[수정 후 승인] 은 페이지에서 바꾼 값을 함께 보냅니다. "
-            "10분 안에 누르지 않으면 자동 만료됩니다. "
-            "결과 페이지가 열리며, 서버가 처리한 실제 결과를 표시합니다."
+            '<div class="edit-bar">'
+            '<span id="edit-product-key" class="edit-product-key" '
+            f'data-value="{safe_pkey}"></span>'
+            '<button type="button" id="edit-copy-btn" class="edit-copy-btn">'
+            "수정사항 복사</button>"
+            '<span class="edit-bar-note">'
+            "<strong>이 화면에서의 수정은 복사해 채팅에 붙여넣어야 반영됩니다.</strong> "
+            "여기서 고치고 닫으면 저장되지 않습니다."
             "</span>"
-            f'<form id="approval-form" method="POST" action="{action}">'
-            f'<input type="hidden" name="token" value="{safe_token}" />'
-            f'<input type="hidden" name="product_key" value="{safe_pkey}" />'
-            '<button type="submit" id="approval-btn" '
-            'class="approval-btn approval-btn-approve">'
-            "승인</button>"
-            '<button type="submit" id="approval-btn-edit" '
-            'class="approval-btn approval-btn-approve-edit" '
-            'formaction="' + action + '">'
-            "수정 후 승인</button>"
-            "</form>"
-            '<span id="approval-status" class="approval-status"></span>'
+            '<span id="edit-status" class="edit-status"></span>'
+            '<div id="edit-fallback" class="edit-fallback">'
+            '<textarea id="edit-fallback-textarea" readonly></textarea>'
+            '<p class="edit-fallback-note">'
+            "클립보드 복사가 막혔습니다(file:// 페이지). 위 상자를 Ctrl+C 로 복사해 "
+            "채팅에 붙여넣으세요."
+            "</p>"
+            "</div>"
             "</div>"
         )
 
-    parts.append("</div>")  # preview-wrap
-    parts.append(_PREVIEW_EDIT_SCRIPT)
-    # 승인 바가 있을 때만 승인 스크립트를 포함한다(불필요한 코드 노출 금지).
-    if approval_token and approval_port:
-        parts.append(_PREVIEW_APPROVAL_SCRIPT)
+        # 로컬 승인 바: approval_token 과 approval_port 가 모두 있을 때만 렌더.
+        # 기본 OFF — 설정이 꺼져 있으면 token/port 가 None 이므로 이 바는 나오지
+        # 않는다. 기존 클립보드 경로(수정사항 복사)는 그대로 동작한다.
+        if approval_token and approval_port:
+            safe_token = html.escape(str(approval_token), quote=True)
+            # 순수 HTML 폼 POST. enctype 생략 = application/x-www-form-urlencoded
+            # (CORS 프리플라이트를 유발하지 않는 "simple request" 조건). 커스텀
+            # 헤더는 일절 없다 — 토큰은 hidden 필드로 본문에 보낸다.
+            # [승인] 은 type="submit" 이고 JS 가 없어도 폼이 전송된다. [수정 후 승인]
+            # 도 type="submit" 이며 JS 가 hidden edits[...] 필드를 채운 뒤 폼이 전송된다.
+            action = f"http://127.0.0.1:{int(approval_port)}/"
+            parts.append(
+                '<div class="approval-bar">'
+                '<span class="approval-bar-note">'
+                "<strong>[승인] 버튼을 누르면 이 상품이 등록됩니다.</strong><br />"
+                "[수정 후 승인] 은 페이지에서 바꾼 값을 함께 보냅니다. "
+                "10분 안에 누르지 않으면 자동 만료됩니다. "
+                "결과 페이지가 열리며, 서버가 처리한 실제 결과를 표시합니다."
+                "</span>"
+                f'<form id="approval-form" method="POST" action="{action}">'
+                f'<input type="hidden" name="token" value="{safe_token}" />'
+                f'<input type="hidden" name="product_key" value="{safe_pkey}" />'
+                '<button type="submit" id="approval-btn" '
+                'class="approval-btn approval-btn-approve">'
+                "승인</button>"
+                '<button type="submit" id="approval-btn-edit" '
+                'class="approval-btn approval-btn-approve-edit" '
+                'formaction="' + action + '">'
+                "수정 후 승인</button>"
+                "</form>"
+                '<span id="approval-status" class="approval-status"></span>'
+                "</div>"
+            )
+
+        parts.append("</div>")  # preview-wrap
+        parts.append(_PREVIEW_EDIT_SCRIPT)
+        # 승인 바가 있을 때만 승인 스크립트를 포함한다(불필요한 코드 노출 금지).
+        if approval_token and approval_port:
+            parts.append(_PREVIEW_APPROVAL_SCRIPT)
+    else:
+        parts.append("</div>")  # preview-wrap
+
     parts.append("</body>")
     parts.append("</html>")
     return "\n".join(parts)
@@ -847,24 +1041,34 @@ def write_preview_html(
     api_payload: dict[str, Any] | None = None,
     approval_token: str | None = None,
     approval_port: int | None = None,
+    mode: PreviewMode = "view_only",
 ) -> Path:
     """미리보기 HTML 을 디스크에 쓰고 경로를 반환한다.
 
     prepared payload 디렉터리 규약 하위의 ``preview.html`` 로 쓴다.
-    ``product_key`` 는 클립보드 수정사항 페이로드에 포함되도록 페이지에
-    싣는다(모델이 어느 상품인지 정확히 식별).
+    ``product_key`` 는 조작 모드에서 클립보드 수정사항 페이로드에 포함되도록
+    페이지에 싣는다(모델이 어느 상품인지 정확히 식별).
 
-    ``approval_token`` 과 ``approval_port`` 가 모두 주어지면 승인 바가
-    페이지에 포함된다. 등록 도구가 포트를 확정한 뒤 이 함수로 미리보기를
-    갱신할 때 쓴다(포트를 모르는 상태에서는 토큰만 발급하고 서버는 띄우지
-    않는다 — 불필요한 포트 개방 금지).
+    **모드**(``mode`` 인자)는 ``render_preview_html`` 과 동일한 의미다.
+    **기본값은 ``"view_only"``** — 안전한 쪽. 호출부 배정:
+
+      - ``register.prepare_listing`` 은 기본값(보기 전용) 그대로 호출 — 최초
+        prepared 생성 직후이므로 패널에 바로 표시될 HTML 이 필요하다.
+      - ``mcp_server.register_product`` (승인 대기 진입)는 ``mode="interactive"``
+        를 **명시적으로** 전달 — 승인 서버 포트가 확정된 뒤 브라우저용으로
+        파일을 갱신한다.
+
+    ``approval_token`` 과 ``approval_port`` 가 모두 주어져도 **보기 전용 모드**
+    에서는 승인 바가 렌더되지 않는다 — 패널은 폼을 제출할 수 없으므로 승인
+    버튼은 죽은 UI 다. 조작 모드에서만 의미 있다.
 
     Args:
         product_key: prepared payload 의 product_key.
         payload: prepared payload dict.
         api_payload: 등록 단계 페이로드(선택). 고시 출처 표시에 쓴다.
-        approval_token: 로컬 승인 다리 토큰(선택).
-        approval_port: 로컬 승인 서버 포트(선택).
+        approval_token: 로컬 승인 다리 토큰(선택). 조작 모드에서만 승인 바 렌더.
+        approval_port: 로컬 승인 서버 포트(선택). 조작 모드에서만 승인 바 렌더.
+        mode: ``"view_only"`` (기본) 또는 ``"interactive"``.
 
     Returns:
         쓴 파일의 경로.
@@ -876,6 +1080,7 @@ def write_preview_html(
         product_key=product_key,
         approval_token=approval_token,
         approval_port=approval_port,
+        mode=mode,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(html_doc, encoding="utf-8")
@@ -883,6 +1088,7 @@ def write_preview_html(
 
 
 __all__ = [
+    "PreviewMode",
     "render_preview_html",
     "write_preview_html",
 ]

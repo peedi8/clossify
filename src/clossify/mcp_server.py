@@ -1947,11 +1947,18 @@ def register_product(
             # api_payload(등록 단계 페이로드)는 prepared payload 에 저장되지
             # 않으므로 여기서는 전달하지 않는다 — 고시 타입/출처 표시 없이
             # 렌더되지만, 승인 버튼 동작에는 영향이 없다.
+            #
+            # **조작(브라우저) 모드**로 갱신한다 — 사용자가 이 파일을 브라우저로
+            # 열어 [승인] / [수정 후 승인] 버튼을 누르는 자리다. register.prepare_listing
+            # 이 보기 전용(패널용)으로 쓴 파일을 여기서 조작 모드로 덮어쓴다.
+            # 패널이 아닌 브라우저로 보는 경로이므로 contenteditable·버튼·스크립트가
+            # 정상 작동한다. 회귀 금지 — 폼 POST·hidden 토큰 규약은 그대로.
             _preview_mod.write_preview_html(
                 _product_key,
                 _resolved_payload,
                 approval_token=_approval_token,
                 approval_port=_approval_port,
+                mode="interactive",
             )
         except Exception:
             # 미리보기 갱신 실패는 승인 자체를 막지 않는다 — 사용자가

@@ -69,9 +69,15 @@ def _sample_payload(name="테스트상품", price=39000, **product_overrides):
 
 
 def _render(payload=None, product_key="pkey12345678"):
-    """렌더러를 직접 부른다. 기본은 표준 샘플 payload."""
+    """렌더러를 직접 부른다. 기본은 표준 샘플 payload.
+
+    본 테스트는 **조작(브라우저) 모드**를 검증한다 — 편집 필드·복사 버튼·폴백
+    textarea·안내 문구가 모두 보기 전용이 아닌 조작 모드에서만 나오기 때문에
+    ``mode="interactive"`` 를 명시한다. render_preview_html 의 기본값이 보기
+    전용으로 바뀌었으므로, 회귀 검증 테스트는 반드시 조작 모드를 명시해야 한다.
+    """
     payload = payload or _sample_payload()
-    return preview.render_preview_html(payload, product_key=product_key)
+    return preview.render_preview_html(payload, product_key=product_key, mode="interactive")
 
 
 # =========================================================================== #

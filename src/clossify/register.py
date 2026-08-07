@@ -1500,6 +1500,13 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None):
     # 참조하지 않는 단일 HTML 이며, 브라우저로 열어 판매자가 직접 눈으로
     # 확인하는 용도다. 미리보기 생성이 실패해도 준비 자체는 죽지 않는다 —
     # 그 사실은 payload 의 preview_path(None) 로 드러난다.
+    #
+    # **보기 전용 모드**로 쓴다 — 이 시점에 만들어지는 파일이 MCP 우측 패널에
+    # 바로 표시되기 때문이다. 패널은 JS 를 실행하지도 폼을 제출하지도 못하므로,
+    # ``contenteditable``/``<button>``/``<input>``/``<script>`` 가 있으면 "누를 수
+    # 있게 생겼는데 안 눌리는" 죽은 UI 가 된다. 조작 모드(편집·승인 바)는 승인
+    # 서버가 포트를 확정한 뒤(mcp_server.register_product 승인 대기 진입) 파일을
+    # 갱신할 때 비로소 켜진다. 안전한 쪽이 기본.
     preview_path: str | None = None
     try:
         from . import preview as _preview_mod
@@ -1508,6 +1515,7 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None):
             product_key,
             payload,
             api_payload=tentative_payload,
+            mode="view_only",
         )
         preview_path = str(preview_file)
     except Exception:

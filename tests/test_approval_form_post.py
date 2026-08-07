@@ -553,11 +553,16 @@ class TestPreviewNoFetchApprovalPath:
             "detail_html": "",
             "status": "SALE",
         }
+        # **조작 모드 명시** — 승인 바/폼 POST 는 보기 전용 모드에서 나오지
+        # 않는다(패널은 폼을 제출할 수 없기 때문). render_preview_html 의
+        # 기본값이 보기 전용으로 바뀌었으므로, 본 승인 폼 회귀 검증 테스트는
+        # 반드시 조작 모드를 명시해야 한다.
         return preview.render_preview_html(
             payload,
             product_key="previewkey1",
             approval_token="dummytoken",
             approval_port=54321,
+            mode="interactive",
         )
 
     def test_no_fetch_approval_call(self, notice_config_mock):
