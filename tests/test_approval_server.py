@@ -46,8 +46,17 @@ def _send_request(
     path: str = "/",
     extra_headers: dict[str, str] | None = None,
 ) -> tuple[int, dict, list[tuple[str, str]]]:
-    """실제 소켓으로 HTTP 요청을 보내고 (status, body, headers) 를 반환."""
-    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    """실제 소켓으로 HTTP 요청을 보내고 (status, body, headers) 를 반환.
+
+    **서버 준비 보장**: ``ApprovalServer.start()`` 는 리슨 소켓이 바인드된 직후
+    포트를 반환하지만 ``serve_forever`` 의 accept 루프가 요청을 받을 준비가 됐는지
+    는 보장하지 않는다. 전체 스위트로 머신이 바쁠 때 이 창에 요청이 들어가면
+    ``ConnectionAbortedError`` 로 연결이 잘려 테스트가 플래키해진다(관측:
+    ``test_approval_form_post.py`` 재현 스크립트에서 mode=raw 2/150 실패,
+    mode=wait1 150/150 통과). 본 함수는 포트가 실제로 연결을 받는지 먼저 확인하고,
+    짧은 재시도로 accept 준비를 기다린다.
+    """
+    assert _wait_for_port(port), f"승인 서버 포트 {port} 가 준비되지 않음"
     headers: dict[str, str] = {}
     payload_bytes = b""
     if body is not None:
@@ -60,17 +69,30 @@ def _send_request(
         headers["Origin"] = origin
     if extra_headers:
         headers.update(extra_headers)
-    conn.request(method, path, body=payload_bytes, headers=headers)
-    resp = conn.getresponse()
-    resp_body = resp.read().decode("utf-8")
-    resp_headers = [(k, v) for k, v in resp.getheaders()]
-    status = resp.status
-    conn.close()
-    try:
-        parsed = json.loads(resp_body)
-    except (ValueError, TypeError):
-        parsed = {}
-    return status, parsed, resp_headers
+    # accept 준비 창을 닫기 위한 짧은 재시도(상한/타임아웃 있음, 무한 대기 아님).
+    deadline = time.monotonic() + 3.0
+    while True:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        try:
+            conn.request(method, path, body=payload_bytes, headers=headers)
+            resp = conn.getresponse()
+            resp_body = resp.read().decode("utf-8")
+            resp_headers = [(k, v) for k, v in resp.getheaders()]
+            status = resp.status
+            conn.close()
+            try:
+                parsed = json.loads(resp_body)
+            except (ValueError, TypeError):
+                parsed = {}
+            return status, parsed, resp_headers
+        except (ConnectionError, OSError):
+            try:
+                conn.close()
+            except Exception:
+                pass
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.02)
 
 
 def _wait_for_port(port: int, timeout: float = 3.0) -> bool:
@@ -712,7 +734,11 @@ def _send_raw_request(
     ``http.client.HTTPConnection.request`` 는 dict 만 받아 중복 헤더를
     표현할 수 없다. 본 헬퍼는 원시 바이트를 보내서 중복 Origin/Referer 를
     테스트한다.
+
+    ``_send_request`` 와 같은 이유로 포트 준비를 먼저 확인한다 — ``start()`` 직후
+    accept 가 준비되지 않은 창에 연결이 가면 중복 Origin 헤더 테스트도 플래키해진다.
     """
+    assert _wait_for_port(port), f"승인 서버 포트 {port} 가 준비되지 않음"
     payload = b""
     if body is not None:
         payload = json.dumps(body).encode("utf-8")

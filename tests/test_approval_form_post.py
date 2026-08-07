@@ -67,10 +67,17 @@ def _send_form(
 
     커스텀 헤더는 기본으로 일절 보내지 않는다 — 실제 브라우저 폼 제출을 재현.
     토큰은 hidden 필드(``token``) 로 보낸다(필요 시).
+
+    **서버 준비 보장**: ``ApprovalServer.start()`` 는 리슨 소켓이 바인드된 직후
+    포트를 반환하지만 ``serve_forever`` 의 accept 루프가 요청을 받을 준비가 됐는지
+    는 보장하지 않는다. 전체 스위트로 머신이 바쁠 때 이 창에 요청이 들어가면
+    ``ConnectionAbortedError`` 로 연결이 잘려 테스트가 플래키해진다(관측:
+    ``_repro_flaky.py`` mode=raw 2/150 실패, mode=wait1 150/150 통과). 본 함수는
+    포트가 실제로 연결을 받는지 먼저 확인하고, 짧은 재시도로 accept 준비를 기다린다.
     """
+    assert _wait_for_port(port), f"승인 서버 포트 {port} 가 준비되지 않음"
     pairs = list(fields.items()) if isinstance(fields, dict) else list(fields)
     body = urllib.parse.urlencode(pairs).encode("utf-8")
-    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
     headers: list[tuple[str, str]] = [
         ("Content-Type", "application/x-www-form-urlencoded"),
         ("Content-Length", str(len(body))),
@@ -81,13 +88,26 @@ def _send_form(
         headers.append(("Origin", origin))
     if extra_headers:
         headers.extend(extra_headers)
-    conn.request(method, path, body=body, headers=dict(headers))
-    resp = conn.getresponse()
-    resp_body = resp.read().decode("utf-8")
-    resp_headers = [(k, v) for k, v in resp.getheaders()]
-    status = resp.status
-    conn.close()
-    return status, resp_body, resp_headers
+    # accept 준비 창을 닫기 위한 짧은 재시도(상한/타임아웃 있음, 무한 대기 아님).
+    deadline = time.monotonic() + 3.0
+    while True:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        try:
+            conn.request(method, path, body=body, headers=dict(headers))
+            resp = conn.getresponse()
+            resp_body = resp.read().decode("utf-8")
+            resp_headers = [(k, v) for k, v in resp.getheaders()]
+            status = resp.status
+            conn.close()
+            return status, resp_body, resp_headers
+        except (ConnectionError, OSError):
+            try:
+                conn.close()
+            except Exception:
+                pass
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.02)
 
 
 def _send_raw_form(
@@ -96,7 +116,12 @@ def _send_raw_form(
     raw_headers: list[tuple[str, str]],
     fields: dict[str, str],
 ) -> tuple[int, str]:
-    """중복 헤더를 보낼 수 있는 로우 소켓 폼 POST."""
+    """중복 헤더를 보낼 수 있는 로우 소켓 폼 POST.
+
+    ``_send_form`` 과 같은 이유로 포트 준비를 먼저 확인한다 — ``start()`` 직후
+    accept 가 준비되지 않은 창에 연결이 가면 중복 Origin 헤더 테스트도 플래키해진다.
+    """
+    assert _wait_for_port(port), f"승인 서버 포트 {port} 가 준비되지 않음"
     payload = urllib.parse.urlencode(list(fields.items())).encode("utf-8")
     lines = [
         b"POST / HTTP/1.1",
@@ -463,6 +488,7 @@ class TestJsonPathNoRegression:
         srv = approval_server.ApprovalServer(product_key="jsn0abc001", token=token, ttl_seconds=60)
         port = srv.start()
         try:
+            assert _wait_for_port(port), "승인 서버 포트가 준비되지 않음"
             conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
             body = _json.dumps({"token": token, "product_key": "jsn0abc001"}).encode()
             conn.request(
@@ -489,6 +515,7 @@ class TestJsonPathNoRegression:
         srv = approval_server.ApprovalServer(product_key="jsnr0ab01a", token=token, ttl_seconds=60)
         port = srv.start()
         try:
+            assert _wait_for_port(port), "승인 서버 포트가 준비되지 않음"
             conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
             body = _json.dumps({"token": "wrong", "product_key": "jsnr0ab01a"}).encode()
             conn.request(
@@ -513,6 +540,7 @@ class TestJsonPathNoRegression:
         srv = approval_server.ApprovalServer(product_key="uct0abc001a", token=token, ttl_seconds=60)
         port = srv.start()
         try:
+            assert _wait_for_port(port), "승인 서버 포트가 준비되지 않음"
             conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
             body = b"raw bytes"
             conn.request(
