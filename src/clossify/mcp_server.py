@@ -1202,6 +1202,54 @@ def _attach_templates(result: dict[str, Any]) -> None:
     result["templates_read_error"] = templates_read_error
 
 
+def _template_migration_a1_path() -> str:
+    """더미 엑셀 생성에 쓸 원본 A1 대량등록 양식 경로를 반환한다.
+
+    ``CLOSSIFY_A1_TEMPLATE`` 환경 변수로 오버라이드 가능. 기본값은 빈 문자열
+    (폼 HTML 생성 시 src_xlsx_path 가 빈 문자열이면 폼 서버가 거부한다 —
+    사용자가 환경 변수로 명시해야 동작). 경로만 안내하고 자동으로 진행하지 않는다.
+    """
+    return str(os.environ.get("CLOSSIFY_A1_TEMPLATE") or "").strip()
+
+
+def _template_migration_form_html_path() -> str:
+    """템플릿 이관 폼 HTML 파일 경로(.local/template_migration_form.html)."""
+    return os.path.join(str(common.STATE_DIR), "template_migration_form.html")
+
+
+def _attach_template_migration_form(result: dict[str, Any]) -> None:
+    """``result`` 에 템플릿 이관 폼 HTML 경로를 얹는다.
+
+    check_config 가 설정 폼 경로를 알려주는 것과 같은 패턴. A1 엑셀 원본
+    경로가 환경 변수로 지정되어 있을 때만 폼 HTML 을 생성한다. 서버는 띄우지
+    않는다 — 경로만 반환(파일 열기 안내). 부분-실패 허용: 실패해도 기존 진단
+    키는 살아 있다.
+    """
+    result["template_migration_form_path"] = None
+    a1_path = _template_migration_a1_path()
+    if not a1_path:
+        # A1 원본 경로가 없으면 폼을 만들지 않는다 (조용한 진행 금지 —
+        # result 에 키 자체는 있어야 호출부가 예측 가능).
+        return
+    try:
+        from . import approval_server as _as
+        from . import template_migration_form as _tmf
+
+        token = _as.new_token()
+        html_path = _template_migration_form_html_path()
+        # 임시 포트(0)로 HTML 생성 — 경로 반환용. 서버는 기본 OFF.
+        _tmf.write_template_migration_form_html(
+            html_path,
+            token=token,
+            port=0,
+            src_xlsx_path=a1_path,
+        )
+        result["template_migration_form_path"] = html_path
+    except Exception:
+        # 폼 생성 실패는 진단 키에 영향을 주지 않는다 (부분 실패 허용).
+        pass
+
+
 @mcp.tool()
 def check_config(read_existing: bool = False) -> dict[str, Any]:
     """네이버 커머스 API 자격증명/설정 상태를 검사한다.
@@ -1288,6 +1336,7 @@ def check_config(read_existing: bool = False) -> dict[str, Any]:
         # 템플릿 저장소는 config.json 과 별개 파일 — 설정이 없어도 읽힌다.
         # 조기 반환에서도 templates 키를 얹어 사용자가 자기 템플릿을 항상 볼 수 있게.
         _attach_templates(result)
+        _attach_template_migration_form(result)
         return result
 
     try:
@@ -1299,6 +1348,7 @@ def check_config(read_existing: bool = False) -> dict[str, Any]:
         result["config_form_open"] = False
         # 마찬가지: 손상된 config 경로에서도 템플릿 키를 얹는다(조용한 누락 금지).
         _attach_templates(result)
+        _attach_template_migration_form(result)
         return result
 
     naver = cfg.get("naver")
@@ -1313,6 +1363,7 @@ def check_config(read_existing: bool = False) -> dict[str, Any]:
         )
         # naver 섹션 비정상 경로에서도 템플릿 키를 얹는다(설정 진단과 무관).
         _attach_templates(result)
+        _attach_template_migration_form(result)
         return result
 
     missing: list[str] = []
@@ -1456,6 +1507,12 @@ def check_config(read_existing: bool = False) -> dict[str, Any]:
     _attach_templates(result)
 
     result["ok"] = not missing and not placeholders
+
+    # 템플릿 이관 폼 HTML 경로 안내 (check_config 가 설정 폼 경로를 알려주는 것과
+    # 같은 패턴). 고시·AS·배송비 템플릿을 API 로 못 읽으므로 더미 엑셀을 만드는
+    # 폼의 경로를 결과에 포함한다. 서버는 기본 OFF — 경로만 반환(파일 열기 안내).
+    _attach_template_migration_form(result)
+
     return result
 
 
