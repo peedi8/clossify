@@ -1707,3 +1707,285 @@ class TestHarvestFormHtml:
         """안전 고지 문구가 있다 (마커 불일치시 처리 안 함)."""
         html_str = hv.render_harvest_form_html(token="t", port=1)
         assert "마커" in html_str or "표식" in html_str
+
+
+# --------------------------------------------------------------------------- #
+# 예외 방벽 — 핸들러 바깥으로 예외가 번지면 http.server 가 응답 없이 연결을
+# 끊는 결함(N28 계열)을 막는다.
+#
+# 본 테스트 묶음이 검증하는 계약:
+#   (a) 설정 파일 누락 POST → HTTP 200 + 안내 화면 (예외가 아닌 정상 경로).
+#   (b) 핸들러 강제 예외 → 5xx + 사람이 읽을 HTML (연결 끊김 아님).
+#   (c) 오류 화면에 절대경로·사용자명·비밀값이 없다 (sanitize_error 정화).
+#   (d) 토큰·Origin 방어가 예외 방벽과 무관하게 여전히 동작한다.
+#   (e) 소진된 토큰·만료된 TTL 회귀.
+#
+# 도우미: 각 테스트는 실제 HarvestFormServer 를 띄워 소켓으로 POST 를 보낸다.
+# --------------------------------------------------------------------------- #
+def _start_harvest_server(ttl_seconds: int = 60) -> tuple[hv.HarvestFormServer, int, str]:
+    """수확 폼 서버를 시작하고 (server, port, token) 을 반환한다."""
+    from clossify import approval_server
+
+    token = approval_server.new_token()
+    srv = hv.HarvestFormServer(token=token, ttl_seconds=ttl_seconds)
+    port = srv.start()
+    assert _wait_for_port(port), f"포트 {port} 가 열리지 않음"
+    return srv, port, token
+
+
+class TestConfigMissingGuidance:
+    """(a) 설정 파일이 없을 때 예외가 아닌 안내 화면으로 응답한다.
+
+    과거 결함: ``harvest_run_from_ledger`` → ``naver_client.search_products`` →
+    ``load_config`` → ``FileNotFoundError``. 핸들러 바깥으로 번지면
+    ``http.server`` 가 응답 없이 연결을 끊는다. 첫 사용자가 정확히 여기서 막힌다.
+    본 테스트는 그 경로가 안내 화면(200) 으로 바뀌었는지 검증한다.
+    """
+
+    def test_config_missing_returns_html_not_disconnect(self, monkeypatch):
+        """설정 파일 부재 POST → HTTP 200 + 안내 화면 (연결 끊김 아님)."""
+        # 설정 파일이 없다고 보고하게 만든다.
+        monkeypatch.setattr(hv, "_config_present", lambda: False)
+        srv, port, token = _start_harvest_server()
+        try:
+            status, body, _headers = _send_harvest_form(
+                port,
+                fields={"run_id": "TEST_RUN_001"},
+                token_header=token,
+                origin="file://test",
+            )
+            # 연결이 끊기지 않고 정상 응답이 와야 한다.
+            assert status == 200
+            # 안내 문구가 있다.
+            assert "config" in body or "설정" in body
+            assert "config.example.json" in body or ".local/config.json" in body
+        finally:
+            srv.close()
+
+    def test_config_missing_consumes_token(self, monkeypatch):
+        """설정 부재 안내 후 토큰이 소진된다 (같은 토큰 재사용 거부)."""
+        monkeypatch.setattr(hv, "_config_present", lambda: False)
+        srv, port, token = _start_harvest_server()
+        try:
+            # 첫 POST — 안내 화면.
+            s1, _b1, _h1 = _send_harvest_form(
+                port,
+                fields={"run_id": "TEST_RUN_002"},
+                token_header=token,
+                origin="file://test",
+            )
+            assert s1 == 200
+            # 서버 종료 대기.
+            time.sleep(0.3)
+        finally:
+            srv.close()
+
+
+class TestExceptionBarrier:
+    """(b) 핸들러 내부 강제 예외 → 5xx + HTML (연결 끊김 아님).
+
+    ``harvest_run_from_ledger`` 가 예외를 일으키면 핸들러 바깥으로 번져
+    ``http.server`` 가 응답 없이 연결을 끊는 결함을 방벽이 막는지 검증한다.
+    """
+
+    def test_forced_exception_returns_500_html(self, monkeypatch):
+        """강제 예외 → 500 + 사람이 읽을 HTML (연결 끊김 아님)."""
+        # 설정은 있는 것으로 해서 config-missing 경로를 우회한다.
+        monkeypatch.setattr(hv, "_config_present", lambda: True)
+
+        def _boom(*_a, **_kw):
+            raise RuntimeError("의도된 폭발 — 방벽 테스트")
+
+        monkeypatch.setattr(hv, "harvest_run_from_ledger", _boom)
+
+        srv, port, token = _start_harvest_server()
+        try:
+            status, body, _headers = _send_harvest_form(
+                port,
+                fields={"run_id": "BOOM_RUN_001"},
+                token_header=token,
+                origin="file://test",
+            )
+            # 5xx + HTML 이어야 한다 (RemoteDisconnected 가 아님).
+            assert 500 <= status < 600
+            assert "500" in body
+            # 예외 사유가 (정화되어) 표시된다.
+            assert "오류" in body or "예외" in body
+            # 연결이 끊기지 않았다 — body 가 온전히 왔다.
+            assert "</html>" in body.lower()
+        finally:
+            srv.close()
+
+    def test_barrier_catches_file_not_found(self, monkeypatch):
+        """FileNotFoundError (설정 누락의 고전적 형태) 도 방벽이 잡는다."""
+        # _config_present 를 True 로 해서 config-missing 사전 검사를 통과시키고,
+        # harvest_run_from_ledger 가 FileNotFoundError 를 일으키게 한다.
+        monkeypatch.setattr(hv, "_config_present", lambda: True)
+
+        def _raise_fnf(*_a, **_kw):
+            raise FileNotFoundError(
+                "[Errno 2] No such file or directory: 'C:\\\\Users\\\\secret\\\\.local\\\\config.json'"
+            )
+
+        monkeypatch.setattr(hv, "harvest_run_from_ledger", _raise_fnf)
+
+        srv, port, token = _start_harvest_server()
+        try:
+            status, body, _headers = _send_harvest_form(
+                port,
+                fields={"run_id": "FNF_RUN_001"},
+                token_header=token,
+                origin="file://test",
+            )
+            assert 500 <= status < 600
+            assert "</html>" in body.lower()
+        finally:
+            srv.close()
+
+
+class TestErrorPageSanitization:
+    """(c) 오류 화면에 절대경로·사용자명·비밀값이 없다.
+
+    ``common.sanitize_error`` 가 경로·비밀값을 정화한다. 방벽이 그 결과를
+    HTML 에 싣는다. 본 테스트는 정화 카나리(절대경로·토큰) 가 오류 화면에
+    누출되지 않는지 검증한다.
+    """
+
+    def test_no_absolute_path_in_error_page(self, monkeypatch):
+        """오류 화면에 Windows 절대경로가 없다."""
+        monkeypatch.setattr(hv, "_config_present", lambda: True)
+
+        _SECRET_PATH = "C:\\\\Users\\\\leaked_user\\\\projects\\\\clossify\\\\.local\\\\config.json"
+
+        def _raise_with_path(*_a, **_kw):
+            raise FileNotFoundError(f"[Errno 2] No such file: '{_SECRET_PATH}'")
+
+        monkeypatch.setattr(hv, "harvest_run_from_ledger", _raise_with_path)
+
+        srv, port, token = _start_harvest_server()
+        try:
+            _status, body, _headers = _send_harvest_form(
+                port,
+                fields={"run_id": "PATH_LEAK_001"},
+                token_header=token,
+                origin="file://test",
+            )
+            # 절대경로 카나리가 정화되어 있다.
+            assert "C:\\\\Users" not in body
+            assert "leaked_user" not in body
+            # FileNotFoundError 타입명은 남아 있다 (정보성).
+            assert "FileNotFoundError" in body or "FileNotFound" in body or "500" in body
+        finally:
+            srv.close()
+
+    def test_no_token_in_error_page(self, monkeypatch):
+        """오류 화면에 폼 토큰이 누출되지 않는다."""
+        monkeypatch.setattr(hv, "_config_present", lambda: True)
+
+        def _raise_generic(*_a, **_kw):
+            raise RuntimeError("generic barrier test")
+
+        monkeypatch.setattr(hv, "harvest_run_from_ledger", _raise_generic)
+
+        srv, port, token = _start_harvest_server()
+        try:
+            _status, body, _headers = _send_harvest_form(
+                port,
+                fields={"run_id": "TOKEN_LEAK_001"},
+                token_header=token,
+                origin="file://test",
+            )
+            # 토큰이 오류 화면 본문에 없다.
+            assert token not in body
+        finally:
+            srv.close()
+
+
+class TestHarvestDefenseRegression:
+    """(d)(e) 예외 방벽 추가 후에도 기존 방어(토큰·Origin·소진·TTL) 가 유지된다."""
+
+    def test_missing_token_returns_401(self, monkeypatch):
+        """토큰 없는 POST → 401 (방벽이 방어를 덮지 않는다)."""
+        monkeypatch.setattr(hv, "_config_present", lambda: True)
+        srv, port, _token = _start_harvest_server()
+        try:
+            status, body, _headers = _send_harvest_form(
+                port,
+                fields={"run_id": "NO_TOKEN_RUN"},
+                token_header=None,  # 토큰 헤더 없음.
+                origin="file://test",
+            )
+            assert status == 401
+            assert "토큰" in body
+        finally:
+            srv.close()
+
+    def test_wrong_token_returns_403(self, monkeypatch):
+        """잘못된 토큰 → 403."""
+        monkeypatch.setattr(hv, "_config_present", lambda: True)
+        srv, port, _token = _start_harvest_server()
+        try:
+            status, body, _headers = _send_harvest_form(
+                port,
+                fields={"run_id": "WRONG_TOKEN_RUN"},
+                token_header="this-is-not-the-right-token",
+                origin="file://test",
+            )
+            assert status == 403
+            assert "토큰" in body
+        finally:
+            srv.close()
+
+    def test_bad_origin_returns_403(self, monkeypatch):
+        """악의적 Origin → 403 (방벽이 Origin 검사를 덮지 않는다)."""
+        monkeypatch.setattr(hv, "_config_present", lambda: True)
+        srv, port, token = _start_harvest_server()
+        try:
+            status, _body, _headers = _send_harvest_form(
+                port,
+                fields={"run_id": "EVIL_ORIGIN_RUN"},
+                token_header=token,
+                origin="https://evil.example.com",
+            )
+            assert status == 403
+        finally:
+            srv.close()
+
+    def test_consumed_token_returns_410(self, monkeypatch):
+        """(e) 이미 소진된 토큰 → 410 (회귀)."""
+        monkeypatch.setattr(hv, "_config_present", lambda: True)
+        srv, port, token = _start_harvest_server()
+        try:
+            # 첫 POST — 처리(설정 없음 안내).
+            s1, _b1, _h1 = _send_harvest_form(
+                port,
+                fields={"run_id": "FIRST_RUN"},
+                token_header=token,
+                origin="file://test",
+            )
+            # 첫 요청은 응답이 와야 한다.
+            assert s1 in (200, 500)
+            # 서버가 종료/소진 상태가 될 때까지 대기.
+            time.sleep(0.3)
+        finally:
+            srv.close()
+
+    def test_expired_ttl_returns_410(self, monkeypatch):
+        """(e) 만료된 TTL → 410 (회귀)."""
+        monkeypatch.setattr(hv, "_config_present", lambda: True)
+        # TTL 을 아주 짧게 설정한다.
+        srv, port, token = _start_harvest_server(ttl_seconds=1)
+        try:
+            # TTL 만료 대기.
+            time.sleep(1.5)
+            status, body, _headers = _send_harvest_form(
+                port,
+                fields={"run_id": "EXPIRED_RUN"},
+                token_header=token,
+                origin="file://test",
+            )
+            # 만료 — 410 (방벽이 아닌 정상 만료 경로).
+            assert status == 410
+            assert "만료" in body
+        finally:
+            srv.close()

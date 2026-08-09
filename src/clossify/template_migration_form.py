@@ -1300,23 +1300,65 @@ class _TemplateFormHandler(http.server.BaseHTTPRequestHandler):
     ``application/x-www-form-urlencoded`` 폼 본문만 받는다.
     CORS 헤더는 절대 내보내지 않는다. 로그에 토큰·코드값이 찍히지 않도록
     ``log_message`` 를 덮어쓴다.
+
+    **예외 방벽**: 각 ``do_*`` 메서드 전체를 try/except 이 감싼다. 예외가
+    핸들러 바깥으로 번지면 ``http.server`` 는 응답을 쓰지 않고 연결을 끊는다.
+    이것은 "거짓 성공" 결함(N28)의 한 계열이다. 모든 예외는
+    ``_respond_barrier_error`` 로 5xx + 사람이 읽을 HTML 로 바뀐다.
     """
 
     server_version = "clossify-template-form"
     sys_version = ""
 
     def do_POST(self) -> None:
-        path = self.path.split("?", 1)[0]
-        if path not in ("/", "/generate"):
-            self._reject_html(404, "not_found", "알 수 없는 경로입니다.")
-            return
-        self._handle_generate()
+        try:
+            path = self.path.split("?", 1)[0]
+            if path not in ("/", "/generate"):
+                self._reject_html(404, "not_found", "알 수 없는 경로입니다.")
+                return
+            self._handle_generate()
+        except Exception as exc:
+            self._respond_barrier_error(exc)
 
     def do_GET(self) -> None:
-        self._reject_html(405, "method_not_allowed", "GET 은 지원하지 않습니다.")
+        try:
+            self._reject_html(405, "method_not_allowed", "GET 은 지원하지 않습니다.")
+        except Exception as exc:
+            self._respond_barrier_error(exc)
 
     def do_OPTIONS(self) -> None:
-        self._reject_html(405, "method_not_allowed", "CORS preflight 는 지원하지 않습니다.")
+        try:
+            self._reject_html(405, "method_not_allowed", "CORS preflight 는 지원하지 않습니다.")
+        except Exception as exc:
+            self._respond_barrier_error(exc)
+
+    def _respond_barrier_error(self, exc: BaseException) -> None:
+        """방벽이 잡은 예외를 5xx + 정화된 HTML 로 응답.
+
+        ``http.server`` 핸들러에서 예외가 번지면 응답 없이 연결이 끊긴다.
+        본 메서드는:
+          - 이미 응답을 보낸 뒤의 예외(BrokenPipe 등) 면 더 보내지 않는다.
+          - 그 외에는 500 + ``common.sanitize_error`` 로 정화한 사유를 HTML 로.
+        """
+        try:
+            already_sent = bool(getattr(self, "_headers_buffer", None))
+        except Exception:
+            already_sent = False
+        if already_sent:
+            return
+        reason = common.sanitize_error(exc)
+        page = _result_page(
+            ok=False,
+            status_text="처리 중 오류가 발생했습니다 (HTTP 500)",
+            detail=(
+                "<strong>예외:</strong> " + html.escape(reason) + "<br>"
+                "요청을 완료하지 못했습니다. 입력값을 확인하고 다시 시도하세요."
+            ),
+        )
+        try:
+            self._respond_html(500, page)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def _handle_generate(self) -> None:
         srv = self.server.template_form_state  # type: ignore[attr-defined]

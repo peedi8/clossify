@@ -1290,3 +1290,147 @@ def _wait_for_port(port: int, timeout: float = 3.0) -> bool:
         except OSError:
             time.sleep(0.05)
     return False
+
+
+# --------------------------------------------------------------------------- #
+# 예외 방벽 — 슬라이스 1 폼 핸들러의 예외 방벽 검증 (티켓 f).
+#
+# 슬라이스 1 폼 서버의 ``_TemplateFormHandler.do_POST`` 가 예외를 일으키면
+# ``http.server`` 가 응답 없이 연결을 끊는 결함(N28 계열)을 방벽이 막는지
+# 검증한다. 슬라이스 1 폼은 설정 파일(config.json) 에 직접 의존하지 않으므로
+# config-missing 경로는 없다 — (a) 는 강제 예외로 대신한다.
+#
+# 본 테스트가 검증하는 계약:
+#   (a) 핸들러 강제 예외 → 5xx + 사람이 읽을 HTML (연결 끊김 아님).
+#   (b) 오류 화면에 절대경로·토큰이 없다 (sanitize_error 정화).
+# --------------------------------------------------------------------------- #
+def _start_template_server(
+    mini_a1: Path, tmp_path: Path, ttl_seconds: int = 60
+) -> tuple[template_migration_form.TemplateFormServer, int, str]:
+    """슬라이스 1 폼 서버를 시작하고 (server, port, token) 을 반환한다."""
+    token = approval_server.new_token()
+    srv = template_migration_form.TemplateFormServer(
+        src_xlsx_path=str(mini_a1),
+        output_dir=str(tmp_path),
+        token=token,
+        ttl_seconds=ttl_seconds,
+    )
+    port = srv.start()
+    assert _wait_for_port(port), f"포트 {port} 가 열리지 않음"
+    return srv, port, token
+
+
+class TestTemplateFormExceptionBarrier:
+    """(f) 슬라이스 1 폼 핸들러의 예외 방벽.
+
+    ``generate_dummy_excel`` 이 예외를 일으키면(예: zipfile 깨짐이 아닌
+    예상치 못한 런타임 오류), 핸들러 바깥으로 번져 ``http.server`` 가 응답
+    없이 연결을 끊는 결함을 방벽이 막는지 검증한다.
+    """
+
+    def test_forced_exception_returns_500_html(self, mini_a1: Path, tmp_path: Path, monkeypatch):
+        """강제 예외 → 500 + 사람이 읽을 HTML (연결 끊김 아님)."""
+
+        def _boom(*_a, **_kw):
+            raise RuntimeError("의도된 폭발 — 슬라이스 1 방벽 테스트")
+
+        monkeypatch.setattr(template_migration_form, "generate_dummy_excel", _boom)
+
+        srv, port, token = _start_template_server(mini_a1, tmp_path)
+        try:
+            status, body, _headers = _send_form(
+                port,
+                fields={
+                    "token": token,
+                    "notice_codes": "111",
+                    "origin_code": "0001",
+                    "src_xlsx": str(mini_a1),
+                },
+            )
+            # 5xx + HTML 이어야 한다 (RemoteDisconnected 가 아님).
+            assert 500 <= status < 600
+            assert "500" in body
+            # 예외 사유가 (정화되어) 표시된다.
+            assert "오류" in body or "예외" in body
+            # 연결이 끊기지 않았다 — body 가 온전히 왔다.
+            assert "</html>" in body.lower()
+        finally:
+            srv.close()
+
+    def test_barrier_catches_unexpected_error(self, mini_a1: Path, tmp_path: Path, monkeypatch):
+        """TypeError 같은 예상치 못한 예외도 방벽이 잡는다."""
+
+        def _type_err(*_a, **_kw):
+            raise TypeError("NoneType has no attribute 'write'")
+
+        monkeypatch.setattr(template_migration_form, "generate_dummy_excel", _type_err)
+
+        srv, port, token = _start_template_server(mini_a1, tmp_path)
+        try:
+            status, body, _headers = _send_form(
+                port,
+                fields={
+                    "token": token,
+                    "notice_codes": "111",
+                    "origin_code": "0001",
+                    "src_xlsx": str(mini_a1),
+                },
+            )
+            assert 500 <= status < 600
+            assert "</html>" in body.lower()
+        finally:
+            srv.close()
+
+
+class TestTemplateFormErrorSanitization:
+    """(f) 슬라이스 1 폼 오류 화면에 절대경로·토큰이 없다."""
+
+    def test_no_absolute_path_in_error_page(self, mini_a1: Path, tmp_path: Path, monkeypatch):
+        """오류 화면에 Windows 절대경로가 없다."""
+        _SECRET_PATH = "C:\\\\Users\\\\leaked_user\\\\projects\\\\.local\\\\config.json"
+
+        def _raise_with_path(*_a, **_kw):
+            raise FileNotFoundError(f"[Errno 2] No such file: '{_SECRET_PATH}'")
+
+        monkeypatch.setattr(template_migration_form, "generate_dummy_excel", _raise_with_path)
+
+        srv, port, token = _start_template_server(mini_a1, tmp_path)
+        try:
+            _status, body, _headers = _send_form(
+                port,
+                fields={
+                    "token": token,
+                    "notice_codes": "111",
+                    "origin_code": "0001",
+                    "src_xlsx": str(mini_a1),
+                },
+            )
+            # 절대경로 카나리가 정화되어 있다.
+            assert "C:\\\\Users" not in body
+            assert "leaked_user" not in body
+        finally:
+            srv.close()
+
+    def test_no_token_in_error_page(self, mini_a1: Path, tmp_path: Path, monkeypatch):
+        """오류 화면에 폼 토큰이 누출되지 않는다."""
+
+        def _raise_generic(*_a, **_kw):
+            raise RuntimeError("generic slice1 barrier test")
+
+        monkeypatch.setattr(template_migration_form, "generate_dummy_excel", _raise_generic)
+
+        srv, port, token = _start_template_server(mini_a1, tmp_path)
+        try:
+            _status, body, _headers = _send_form(
+                port,
+                fields={
+                    "token": token,
+                    "notice_codes": "111",
+                    "origin_code": "0001",
+                    "src_xlsx": str(mini_a1),
+                },
+            )
+            # 토큰이 오류 화면 본문에 없다.
+            assert token not in body
+        finally:
+            srv.close()

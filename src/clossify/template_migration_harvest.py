@@ -743,8 +743,40 @@ def harvest_run_from_ledger(
 #
 # 사용자는 슬라이스 1 결과 페이지에서 run_id 를 받아 이 폼에 입력한다.
 # 처리 순서·안전 불변식은 ``harvest_run`` 이 담보한다. 본 서버는 HTTP 래퍼다.
+#
+# **예외 방벽 (이 모듈의 핵심 계약)**:
+# 핸들러 바깥으로 예외가 번지면 ``http.server`` 는 응답을 쓰지 않고 연결을
+# 끊는다 → 사용자는 브라우저에 "연결이 재설정되었습니다" 만 보고 무슨 일이
+# 일어났는지 알 수 없다. 이것은 **거짓 성공(N28)** · **죽은 UI(D39)** 와 같은
+# 계열의 결함이다. 본 서버는:
+#   (1) ``do_POST``/``do_GET``/``do_OPTIONS`` 전체를 try/except 로 감싸,
+#       어떤 예외라도 5xx + 사람이 읽을 HTML 을 응답한다.
+#   (2) 설정 파일이 없는 경우(첫 사용자가 정확히 여기서 막힌다)는 예외가
+#       아니라 정상 안내 화면으로 처리한다.
+#   (3) 오류 화면의 사유에는 ``common.sanitize_error`` 로 경로·비밀값을 정화한다.
 # ---------------------------------------------------------------------------
 _MAX_BODY_BYTES = 16 * 1024
+
+
+def _config_present() -> bool:
+    """설정 파일이 존재하고 읽을 수 있는지 (예외 없이).
+
+    설정이 없는 환경은 예외가 아니라 **정상 안내 경로**로 처리한다 —
+    ``harvest_run_from_ledger`` 가 ``naver_client.search_products`` 를 부를 때
+    ``FileNotFoundError`` 로 번지는 것을 미리 막는다. ``check_config`` 가 하는
+    안내("config.example.json 을 .local/config.json 으로 복사하라")를
+    결과 화면에 재사용한다.
+    """
+    try:
+        cfg_path = naver_client.resolve_config_path()
+    except Exception:
+        return False
+    try:
+        import os
+
+        return bool(cfg_path) and os.path.isfile(cfg_path)
+    except Exception:
+        return False
 
 
 class HarvestFormServer:
@@ -860,23 +892,70 @@ class _ThreadingHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 
 class _HarvestFormHandler(http.server.BaseHTTPRequestHandler):
-    """수확 폼 1건의 처리를 받는 HTTP 핸들러 (슬라이스 1 폼과 동일 구조)."""
+    """수확 폼 1건의 처리를 받는 HTTP 핸들러 (슬라이스 1 폼과 동일 구조).
+
+    **예외 방벽**: 각 ``do_*`` 메서드 전체를 try/except 이 감싼다. 예외가
+    핸들러 바깥으로 번지면 ``http.server`` 는 응답을 쓰지 않고 연결을 끊는다.
+    이것은 "거짓 성공" 결함(N28)의 한 계열이다. 모든 예외는
+    ``_respond_barrier_error`` 로 5xx + 사람이 읽을 HTML 로 바뀐다.
+    """
 
     server_version = "clossify-harvest-form"
     sys_version = ""
 
     def do_POST(self) -> None:
-        path = self.path.split("?", 1)[0]
-        if path not in ("/", "/harvest"):
-            self._reject_html(404, "not_found", "알 수 없는 경로입니다.")
-            return
-        self._handle_harvest()
+        try:
+            path = self.path.split("?", 1)[0]
+            if path not in ("/", "/harvest"):
+                self._reject_html(404, "not_found", "알 수 없는 경로입니다.")
+                return
+            self._handle_harvest()
+        except Exception as exc:
+            self._respond_barrier_error(exc)
 
     def do_GET(self) -> None:
-        self._reject_html(405, "method_not_allowed", "GET 은 지원하지 않습니다.")
+        try:
+            self._reject_html(405, "method_not_allowed", "GET 은 지원하지 않습니다.")
+        except Exception as exc:
+            self._respond_barrier_error(exc)
 
     def do_OPTIONS(self) -> None:
-        self._reject_html(405, "method_not_allowed", "CORS preflight 는 지원하지 않습니다.")
+        try:
+            self._reject_html(405, "method_not_allowed", "CORS preflight 는 지원하지 않습니다.")
+        except Exception as exc:
+            self._respond_barrier_error(exc)
+
+    def _respond_barrier_error(self, exc: BaseException) -> None:
+        """방벽이 잡은 예외를 5xx + 정화된 HTML 로 응답.
+
+        ``http.server`` 핸들러에서 예외가 번지면 응답 없이 연결이 끊긴다.
+        본 메서드는:
+          - 이미 응답을 보낸 뒤의 예외(BrokenPipe 등) 면 더 보내지 않는다.
+          - 그 외에는 500 + ``common.sanitize_error`` 로 정화한 사유를 HTML 로.
+        """
+        # 이미 응답을 보냈는지 확인 — send_response 가 headers 를 시작했으면
+        # 더 이상 쓸 수 없다.
+        try:
+            already_sent = bool(getattr(self, "_headers_buffer", None))
+        except Exception:
+            already_sent = False
+        if already_sent:
+            # 이미 응답을 보내는 중이었다 — 더 보낼 수 없다.
+            return
+        reason = common.sanitize_error(exc)
+        page = _harvest_result_page(
+            ok=False,
+            status_text="처리 중 오류가 발생했습니다 (HTTP 500)",
+            detail=(
+                "<strong>예외:</strong> " + html.escape(reason) + "<br>"
+                "요청을 완료하지 못했습니다. 설정 파일(.local/config.json)이 있는지,"
+                " 그리고 run_id 가 올바른지 확인하세요."
+            ),
+        )
+        try:
+            self._respond_html(500, page)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def _handle_harvest(self) -> None:
         import urllib.parse
@@ -960,6 +1039,28 @@ class _HarvestFormHandler(http.server.BaseHTTPRequestHandler):
         confirm_raw = form.get("confirm", "").strip().lower()
         # confirm 게이트 — "true"/"yes" 만 승인. 기본은 dry-run.
         confirm = confirm_raw in ("true", "yes", "1")
+
+        # 6a. 설정 파일 사전 검사 — 예외가 아닌 정상 안내 화면.
+        # ``harvest_run_from_ledger`` → ``naver_client.search_products`` →
+        # ``load_config`` 경로에서 ``FileNotFoundError`` 가 번지는 것을 막는다.
+        # 첫 사용자가 정확히 여기서 "연결이 재설정되었습니다" 를 본다.
+        if run_id and not _config_present():
+            srv.consume(HarvestReport(error="config 없음"))
+            self._respond_html(
+                200,
+                _harvest_result_page(
+                    ok=False,
+                    status_text="설정 파일이 없습니다",
+                    detail=(
+                        "<strong>네이버 커머스 API 설정(config.json)이 필요합니다.</strong><br>"
+                        "프로젝트 루트의 <code>config.example.json</code> 을 "
+                        "<code>.local/config.json</code> 으로 복사한 뒤, 실제 값으로 채우세요.<br>"
+                        "설정이 준비되면 다시 수확 폼을 실행하세요."
+                    ),
+                ),
+            )
+            srv.shutdown_from_request()
+            return
 
         if not run_id:
             report = HarvestReport(error="run_id 가 필요합니다.")
