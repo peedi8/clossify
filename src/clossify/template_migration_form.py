@@ -95,6 +95,7 @@ _XMLSPACE = "{http://www.w3.org/XML/1998/namespace}space"
 #   AY 상품정보제공고시 템플릿코드 비필수
 #   BD A/S 템플릿코드             비필수
 # ---------------------------------------------------------------------------
+_COL_SELLER_PRODUCT_CODE = "A"  # 판매자 상품코드 (A2 헤더 실측) — 표식 심기 자리.
 _COL_CATEGORY = "B"
 _COL_PRODUCT_NAME = "C"
 _COL_PRODUCT_STATE = "D"
@@ -106,6 +107,50 @@ _COL_ORIGIN_CODE = "AD"
 _COL_SHIPPING_TEMPLATE = "AI"
 _COL_NOTICE_TEMPLATE = "AY"
 _COL_AS_TEMPLATE = "BD"
+
+# ---------------------------------------------------------------------------
+# 표식(Marker) — 더미 수확을 위한 식별자.
+#
+# **설계 구멍 해법 (슬라이스 2)**: 엑셀 업로드는 사용자가 판매자센터에서
+# 한다 → 우리는 더미의 상품번호를 모른다. 그래서 **등록 전에 우리 표식을
+# 판매자 상품코드(A열)에 미리 심는다**. 수확 단계는 그 표식을 가진 상품만
+# 대상으로 한다 (추측 삭제 금지).
+#
+# 형식: ``CLSTMIG-<runid>-<rowseq>``
+#   - ``CLSTMIG``: 고정 접두사. 충돌 가능성이 낮고 사람이 봐도 임시임을 안다.
+#   - ``runid``: UTC 타임스탬프 ``YYYYMMDDTHHMMZ``. 한 번의 엑셀 생성 런을 식별.
+#   - ``rowseq``: 행 번호(1-base). 같은 런 안에서 행을 구분.
+#
+# 로컬 기록: 각 런의 마커 목록을 STATE_DIR 에 기록한다 (run ledger).
+# 끊겨도 다음 실행이 이어서 정리할 수 있어야 한다.
+# ---------------------------------------------------------------------------
+_MARKER_PREFIX = "CLSTMIG"
+
+
+def _new_run_id() -> str:
+    """런 식별자를 만든다 (UTC 타임스탬프)."""
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def make_marker(run_id: str, row_seq: int) -> str:
+    """표식 문자열을 만든다.
+
+    Args:
+        run_id: 런 식별자 (``_new_run_id`` 결과).
+        row_seq: 행 번호 (1-base).
+
+    Returns:
+        ``CLSTMIG-<runid>-<rowseq:03d>`` 형태 문자열.
+    """
+    return f"{_MARKER_PREFIX}-{run_id}-{int(row_seq):03d}"
+
+
+def is_our_marker(value: Any) -> bool:
+    """값이 우리 표식인지 판정. 접두사 + 형식 일치로 본다 (추측 금지)."""
+    if not isinstance(value, str):
+        return False
+    return value.startswith(_MARKER_PREFIX + "-")
+
 
 # 행 4(예시 행)의 셀 스타일 참조(s 속성). 더미 행에 같은 스타일을 적용해
 # 네이버 업로드 파서가 형식을 오인하지 않게 한다.
@@ -150,6 +195,10 @@ class Outcome:
 
     **비밀값 비노출 계약**: 본 결과에는 사용자가 입력한 코드 값이나 원산지코드
     값 자체를 담지 않는다. 생성된 파일 경로·통계(코드 수 등)만 담는다.
+
+    **표식(슬라이스 2)**: 성공 시 ``run_id`` 와 ``markers`` 를 함께 돌려준다.
+    ``markers`` 는 행별 표식 문자열 리스트로, 수확 단계에서 더미를 식별하는 데
+    쓰인다. 로컬 run ledger 에도 같은 내용이 기록된다 (끊김 복구).
     """
 
     def __init__(
@@ -161,6 +210,8 @@ class Outcome:
         row_count: int = 0,
         rejected_lines: list[str] | None = None,
         origin_missing: bool = False,
+        run_id: str = "",
+        markers: list[str] | None = None,
     ) -> None:
         self.generated = bool(generated)
         self.reason = str(reason)
@@ -168,6 +219,8 @@ class Outcome:
         self.row_count = int(row_count)
         self.rejected_lines = list(rejected_lines) if isinstance(rejected_lines, list) else []
         self.origin_missing = bool(origin_missing)
+        self.run_id = str(run_id)
+        self.markers = list(markers) if isinstance(markers, list) else []
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +322,118 @@ def _build_row_xml(
     return f'<row r="{row_num}" spans="1:93">' + "".join(cell_parts) + "</row>"
 
 
+# ---------------------------------------------------------------------------
+# Run ledger — 한 번의 엑셀 생성 런을 로컬에 기록한다.
+#
+# **끊김 복구**: 수확 파이프라인이 중간에 끊겨도 다음 실행이 이 기록으로
+# 남은 것만 이어서 처리할 수 있어야 한다. 그래서 "행동 전에 기록" 이 성립한다.
+#
+# 경로: ``STATE_DIR / "template_migration_runs" / "<run_id>.json"``
+# 스키마:
+#   {
+#     "run_id": str,
+#     "created_at": str (ISO8601 UTC),
+#     "markers": [str, ...],            # 심은 표식 목록.
+#     "expected_row_count": int,
+#     "output_path": str,                # 생성된 엑셀 경로.
+#     "items": [                          # 행별 수확 상태.
+#       {"marker": str, "origin_product_no": "", "channel_product_no": "",
+#        "stopped": false, "extracted": false, "deleted": false,
+#        "error": ""},
+#       ...
+#     ],
+#     "status": "pending"  # pending | in_progress | done | partial
+#   }
+#
+# 본 모듈은 런을 **생성** 만 한다. 수확 단계(``template_migration_harvest``)가
+# items 를 갱신한다.
+# ---------------------------------------------------------------------------
+_RUN_LEDGER_DIRNAME = "template_migration_runs"
+
+
+def run_ledger_dir() -> Path:
+    """run ledger 디렉토리 경로 (STATE_DIR 아래)."""
+    return Path(common.STATE_DIR) / _RUN_LEDGER_DIRNAME
+
+
+def run_ledger_path(run_id: str) -> Path:
+    """특정 런의 기록 파일 경로."""
+    return run_ledger_dir() / f"{run_id}.json"
+
+
+def write_run_ledger(
+    *,
+    run_id: str,
+    markers: list[str],
+    expected_row_count: int,
+    output_path: str,
+) -> Path:
+    """런 기록을 디스크에 쓴다 (생성 시점 — items 는 빈 상태).
+
+    생성 직후에는 모든 item 이 미처리 상태다. 수확 단계가 이 파일을 읽어
+    처리 대상을 식별하고, 처리 결과를 갱신한다.
+
+    Returns:
+        기록 파일 경로.
+
+    Raises:
+        OSError: 디스크 쓰기 실패.
+    """
+    import json
+
+    path = run_ledger_path(run_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    items = [
+        {
+            "marker": m,
+            "origin_product_no": "",
+            "channel_product_no": "",
+            "stopped": False,
+            "extracted": False,
+            "deleted": False,
+            "error": "",
+        }
+        for m in markers
+        if m  # 빈 표식(호환 경로)은 기록하지 않는다.
+    ]
+    doc = {
+        "run_id": str(run_id),
+        "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "markers": list(markers),
+        "expected_row_count": int(expected_row_count),
+        "output_path": str(output_path),
+        "items": items,
+        "status": "pending",
+    }
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(
+        json.dumps(doc, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    os.replace(tmp, path)
+    return path
+
+
+def read_run_ledger(run_id: str) -> dict[str, Any] | None:
+    """런 기록을 읽는다. 없으면 None."""
+    import json
+
+    path = run_ledger_path(run_id)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def list_run_ledgers() -> list[Path]:
+    """모든 런 기록 파일 경로를 반환한다 (이름순). 끊김 복구 탐색용."""
+    d = run_ledger_dir()
+    if not d.exists():
+        return []
+    return sorted(d.glob("*.json"))
+
+
 def _inject_dummy_rows(
     src_xlsx: str | Path,
     dst_xlsx: str | Path,
@@ -279,7 +444,8 @@ def _inject_dummy_rows(
     origin_code: str,
     image_url: str,
     category_code: str = "",
-) -> str:
+    run_id: str = "",
+) -> tuple[str, list[str]]:
     """원본 A1 사본에 더미 행들을 주입해 새 xlsx 를 만든다.
 
     **원본 무변경**: src_xlsx 는 읽기만 한다.
@@ -287,6 +453,11 @@ def _inject_dummy_rows(
     행 배분: 행 수 = max(고시, 배송, AS 코드 수). 각 코드가 최소 1회 등장.
     조합 전개는 하지 않는다 — 행 N 은 고시[N] / 배송[N] / AS[N] 을 같이 싣고,
     한쪽이 짧으면 해당 열은 비운다.
+
+    **표식 심기 (슬라이스 2)**: ``run_id`` 가 비어있지 않으면 행별 표식
+    문자열을 A열(판매자 상품코드)에 심는다. ``run_id`` 가 비어있으면 표식을
+    심지 않는다(과거 호출자 호환). 표식 목록을 반환값으로 돌려주어 호출자가
+    run ledger 에 기록할 수 있게 한다.
 
     Args:
         src_xlsx: 원본 A1 엑셀 경로.
@@ -297,9 +468,11 @@ def _inject_dummy_rows(
         origin_code: 원산지코드 (사용자 입력값).
         image_url: 대표이미지 URL (조달된 값 — 사용자 지정 또는 업로드된 CDN).
         category_code: 카테고리코드 (선택).
+        run_id: 런 식별자 (``_new_run_id`` 결과). 비어있으면 표식을 심지 않는다.
 
     Returns:
-        생성된 파일 경로 (dst_xlsx).
+        ``(생성 파일 경로, 표식 리스트)``. ``run_id`` 가 비어있으면 표식 리스트도
+        빈 리스트다.
 
     Raises:
         ValueError: 주입 실패 (깨짐 검증 탈락 등).
@@ -325,6 +498,21 @@ def _inject_dummy_rows(
     # 더미 행에 들어갈 문자열들을 sharedStrings 에 추가.
     # 행 수 계산.
     row_count = max(len(notice_codes), len(shipping_codes), len(as_codes), 1)
+
+    # 표식 문자열 행별 생성 + sharedStrings 등록.
+    # run_id 가 비어있으면 표식을 심지 않는다(호환 경로).
+    use_markers = bool(run_id)
+    markers: list[str] = []
+    marker_indices: list[int] = []
+    for i in range(row_count):
+        if use_markers:
+            marker = make_marker(run_id, i + 1)
+            markers.append(marker)
+            strings.append(marker)
+            marker_indices.append(len(strings) - 1)
+        else:
+            markers.append("")
+            marker_indices.append(-1)
 
     # 각 행별 더미 문자열을 sharedStrings 에 추가하고 인덱스 매핑.
     # 행별로: 상품명(고유), 원산지코드(공통), 대표이미지(공통), 상세설명(공통),
@@ -356,9 +544,11 @@ def _inject_dummy_rows(
 
     # 새 참조 수: 행별 문자열 참조.
     # 상품명: row_count 회, 원산지: row_count, 이미지: row_count, 상세: row_count,
-    # 카테고리: row_count (있을 때).
+    # 카테고리: row_count (있을 때), 표식: row_count (있을 때).
     new_refs = row_count * 4  # name + origin + image + detail.
     if category_code:
+        new_refs += row_count
+    if use_markers:
         new_refs += row_count
     new_count = orig_count + new_refs
 
@@ -372,6 +562,10 @@ def _inject_dummy_rows(
     for i in range(row_count):
         row_num = 7 + i  # 행 7부터 시작.
         cells: list[tuple[str, str | None, str | None, str]] = []
+
+        # 판매자 상품코드 (A열) — 표식 심기. 있을 때만.
+        if use_markers and marker_indices[i] >= 0:
+            cells.append((_COL_SELLER_PRODUCT_CODE, "s", _STYLE_GENERAL, str(marker_indices[i])))
 
         # 카테고리코드 (선택).
         if category_code:
@@ -423,7 +617,7 @@ def _inject_dummy_rows(
     # 5. 깨짐 검증 — 생성 파일을 다시 파싱해 주입 행이 읽히는지.
     _verify_injection(dst_path, expected_rows=row_count)
 
-    return str(dst_path)
+    return str(dst_path), markers
 
 
 def _serialize_shared_strings_full(strings: list[str], count: int) -> bytes:
@@ -708,8 +902,9 @@ def generate_dummy_excel(
         )
 
     # 엑셀 생성.
+    run_id = _new_run_id()
     try:
-        output = _inject_dummy_rows(
+        output, markers = _inject_dummy_rows(
             src_xlsx,
             dst_xlsx,
             notice_codes=notice_codes,
@@ -718,6 +913,7 @@ def generate_dummy_excel(
             origin_code=origin,
             image_url=image_url,
             category_code=cat,
+            run_id=run_id,
         )
     except (ValueError, OSError, zipfile.BadZipFile) as exc:
         type_name = type(exc).__name__
@@ -728,11 +924,30 @@ def generate_dummy_excel(
         )
 
     row_count = max(len(notice_codes), len(shipping_codes), len(as_codes), 1)
+
+    # run ledger 에 이 런을 기록한다 (행동 전에 기록 — 끊김 복구).
+    # 기록 실패가 생성 성공을 뒤집지는 않지만, 수확 단계가 이 런을 못 찾으면
+    # 사용자가 수동으로 표식을 입력해야 한다. 실패 시 결과에 경고를 싣는다.
+    ledger_warning = ""
+    try:
+        write_run_ledger(
+            run_id=run_id,
+            markers=markers,
+            expected_row_count=row_count,
+            output_path=output,
+        )
+    except OSError as exc:
+        # 기록 실패 — 표식은 엑셀 안에는 있다. 사용자가 run_id 로 수확할 수 있다.
+        ledger_warning = f" (run ledger 기록 실패: {exc} — run_id={run_id} 로 수확 가능)"
+
     return Outcome(
         generated=True,
         output_path=output,
         row_count=row_count,
         rejected_lines=all_rejected,
+        run_id=run_id,
+        markers=markers,
+        reason=ledger_warning,
     )
 
 
@@ -1236,6 +1451,14 @@ class _TemplateFormHandler(http.server.BaseHTTPRequestHandler):
                 f"생성 파일: {html.escape(outcome.output_path)}",
                 f"더미 행 수: {outcome.row_count}개",
             ]
+            # run_id 와 표식 수 — 수확 단계가 이 run_id 로 더미를 찾는다.
+            if outcome.run_id:
+                detail_parts.append(
+                    f"런 ID: <code>{html.escape(outcome.run_id)}</code> "
+                    f"(표식 {len(outcome.markers)}개 심음 — 업로드 후 수확 단계에서 이 ID 로 찾는다)"
+                )
+            if outcome.reason:
+                detail_parts.append(html.escape(outcome.reason))
             if outcome.rejected_lines:
                 detail_parts.append(f"탈락한 코드 {len(outcome.rejected_lines)}개 (위 목록 참조).")
             detail_parts.append(
@@ -1448,11 +1671,20 @@ __all__ = [
     "ImageResolveError",
     "Outcome",
     "TemplateFormServer",
+    "_inject_dummy_rows",
     "_load_shared_strings",
+    "_new_run_id",
     "actual_bound_host",
     "generate_dummy_excel",
+    "is_our_marker",
+    "list_run_ledgers",
+    "make_marker",
     "parse_codes",
+    "read_run_ledger",
     "render_template_migration_form_html",
+    "run_ledger_dir",
+    "run_ledger_path",
+    "write_run_ledger",
     "write_template_migration_form_html",
     "TTL_SECONDS",
 ]
