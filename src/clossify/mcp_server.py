@@ -1250,11 +1250,130 @@ def _attach_template_migration_form(result: dict[str, Any]) -> None:
         pass
 
 
+# --------------------------------------------------------------------------- #
+# 연결 진단 (connection probe) — check_config 의 probe 인자로만 동작.
+#
+# check_config 는 기본적으로 "설정이 존재하는가?" 만 확인한다(파일/키 존재).
+# 하지만 키가 있어도 **실제로 토큰이 발급되는지** 는 확인하지 않는다 —
+# 공유기/회선 재연결로 공인 IP 가 바뀌어 네이버 커머스 API 앱의 "호출 IP
+# 허용목록" 과 불일치하게 되면, 설정은 모두 있어도 실제 API 호출이 403 으로
+# 막히는 사례가 발생한다. 사용자는 "설정이 다 됐다" 고 믿고 API 호출 시에만
+# 403 을 마주치게 되므로 원인이 화면에 명확히 드러나지 않는다.
+#
+# probe=True 는 이 구멍을 메운다 — 토큰 엔드포인트에 실제로 한 번 호출해
+# 본다. 결과를 사람 말로 해석해 반환한다(403 → IP 허용목록 불일치 최우선,
+# 401 → 자격증명 문제, 네트워크 예외 → 사유 있는 그대로).
+#
+# 기본값 False — 기본 동작은 외부 API 호출 0회(속도 저하 없음).
+# --------------------------------------------------------------------------- #
+def _interpret_probe_result(probe: dict[str, Any]) -> str:
+    """``_probe_token_endpoint`` 결과를 사람이 읽을 수 있는 안내로 번역한다.
+
+    본 함수는 진단 결과를 **해석** 할 뿐, 외부 호출을 하지 않는다. 외부 호출은
+    ``naver_client._probe_token_endpoint`` 가 이미 끝낸 상태다.
+
+    해석 규칙(불변):
+      - HTTP 2xx → "정상".
+      - HTTP 403 → **호출 IP 허용목록 불일치 가능성을 최우선으로** 제시한다.
+        공유기/회선 재연결로 공인 IP 가 바뀌면 허용목록에 있는 예전 IP 와
+        불일치하게 되어 403 이 돌아온다. 확인 위치(커머스API 센터,
+        애플리케이션 > 내스토어 애플리케이션)를 안내에 포함한다.
+      - HTTP 401 → 자격증명(client_id/client_secret) 문제. IP 허용목록이 아님을
+        명시해 403 과 구분한다.
+      - HTTP 4xx(그 외) / 5xx → 사유를 있는 그대로. 403/401 단정을 피한다.
+      - 네트워크 예외(status_code None) → 정화된 사유를 있는 그대로.
+        조용한 성공으로 바꾸지 않는다.
+
+    Args:
+        probe: ``{"ok": bool, "status_code": int | None, "detail": str}``.
+
+    Returns:
+        사람이 읽을 수 있는 안내 문자열. 정화는 이미 ``_probe_token_endpoint``
+        단계에서 끝났으므로 본 함수는 추가 정화를 하지 않는다.
+    """
+    if probe.get("ok"):
+        return "정상: 토큰 엔드포인트 호출에 성공했습니다."
+    sc = probe.get("status_code")
+    detail = str(probe.get("detail") or "").strip()
+    if sc == 403:
+        return (
+            "HTTP 403 — 호출 IP 허용목록 불일치 가능성이 최우선입니다. "
+            "공유기 교체·회선 재연결 등으로 공인 IP 가 바뀌면, 네이버 커머스 API "
+            "앱의 '호출 IP' 허용목록에 있는 예전 IP 와 불일치하여 키가 있어도 "
+            "403 이 돌아옵니다. 커머스API 센터(apicenter.commerce.naver.com)에서 "
+            "[애플리케이션] > [내스토어 애플리케이션] 의 'API 호출 IP' 항목을 "
+            f"현재 공인 IP 로 맞추세요. 사유 본문: {detail}"
+        )
+    if sc == 401:
+        return (
+            "HTTP 401 — 자격증명(client_id / client_secret) 문제입니다. "
+            "IP 허용목록(403) 과 구분하세요: 401 은 키 자체가 틀리거나 폐기됐을 "
+            f"때 발생합니다. 사유 본문: {detail}"
+        )
+    if sc is None:
+        return (
+            "네트워크/연결 실패 — 토큰 엔드포인트에 도달하지 못했습니다. "
+            "조용한 성공으로 바꾸지 않습니다. 사유: " + detail
+        )
+    return f"HTTP {sc} — 토큰 엔드포인트가 거절했습니다. 사유 본문: {detail}"
+
+
+def _lookup_public_ip() -> dict[str, Any]:
+    """공인 IP 조회(opt-in). 외부 IP echo 서비스에 1회 GET 한다.
+
+    본 함수는 ``check_config`` 의 ``include_public_ip=True`` 일 때만 호출된다.
+    기본 동작(``include_public_ip=False``) 은 외부 호출 0회. IP 조회가 실패해도
+    연결 진단(probe) 결과는 그대로 살아 있다(부분 실패 허용).
+
+    **어디로 요청이 가는지 명시**: 공인 IP 만을 돌려주는 공개 echo 서비스
+    (``https://api.ipify.org?format=json``)에 1회 GET 한다. IP 값 자체는
+    사설망이 아닌 공인 주소이며, config.json 이나 자격증명과는 무관하다.
+
+    Returns:
+        ``{"ok": bool, "ip": str | None, "source": str, "detail": str}`` —
+        - ``ok``: 조회 성공 여부.
+        - ``ip``: 공인 IP 문자열(실패 시 None).
+        - ``source``: 조회한 서비스 URL(투명성).
+        - ``detail``: 실패 시 정화된 사유.
+    """
+    import requests as _requests
+
+    source = "https://api.ipify.org?format=json"
+    try:
+        r = _requests.get(source, timeout=10)
+    except _requests.RequestException as exc:
+        return {"ok": False, "ip": None, "source": source, "detail": _sanitize_error(exc)}
+    if r.status_code != 200:
+        return {
+            "ok": False,
+            "ip": None,
+            "source": source,
+            "detail": f"HTTP {r.status_code}",
+        }
+    try:
+        ip = str(r.json().get("ip") or "").strip()
+    except ValueError:
+        return {
+            "ok": False,
+            "ip": None,
+            "source": source,
+            "detail": "응답 본문이 JSON 이 아닙니다.",
+        }
+    if not ip:
+        return {"ok": False, "ip": None, "source": source, "detail": "ip 필드가 비어 있습니다."}
+    return {"ok": True, "ip": ip, "source": source, "detail": ""}
+
+
 @mcp.tool()
-def check_config(read_existing: bool = False) -> dict[str, Any]:
+def check_config(
+    read_existing: bool = False,
+    probe: bool = False,
+    include_public_ip: bool = False,
+) -> dict[str, Any]:
     """네이버 커머스 API 자격증명/설정 상태를 검사한다.
 
-    기본 동작(``read_existing=False``)은 외부 API 호출을 일절 하지 않는다.
+    기본 동작(``read_existing=False``, ``probe=False``,
+    ``include_public_ip=False``)은 외부 API 호출을 일절 하지 않는다.
     ``.local/config.json`` 파일의 존재, JSON 파싱 가능 여부, 그리고
     ``naver.client_id`` / ``naver.client_secret`` / ``naver.store_url_slug``
     세 키의 존재 및 플레이스홀더 미사용 여부를 확인한다.
@@ -1264,6 +1383,14 @@ def check_config(read_existing: bool = False) -> dict[str, Any]:
     읽어 제안** 한다 (온보딩). 기존 상품이 0개인 신규 셀러는 제안이 빈 채로
     돌아오며 그 사실이 반환에 드러난다. 지어내지 않고, 조용히 저장하지 않는다.
 
+    ``probe=True`` 일 때만, 토큰 엔드포인트에 **실제로 한 번 호출** 해 본다.
+    설정이 모두 있어도 공유기/회선 재연결로 공인 IP 가 바뀌어 "호출 IP 허용목록"
+    과 불일치하면 403 이 돌아온다. ``probe=True`` 는 이 사실을 진단에 드러낸다 —
+    결과가 ``connection_probe`` / ``connection_hint`` 키에 실린다. 403 은 IP
+    허용목록 불일치를 최우선 원인으로 제시하고, 401 은 자격증명 문제로, 네트워크
+    예외는 사유 있는 그대로를 알려준다. ``probe=False`` (기본값) 면 이 키들이
+    반환에 없다 — 진단을 요청하지 않았으므로.
+
     본 도구는 설정 파일을 **절대 쓰지 않는다**. 읽기만 한다. 제안값을 저장하려면
     클라이언트가 사용자 승인을 받은 뒤 파일을 직접 써야 한다 — 그냥 쓰면 안 된다.
     반환의 ``suggested_from_existing`` 항목은 "어느 키에 무엇을 넣으면 되는지" 를
@@ -1272,6 +1399,14 @@ def check_config(read_existing: bool = False) -> dict[str, Any]:
     Args:
         read_existing: ``True`` 면 기존 상품에서 정책값을 읽어 제안한다 (외부 API
             호출 1~회 발생). 기본값 ``False`` — 외부 API 호출 0회.
+        probe: ``True`` 면 토큰 엔드포인트에 실제 호출해 **연결 가능성** 을
+            진단한다 (외부 호출 1회). 기본값 ``False`` — 기본 동작은 외부 호출 0회.
+            ``probe=True`` 는 기본 동작을 느리게 만들지 않는다(opt-in).
+        include_public_ip: ``True`` 면 현재 공인 IP 를 외부 echo 서비스
+            (``https://api.ipify.org``) 에서 1회 조회한다. IP 허용목록 403 진단에
+            도움을 주지만, 어디로 요청이 가는지 투명하게 밝히기 위해 별도 인자로
+            둔다. 기본값 ``False`` — 기본 동작은 외부 호출 0회. ``probe=False``
+            여도 이 인자가 ``True`` 면 IP 조회만 수행한다.
 
     Returns:
         ``{"ok": bool, "config_path": str, "present": {...}, "missing": [...],
@@ -1279,7 +1414,10 @@ def check_config(read_existing: bool = False) -> dict[str, Any]:
         "as_tel_configured": bool, "as_tel_hint": str, "error": str | None,
         "policy_gaps": [...], "suggested_from_existing": {...},
         "drift_from_existing": [...], "existing_read_error": str | None,
-        "templates": [...], "templates_read_error": str | None}``
+        "templates": [...], "templates_read_error": str | None,
+        "connection_probe": {...} (probe=True 일 때만),
+        "connection_hint": str (probe=True 일 때만),
+        "public_ip": {...} (include_public_ip=True 일 때만)}``
         - ``ok``: 모든 필수 키가 존재하고 플레이스홀더가 아님.
         - ``present``: 필수 키별 현재 값의 *존재 여부* (값 자체는 노출 안 함).
         - ``missing``: 누락된 필수 키 이름 목록.
@@ -1307,6 +1445,19 @@ def check_config(read_existing: bool = False) -> dict[str, Any]:
           사유를 ``templates_read_error`` 에 담는다(조용한 덮어쓰기 금지).
         - ``templates_read_error``: 템플릿 저장소가 손상된 경우 사유. ``None``
           이면 정상. 기존 진단 키들은 이 실패와 무관하게 정상 동작한다.
+        - ``connection_probe``: ``probe=True`` 일 때만 존재. 토큰 엔드포인트 실제
+          호출 결과. ``{"ok": bool, "status_code": int | None, "detail": str}``
+          형태. ``detail`` 은 ``common.sanitize_text`` 를 거쳐 민감 정보(시크릿·
+          경로)가 가려진다. **토큰 값 자체는 담기지 않는다** — 이 키의 목적은
+          "되는가?" 이지 "토큰 값을 얻는 것" 이 아니다.
+        - ``connection_hint``: ``probe=True`` 일 때만 존재. ``connection_probe``
+          를 사람이 읽을 수 있게 번역한 안내. 403 → "호출 IP 허용목록 불일치
+          가능성 최우선" + 확인 위치(커머스API 센터, 애플리케이션 > 내스토어
+          애플리케이션), 401 → 자격증명 문제, 네트워크 예외 → 사유 있는 그대로.
+        - ``public_ip``: ``include_public_ip=True`` 일 때만 존재. 공인 IP 조회
+          결과. ``{"ok": bool, "ip": str | None, "source": str, "detail": str}``
+          형태. ``source`` 는 요청을 보낸 echo 서비스 URL(투명성). 403 진단 시
+          사용자가 이 IP 를 허용목록에 맞출 수 있다.
 
     안내: 실제 값은 반환하지 않는다. 이 도구는 가시성이 아니라 게이트(gate)다.
     단, ``suggested_from_existing`` / ``drift_from_existing`` 은 예외다 — 이들은
@@ -1512,6 +1663,53 @@ def check_config(read_existing: bool = False) -> dict[str, Any]:
     # 같은 패턴). 고시·AS·배송비 템플릿을 API 로 못 읽으므로 더미 엑셀을 만드는
     # 폼의 경로를 결과에 포함한다. 서버는 기본 OFF — 경로만 반환(파일 열기 안내).
     _attach_template_migration_form(result)
+
+    # ------------------------------------------------------------------ #
+    # 연결 진단 (connection probe) — probe=True 일 때만 수행.
+    #
+    # 기본 동작(probe=False) 은 외부 API 호출 0회. probe=True 는 opt-in 으로
+    # 토큰 엔드포인트에 실제 호출(1회)해 "설정이 있는가?" 너머 "실제로 되는가?"
+    # 까지 확인한다. 공유기/회선 재연결로 공인 IP 가 바뀌어 403 이 돌아오는
+    # 사례를 이 키가 잡아낸다.
+    #
+    # 진단 키는 probe=True 일 때만 결과에 존재한다 — 진단을 요청하지 않은
+    # 호출자는 이 키를 보지 않는다(기존 반환 형태 유지).
+    #
+    # 부분-실패 허용: probe 수행 중 예외가 발생해도 위에서 채워진 진단 키들은
+    # 살아 있다. 조용한 성공으로 바꾸지 않는다.
+    # ------------------------------------------------------------------ #
+    if probe:
+        try:
+            probe_result = naver_client._probe_token_endpoint()
+        except Exception as exc:  # 방어 — 기존 진단은 살린다.
+            probe_result = {
+                "ok": False,
+                "status_code": None,
+                "detail": _sanitize_error(exc),
+            }
+        result["connection_probe"] = probe_result
+        result["connection_hint"] = _interpret_probe_result(probe_result)
+
+    # ------------------------------------------------------------------ #
+    # 공인 IP 조회 — include_public_ip=True 일 때만 수행.
+    #
+    # probe 와 독립적인 opt-in 인자. probe=False 여도 include_public_ip=True
+    # 면 IP 조회만 수행한다. 403(IP 허용목록 불일치) 진단 시 사용자가 현재 공인
+    # IP 를 알면 커머스API 센터에서 맞추기 쉽다.
+    #
+    # **투명성**: 어디로 요청이 가는지(ipify 공개 echo 서비스)를 source 키에 밝힌다.
+    # IP 조회 실패 시 probe 결과는 그대로 살아 있다(부분 실패 허용).
+    # ------------------------------------------------------------------ #
+    if include_public_ip:
+        try:
+            result["public_ip"] = _lookup_public_ip()
+        except Exception as exc:  # 방어 — 기존 진단은 살린다.
+            result["public_ip"] = {
+                "ok": False,
+                "ip": None,
+                "source": "https://api.ipify.org?format=json",
+                "detail": _sanitize_error(exc),
+            }
 
     return result
 

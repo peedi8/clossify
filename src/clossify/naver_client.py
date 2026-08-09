@@ -977,6 +977,60 @@ def get_token():
     return r.json()["access_token"]
 
 
+def _probe_token_endpoint():
+    """토큰 엔드포인트(POST /external/v1/oauth2/token)에 실제로 한 번 호출해 본다.
+
+    ``get_token`` 과 같은 인증 절차(OAuth2 client_credentials + bcrypt 서명)를
+    따르되, 성공한 액세스 토큰 값을 반환하지 않고 **연결 가능성만** 보고한다.
+
+    본 함수는 ``get_token`` 이 던지는 ``requests.HTTPError``/``RequestException``
+    을 잡아 HTTP 상태/예외 타입을 사람 말로 해석한 진단 dict 를 반환한다.
+    성공 시 토큰 값을 반환에 싣지 **않는다** — 이 함수의 목적은 "되는가?"
+    이지 "토큰 값을 얻는 것" 이 아니다.
+
+    Returns:
+        ``{"ok": bool, "status_code": int | None, "detail": str}`` —
+        - ``ok``: HTTP 2xx 면 True.
+        - ``status_code``: HTTP 상태 코드(네트워크 예외 시 None).
+        - ``detail``: 정화된 사유 문자열(``common.sanitize_text`` 경유).
+          예외 타입/HTTP 상태는 남고, 민감 정보(시크릿·경로)는 가려진다.
+    """
+    c = load_config()["naver"]
+    cid, csec = c["client_id"], c["client_secret"]
+    ts = str(int(time.time() * 1000))
+    sign = base64.b64encode(bcrypt.hashpw(f"{cid}_{ts}".encode(), csec.encode())).decode()
+    try:
+        r = requests.post(
+            BASE + "/external/v1/oauth2/token",
+            timeout=20,
+            data={
+                "client_id": cid,
+                "timestamp": ts,
+                "client_secret_sign": sign,
+                "grant_type": "client_credentials",
+                "type": c.get("type", "SELF"),
+            },
+        )
+    except requests.RequestException as exc:
+        # 네트워크/연결 실패 — 사유(예외 타입)는 남기고 본문은 정화.
+        return {"ok": False, "status_code": None, "detail": common.sanitize_error(exc)}
+    sc = r.status_code
+    if 200 <= sc < 300:
+        return {"ok": True, "status_code": sc, "detail": "정상"}
+    # 비 2xx — 응답 본문 전체를 정화해서 사유에 싣는(본문에 시크릿·경로가
+    # 섞여 있으면 가린다). 사유(상태 코드)는 detail 접두사로 남긴다.
+    body_text = ""
+    try:
+        if r.headers.get("content-type", "").startswith("application/json"):
+            body_text = json.dumps(r.json(), ensure_ascii=False)
+        else:
+            body_text = r.text or ""
+    except Exception:
+        body_text = ""
+    detail = common.sanitize_text(f"HTTP {sc}: {body_text}".strip())
+    return {"ok": False, "status_code": sc, "detail": detail}
+
+
 def _h(tk, json_ct=True):
     h = {"Authorization": f"Bearer {tk}"}
     if json_ct:
