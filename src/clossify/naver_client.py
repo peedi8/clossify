@@ -1468,6 +1468,83 @@ def search_products(page: int = 1, size: int = 10, tk=None):
     return r.status_code, _json_or_text_response(r)
 
 
+def recommend_tags(keyword, tk=None):
+    """GET /external/v2/tags/recommend-tags?keyword=... — 네이버 공식 추천 태그.
+
+    2026-08-10 실측 계약:
+      - 파라미터: ``keyword=<단일 키워드>``. 없으면 400 "입력정보가 올바르지 않습니다".
+      - 200 응답 본문: ``[{"code":877,"text":"니트"}, ...]`` (배열).
+      - 각 항목은 ``code``(정수) 와 ``text``(문자열) 을 가진다.
+
+    본 함수는 순수 API 래퍼다 — 이웃 호출(``get_product``/``search_products``)
+    규약을 그대로 따른다: ``(status_code, body)`` 반환, ``tk=None`` 이면
+    ``get_token()``, 타임아웃·헤더는 ``_h(tk, False)`` (GET). **추천 결과를
+    해석·필터·가공하지 않는다** — "추천 목록에 있어도 제한일 수 있다" 는
+    함정(``_restricted_tags`` 참조) 은 호출자가 다룬다. 본 함수가 그 함정을
+    여는 순간, 추천→제한 검사 파이프라인이 우회될 수 있다.
+
+    Args:
+        keyword: 추천을 조회할 키워드(보통 상품명 첫 토큰). 빈 문자열/공백이면
+            API 가 400 을 반환한다(호출자가 fail-open 으로 처리).
+        tk: 이미 발급받은 액세스 토큰. None 이면 새로 발급한다.
+
+    Returns:
+        ``(status_code, body)`` — 기존 호출자 규약과 동일. 성공 시 body 는
+        ``[{"code": int, "text": str}, ...]``. 실패 시 body 는 응답 본문.
+    """
+    tk = tk or get_token()
+    r = requests.get(
+        BASE + "/external/v2/tags/recommend-tags",
+        headers=_h(tk, False),
+        params={"keyword": str(keyword or "")},
+        timeout=20,
+    )
+    return r.status_code, _json_or_text_response(r)
+
+
+def restricted_tags(tags, tk=None):
+    """GET /external/v2/tags/restricted-tags?tags=... — 태그 제한 여부 조회.
+
+    2026-08-10 실측 계약:
+      - 파라미터: ``tags=<쉼표연결>`` (예: ``tags=니트,가디건,니트가디건``).
+        **단수 ``tag=`` 파라미터는 400** — 반드시 ``tags=`` 복수형.
+      - 200 응답 본문: ``[{"tag":"니트","restricted":true}, ...]`` (배열).
+      - 각 항목은 ``tag``(문자열) 와 ``restricted``(bool) 을 가진다.
+
+    실측 해석: 단독 일반명사(니트·가디건) 와 금지어(쩐다) 가 ``restricted:true``,
+    복합 태그(니트가디건·우드슬랩) 가 ``restricted:false``.
+
+    ★ 함정 (티켓 계약): **추천 목록에 있어도 제한일 수 있다.** "니트"는
+    ``recommend_tags`` code 877 이면서 동시에 ``restricted:true`` 다. 따라서
+    추천 결과를 그대로 쓰지 말고 반드시 본 함수로 제한 검사를 통과시켜라.
+    본 함수는 판정만 돌려준다 — "어떤 태그를 빼야 하는가" 는 호출자가
+    ``restricted==True`` 항목을 걸러내서 정한다(조용한 드롭 금지 — 호출자가
+    반환에 사유를 남겨야 한다).
+
+    Args:
+        tags: 제한 여부를 조회할 태그 컬렉션(리스트/튜플/쉼표 문자열). 빈 입력은
+            API 가 400 을 반환한다(호출자가 fail-open 으로 처리).
+        tk: 이미 발급받은 액세스 토큰. None 이면 새로 발급한다.
+
+    Returns:
+        ``(status_code, body)`` — 기존 호출자 규약과 동일. 성공 시 body 는
+        ``[{"tag": str, "restricted": bool}, ...]``. 실패 시 body 는 응답 본문.
+    """
+    if isinstance(tags, str):
+        joined = tags
+    else:
+        # 쉼표 연결 — 실측 계약. None/빈 값은 빈 문자열로(400 유도).
+        joined = ",".join(str(t or "").strip() for t in tags if str(t or "").strip())
+    tk = tk or get_token()
+    r = requests.get(
+        BASE + "/external/v2/tags/restricted-tags",
+        headers=_h(tk, False),
+        params={"tags": joined},
+        timeout=20,
+    )
+    return r.status_code, _json_or_text_response(r)
+
+
 def _option_stock(option):
     """옵션 재고 수량을 fail-closed 로 파싱.
 

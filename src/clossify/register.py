@@ -452,7 +452,7 @@ def _apply_qa_to_payload(payload, qa_result):
     return payload
 
 
-def _build_register_product_dict(d, name, category_id):
+def _build_register_product_dict(d, name, category_id, *, resolved_tags=None):
     """register 단계가 naver_client.build_payload 에 넘길 상품 dict 와 동일한 형태를 구성.
 
     준비 단계의 컴플라이언스 검사가 등록 단계와 *같은 해석* 을 보려면, 컴플라이언스에
@@ -462,15 +462,25 @@ def _build_register_product_dict(d, name, category_id):
 
     빌더 자체는 호출하지 않고 dict 만 반환한다(호출은 호출자의 책임). 상품명 50자
     절단은 빌더 내부에서 이뤄지므로 여기서는 원본 이름을 그대로 둔다.
+
+    Args:
+        resolved_tags: 준비 단계에서 ``_resolve_tags`` 가 산출한 최종 태그 리스트.
+            주어지면 ``d.tags`` 대신 이 값을 쓴다 — 컴플라이언스 검사가 등록 시
+            실제로 들어갈 태그(추천·제한 검사 통과한)와 같은 태그를 보게 한다.
+            None 이면 기존대로 ``d.tags`` 를 읽는다(하위호환).
     """
     sale_price = d.get("salePrice")
     if sale_price is None:
         sale_price = d.get("sell_price") or d.get("price")
+    if resolved_tags is not None:
+        tags_value = list(resolved_tags)
+    else:
+        tags_value = list(d.get("tags") or [])
     product = {
         "name": name,
         "categoryId": str(category_id or d.get("categoryId") or d.get("category_id") or ""),
         "salePrice": int(sale_price),
-        "tags": list(d.get("tags") or []),
+        "tags": tags_value,
         "stock": int(d.get("stock", 1)),
         "delivery_fee": int(d.get("delivery_fee", 3000)),
         "courier": d.get("courier") or "CJGLS",
@@ -502,13 +512,20 @@ def _build_register_product_dict(d, name, category_id):
     return product
 
 
-def _build_tentative_register_payload(d, name, category_id, listing_urls, detail_html):
+def _build_tentative_register_payload(
+    d, name, category_id, listing_urls, detail_html, *, resolved_tags=None
+):
     """등록 단계가 만들 페이로드를 임시로 빌드한다 (컴플라이언스 검사용).
 
     ``naver_client.build_payload`` 는 등록 단계와 *동일한* 규제값 해석(origin/AS/
     고시 기본값/공통 5필드 포함)을 페이로드에 반영한다. 본 함수로 그 빌더를 한 번
     호출해 임시 페이로드를 만들면, 준비 단계의 컴플라이언스 검사가 등록 시 실제로
     만들어질 값과 동일한 문맥을 보게 된다 — 두 단계가 어긋날 수 없다.
+
+    Args:
+        resolved_tags: ``_resolve_tags`` 가 산출한 최종 태그. 주어지면 컴플라이언스
+            검사용 임시 페이로드에 같은 태그를 넣는다(prepare_listing 본체에서
+            산출한 최종 태그와 컴플라이언스 문맥을 일치시킨다).
 
     Raises:
         ValueError: 필수 설정(원산지 등)이 없어 빌더가 페이로드를 만들 수 없을 때.
@@ -517,7 +534,7 @@ def _build_tentative_register_payload(d, name, category_id, listing_urls, detail
     """
     from . import naver_client as _nc
 
-    product = _build_register_product_dict(d, name, category_id)
+    product = _build_register_product_dict(d, name, category_id, resolved_tags=resolved_tags)
     status = d.get("status") or "SALE"
     return _nc.build_payload(product, detail_html, listing_urls, status=status)
 
@@ -1056,6 +1073,216 @@ def inject_prepared_qa(d):
 
 
 # ---------------------------------------------------------------------------
+# 태그 추천·제한 검사 (N63).
+#
+# prepare_listing 의 태그 조립이 ①상품명 기반 키워드로 추천 조회 →
+# ②후보를 제한 검사 → ③restricted:false 만 태그로 쓴다. 등록 시점의 사후
+# 제한어 제거(``naver_client.register_product`` 의 ``seller_tags`` 백스톱)를
+# 조립 시점 사전 검사로 앞당긴다.
+#
+# ★ 함정 (실측 확정): 추천 목록에 있어도 제한일 수 있다. "니트" 는
+#   ``recommend_tags`` code 877 이면서 동시에 ``restricted:true`` 다. 따라서
+#   추천 결과를 그대로 쓰지 말고 반드시 제한 검사를 통과시킨다.
+#
+# 규약 (티켓 계약):
+#   - 사용자가 직접 준 태그는 항상 우선이고 삭제되지 않는다. 단 제한 검사에는
+#     같이 태워서 제한이면 **알린다**(조용한 드롭 금지).
+#   - 남는 슬롯을 추천→제한통과 태그로 채운다.
+#   - 태그 출처(사용자/네이버 추천)를 반환에 구분해 표시한다(조용한 자동
+#     채움 금지 — 기존 관례 그대로).
+#   - 실패 시 강등(fail-open): 태그 API 실패해도 prepare 는 죽지 않는다.
+#     기존 태그 로직으로 진행하되 사유를 반환에 남긴다(조용한 실패 금지).
+#
+# 태그 상한 관례: ``registration_agent.md`` "~10개" / ``seo.py`` seo_planner_hint
+#   "5-10 seller tags" → **MAX_SELLER_TAGS = 10**. 새 수치를 지어내지 않는다.
+# ---------------------------------------------------------------------------
+
+# 태그 최대 개수 — 기존 관례(registration_agent.md "~10개", seo.py "5-10")의
+# 상한. 새 수치를 지어내지 않는다.
+MAX_SELLER_TAGS = 10
+
+
+def _resolve_tags(name, user_tags, *, recommend_fn=None, restricted_fn=None):
+    """태그 조립: 추천 조회 → 제한 검사 → ``restricted:false`` 만 사용.
+
+    흐름:
+      1. **사용자 태그가 항상 우선**. 단 제한 검사에 같이 태운다 — 제한이면
+         **삭제하지 않고** 알림에 올린다(조용한 드롭 금지).
+      2. 상품명 첫 토큰(또는 전체 이름) 으로 ``recommend_tags`` 조회.
+      3. 추천 후보 + 사용자 태그를 합쳐 ``restricted_tags`` 로 제한 검사.
+      4. ``restricted:false`` 인 추천 태그로 남은 슬롯(``MAX_SELLER_TAGS`` -
+         사용자 태그 수)을 채운다.
+      5. 반환에 **태그 출처**(사용자/네이버 추천)를 구분해 표시.
+
+    실패 시 강등(fail-open — 규제값이 아니다): 태그 API 가 실패(네트워크·4xx)
+    하면 예외를 던지지 않고 ``error`` 에 사유를 남긴 채 사용자 태그만으로
+    진행한다. ``prepare_listing`` 본체는 죽지 않는다.
+
+    Args:
+        name: 상품명(추천 키워드 후보).
+        user_tags: 사용자가 직접 준 태그 리스트.
+        recommend_fn: ``naver_client.recommend_tags`` 대체(테스트 주입용).
+        restricted_fn: ``naver_client.restricted_tags`` 대체(테스트 주입용).
+
+    Returns:
+        ``{"final_tags": [...], "user_tags": [...], "recommended_tags": [...],
+           "restricted": [{"tag": str, "source": "user"|"recommend"}, ...],
+           "recommend_lookup": {"ok": bool, ...} | None,
+           "restricted_lookup": {"ok": bool, ...} | None,
+           "error": str | None}`` —
+        ``final_tags`` 는 ``product.tags`` 에 들어갈 최종 태그(사용자 우선,
+        추천으로 남은 슬롯 채움, 최대 ``MAX_SELLER_TAGS`` 개). ``restricted`` 는
+        제한 판정된 태그와 그 출처(사용자가 준 것인지 추천에서 온 것인지).
+        ``error`` 는 fail-open 사유(성공 시 None).
+    """
+    from . import naver_client as _nc
+
+    recommend = recommend_fn if recommend_fn is not None else _nc.recommend_tags
+    restricted = restricted_fn if restricted_fn is not None else _nc.restricted_tags
+
+    clean_user = [str(t).strip() for t in (user_tags or []) if str(t or "").strip()]
+    result = {
+        "final_tags": list(clean_user),
+        "user_tags": list(clean_user),
+        "recommended_tags": [],
+        "restricted": [],
+        "recommend_lookup": None,
+        "restricted_lookup": None,
+        "error": None,
+    }
+
+    # 추천 조회 — fail-open. 실패해도 사용자 태그로 진행.
+    recommend_candidates: list[str] = []
+    keyword = str(name or "").strip()
+    if not keyword:
+        # 키워드가 없으면 추천 조회 자체를 건너뛴다(API 가 어차피 400).
+        result["recommend_lookup"] = {"ok": False, "status_code": None, "detail": "키워드 없음"}
+    else:
+        try:
+            sc, body = recommend(keyword)
+            if sc == 200 and isinstance(body, list):
+                recommend_candidates = [
+                    str(item.get("text") or "").strip()
+                    for item in body
+                    if isinstance(item, dict) and str(item.get("text") or "").strip()
+                ]
+                result["recommend_lookup"] = {
+                    "ok": True,
+                    "status_code": sc,
+                    "count": len(recommend_candidates),
+                }
+            else:
+                detail = ""
+                if isinstance(body, dict):
+                    detail = str(body.get("message") or body.get("detail") or "")
+                elif isinstance(body, str):
+                    detail = body
+                result["recommend_lookup"] = {
+                    "ok": False,
+                    "status_code": sc,
+                    "detail": detail[:200],
+                }
+                result["error"] = f"추천 조회 실패: HTTP {sc} {detail[:120]}".strip()
+        except Exception as exc:
+            result["recommend_lookup"] = {
+                "ok": False,
+                "status_code": None,
+                "detail": str(exc)[:200],
+            }
+            result["error"] = f"추천 조회 실패: {exc}"[:300]
+
+    # 제한 검사 대상: 사용자 태그 + 추천 후보(중복 제거, 순서 보존).
+    # 사용자 태그는 제한이어도 삭제하지 않지만, 제한 검사에는 태운다(알림용).
+    check_pool: list[str] = []
+    seen: set[str] = set()
+
+    def _add_unique(value: str):
+        key = re.sub(r"\s+", "", value).lower()
+        if key and key not in seen:
+            check_pool.append(value)
+            seen.add(key)
+
+    for t in clean_user:
+        _add_unique(t)
+    for t in recommend_candidates:
+        _add_unique(t)
+
+    # 제한 검사 — fail-open. 빈 풀이면 API 호출을 건너뛴다(400 방지).
+    restricted_map: dict[str, bool] = {}
+    if check_pool:
+        try:
+            sc, body = restricted(check_pool)
+            if sc == 200 and isinstance(body, list):
+                for item in body:
+                    if isinstance(item, dict):
+                        tag_text = str(item.get("tag") or "").strip()
+                        is_restricted = bool(item.get("restricted"))
+                        if tag_text:
+                            restricted_map[tag_text] = is_restricted
+                result["restricted_lookup"] = {
+                    "ok": True,
+                    "status_code": sc,
+                    "count": len(restricted_map),
+                }
+            else:
+                detail = ""
+                if isinstance(body, dict):
+                    detail = str(body.get("message") or body.get("detail") or "")
+                elif isinstance(body, str):
+                    detail = body
+                result["restricted_lookup"] = {
+                    "ok": False,
+                    "status_code": sc,
+                    "detail": detail[:200],
+                }
+                if result["error"] is None:
+                    result["error"] = f"제한 조회 실패: HTTP {sc} {detail[:120]}".strip()
+        except Exception as exc:
+            result["restricted_lookup"] = {
+                "ok": False,
+                "status_code": None,
+                "detail": str(exc)[:200],
+            }
+            if result["error"] is None:
+                result["error"] = f"제한 조회 실패: {exc}"[:300]
+
+    def _is_restricted(tag_text: str) -> bool:
+        # 대소문자/공백 무시 매칭.
+        for key, val in restricted_map.items():
+            if re.sub(r"\s+", "", key).lower() == re.sub(r"\s+", "", tag_text).lower():
+                return val
+        return False
+
+    # 사용자 태그 중 제한인 것을 알림에 올린다(삭제하지 않음).
+    user_restricted_keys: set[str] = set()
+    for t in clean_user:
+        if _is_restricted(t):
+            result["restricted"].append({"tag": t, "source": "user"})
+            user_restricted_keys.add(re.sub(r"\s+", "", t).lower())
+
+    # 추천 태그 중 restricted:false 인 것으로 남은 슬롯을 채운다.
+    # 사용자 태그(정규화 기준)와 중복되는 추천은 건너뛴다.
+    user_keys = {re.sub(r"\s+", "", t).lower() for t in clean_user}
+    final_tags = list(clean_user)
+    for t in recommend_candidates:
+        if len(final_tags) >= MAX_SELLER_TAGS:
+            break
+        key = re.sub(r"\s+", "", t).lower()
+        if key in user_keys:
+            continue
+        if _is_restricted(t):
+            # 추천 태그가 제한이면 final_tags 에 넣지 않고 알림에만 올린다.
+            result["restricted"].append({"tag": t, "source": "recommend"})
+            continue
+        final_tags.append(t)
+        result["recommended_tags"].append(t)
+        user_keys.add(key)  # 이후 중복 방지
+
+    result["final_tags"] = final_tags[:MAX_SELLER_TAGS]
+    return result
+
+
+# ---------------------------------------------------------------------------
 # prepare_listing 본체.
 #
 # 흐름(IN 목록만 실행):
@@ -1073,7 +1300,7 @@ def inject_prepared_qa(d):
 # ---------------------------------------------------------------------------
 
 
-def prepare_listing(d, *, attach_fn=None, generate_fn=None):
+def prepare_listing(d, *, attach_fn=None, generate_fn=None, recommend_fn=None, restricted_fn=None):
     """상품 정보 + 이미지 소스 로 prepared payload 를 만든다.
 
     본 함수는 등록 전 단계를 수행한다: 이미지 정규화, (선택) 이미지 생성
@@ -1111,6 +1338,11 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None):
             ``needed_cuts`` (int — 필요 컷 수, 기본 1).
         attach_fn: ``images.attach_images`` 대체(테스트 주입용).
         generate_fn: ``image_gen.generate`` 대체(테스트 주입용).
+        recommend_fn: ``naver_client.recommend_tags`` 대체(테스트 주입용).
+            None 이면 실제 ``naver_client.recommend_tags`` 를 쓴다(실호출 —
+            N60 컨텍스트에서 테스트는 반드시 주입해야 한다).
+        restricted_fn: ``naver_client.restricted_tags`` 대체(테스트 주입용).
+            None 이면 실제 ``naver_client.restricted_tags`` 를 쓴다.
 
     Returns:
         prepared payload dict. 다음 키를 포함한다:
@@ -1126,6 +1358,10 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None):
             ``needed_cuts``/``api_call_count``/``output_canvas_count``/
             ``output_layout``/``panel_count_used``/``estimated_cost_usd`` 를
             포함한다 (``IMAGE_GENERATION_PRICE_POLICY.md`` 단위 규약 준수).
+          - ``tags_meta``: 태그 추천·제한 검사 결과. ``final_tags``/
+            ``user_tags``/``recommended_tags``/``restricted``/``recommend_lookup``/
+            ``restricted_lookup``/``error`` 키를 담는다(N63 — ``_resolve_tags``
+            참조). 추천·제한 검사를 통과한 최종 태그가 ``product.tags`` 에 들어간다.
           - ``version``: ``common.PREPARED_PAYLOAD_VERSION``.
 
     Raises:
@@ -1305,6 +1541,24 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None):
         # version 불일치 등 — 기존 것을 무시하고 새로 쓴다(스키마 변경 시).
         overwrite_warning = "기존 prepared payload 의 version 이 불일치한다. 덮어쓴다(스키마 변경)."
 
+    # --- 3.5. 태그 추천·제한 검사 (N63) ---
+    # prepare_listing 본체가 _resolve_tags 를 호출해 최종 태그를 산출한다.
+    # 흐름: ①상품명으로 추천 조회 → ②후보+사용자 태그를 제한 검사 →
+    # ③restricted:false 인 추천 태그로 남은 슬롯 채움. 사용자 태그는 항상
+    # 우선이고 삭제되지 않는다(제한이면 needs_user 로 알리기만 한다).
+    # 실패 시 강등(fail-open) — prepare_listing 본체는 죽지 않는다.
+    #
+    # ★ 컴플라이언스 일치: 산출된 final_tags 를 컴플라이언스 검사용 임시
+    # 페이로드와 저장용 payload 양쪽에 같은 값으로 넣는다 — 준비 단계가
+    # 등록 단계와 같은 태그를 본다.
+    tag_resolution = _resolve_tags(
+        name,
+        d.get("tags") or [],
+        recommend_fn=recommend_fn,
+        restricted_fn=restricted_fn,
+    )
+    final_tags = list(tag_resolution.get("final_tags") or [])
+
     # deferred_notice_fields 를 한 번 정제해 컴플라이언스 검사와
     # payload 저장 양쪽에 같은 값을 쓴다. 등록 단계(mcp_server._validate
     # _deferred_notice_fields) 와 같은 원산지/allowlist/boolean-date 검증을
@@ -1399,7 +1653,7 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None):
     tentative_payload = None
     try:
         tentative_payload = _build_tentative_register_payload(
-            d, name, category_id, listing_urls, detail_html
+            d, name, category_id, listing_urls, detail_html, resolved_tags=final_tags
         )
         # 컴플라이언스 컨텍스트에 카테고리 경로를 포함한다 — 고시 타입 추론이
         # 등록 단계(mcp_server._build_compliance_context)와 *같은 입력* 으로
@@ -1487,6 +1741,39 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None):
     # (조용한 실패 금지 — 생성을 요청했는데 못 한 사실을 사용자가 알아야 한다).
     if generation_user_hint is not None:
         needs_user.append(generation_user_hint)
+    # 태그 제한 판정된 사용자 태그를 needs_user 에 알린다 (조용한 드롭 금지).
+    # 사용자가 직접 준 태그가 제한어로 판정되어도 삭제하지는 않지만, 판매자가
+    # 그 사실을 알아야 한다(네이버 등록 시 seller_tags 백스톱이 최종적으로
+    # 제거할 수 있다). 추천 태그가 제한이면 이미 final_tags 에 들어가지 않았다.
+    _user_restricted_tags = [
+        r["tag"] for r in (tag_resolution.get("restricted") or []) if r.get("source") == "user"
+    ]
+    if _user_restricted_tags:
+        needs_user.append(
+            {
+                "field": "tags_restricted",
+                "label": "태그 제한 경고",
+                "why": (
+                    "다음 사용자 태그가 네이버 제한어로 판정되었습니다(삭제하지 않음 — "
+                    f"등록 시 백스톱이 처리): {', '.join(_user_restricted_tags)}. "
+                    "태그를 그대로 두거나 수정하세요."
+                ),
+            }
+        )
+    # 태그 API 호출 실패(fail-open) 사유도 needs_user 에 알린다(조용한 실패 금지).
+    # 단, 추천/제한 API 가 명시적으로 ok=False 임을 tag_resolution.error 가 나타낼
+    # 때만 싣는다 — 정상 경로에서는 error 가 None 이다.
+    if tag_resolution.get("error"):
+        needs_user.append(
+            {
+                "field": "tags_lookup_failed",
+                "label": "태그 추천/제한 조회 실패",
+                "why": (
+                    "네이버 태그 API 조회가 실패해 추천 기반 태그 채움을 건너뛰었습니다. "
+                    f"사유: {tag_resolution['error']}. 사용자 태그만으로 진행합니다."
+                ),
+            }
+        )
     # deferred_notice_fields 검증에서 거부된 필드를 needs_user 에 알린다
     # (조용한 누락 금지). 판매자가 미루기로 선언했지만 원산지/allowlist 규칙에
     # 의해 거부된 필드는 미루기가 불가능하므로 값을 직접 채워야 한다.
@@ -1511,7 +1798,7 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None):
             "categoryId": category_id,
             "salePrice": int(sale_price),
             "options": options,
-            "tags": d.get("tags") or [],
+            "tags": final_tags,
             "notice": d.get("notice") or {},
             "origin_code": d.get("origin_code") or "",
             "manufacturer": d.get("manufacturer") or "",
@@ -1553,6 +1840,10 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None):
         payload["image_generation"] = image_generation_meta
     if overwrite_warning is not None:
         payload["overwrite_warning"] = overwrite_warning
+    # tags_meta: 태그 추천·제한 검사 결과. ``product.tags`` 가 어디서 왔는지
+    # (사용자/네이버 추천), 어떤 태그가 제한 판정을 받았는지, API 호출이
+    # 실패했는지를 드러낸다 (조용한 자동 채움/드롭 금지).
+    payload["tags_meta"] = tag_resolution
     write_prepared_payload(payload)
 
     # --- 7. 미리보기 HTML 파일 생성 ---
@@ -1706,6 +1997,7 @@ def resolve_prepared_for_register(name, price, *, product_key=None):
 
 
 __all__ = [
+    "MAX_SELLER_TAGS",
     "_build_product_dict",
     "_build_register_product_dict",
     "_build_tentative_register_payload",
@@ -1718,6 +2010,7 @@ __all__ = [
     "_prepared_payload_path",
     "_registration_record_path",
     "_reject_url_inputs",
+    "_resolve_tags",
     "_sanitize_product_key",
     "_validate_review_submission",
     "find_prepared_candidates",
