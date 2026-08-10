@@ -32,6 +32,7 @@ from typing import Any
 
 from mcp.server import MCPServer
 
+from . import auto_open as _auto_open
 from . import common, naver_client, qa_agents
 from . import listing_templates as _templates_mod
 from . import register as _register_mod
@@ -237,6 +238,26 @@ def _config_enable_config_form() -> bool:
     return False
 
 
+def _config_enable_auto_open() -> bool:
+    """config 의 ``enable_auto_open`` 설정을 읽는다.
+
+    기본값은 ``False`` (끔). 이 기능은 브라우저 창을 여는 편의 기능이므로
+    명시적으로 켜야 동작한다. config 에 키가 없거나 값이 bool 이 아니면
+    기본값(False) 을 반환한다 — 조용히 켜지지 않는다. ``auto_open`` 모듈의
+    path containment·블로킹 금지·조용한 실패 금지 계약과 함께 회귀 0 을 보장한다.
+    """
+    cfg_path = naver_client.config_path()
+    try:
+        with open(cfg_path, encoding="utf-8-sig") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        return False
+    value = cfg.get("enable_auto_open")
+    if isinstance(value, bool):
+        return value
+    return False
+
+
 def _config_form_html_path() -> str:
     """설정 폼 HTML 파일 경로(.local/config_form.html).
 
@@ -325,6 +346,14 @@ def _generate_config_form(
 
             t = _threading.Thread(target=_wait_and_close, args=(srv,), daemon=True)
             t.start()
+        # N26: enable_auto_open 이 켜져 있으면 폼 HTML 을 브라우저로 자동 연다.
+        # path containment·블로킹 금지·조용한 실패 금지는 auto_open 모듈이 책임진다.
+        _auto_open.maybe_open_screen(
+            html_path,
+            enabled=_config_enable_auto_open(),
+            label="config_form",
+            result=result,
+        )
     except Exception:
         # 폼 생성 실패는 진단 키에 영향을 주지 않는다 (부분 실패 허용).
         # 경로/토큰은 None/빈 문자열로 둔다.
@@ -1259,6 +1288,13 @@ def _attach_template_migration_form(result: dict[str, Any]) -> None:
             src_xlsx_path=a1_path,
         )
         result["template_migration_form_path"] = html_path
+        # N26: enable_auto_open 이 켜져 있으면 이관 폼 HTML 을 브라우저로 자동 연다.
+        _auto_open.maybe_open_screen(
+            html_path,
+            enabled=_config_enable_auto_open(),
+            label="template_migration_form",
+            result=result,
+        )
     except Exception:
         # 폼 생성 실패는 진단 키에 영향을 주지 않는다 (부분 실패 허용).
         pass
@@ -2224,6 +2260,9 @@ def register_product(
         # 로컬 승인 다리가 켜져 있으면 "승인 대기 모드" 로 진입한다 —
         # 사용자가 브라우저에서 [승인] 버튼을 누를 때까지 대기한다.
         # 설정이 꺼져 있으면 기존 흐름(거부 + 안내) 그대로.
+        # N26: _approval_auto_opened 는 auto_open 이 호출되지 않은 경로에서도
+        # 정의되어야 한다 — 아래에서 참조될 수 있으므로 미리 None 으로 초기화.
+        _approval_auto_opened = None
         if not _enable_local_approval:
             _msg_parts = [
                 "미리보기 승인 없이 등록을 거부했습니다 (require_preview_confirmation 켜짐).",
@@ -2314,6 +2353,19 @@ def register_product(
                 approval_port=_approval_port,
                 mode="interactive",
             )
+            # N26: enable_auto_open 이 켜져 있으면 갱신된 미리보기 HTML 을 브라우저로
+            # 자동 연다. 승인 대기 모드이므로 사용자가 이 화면에서 [승인] 을 누른다.
+            _approval_result: dict[str, Any] = {}
+            _auto_open.maybe_open_screen(
+                _preview_path_for_gate,
+                enabled=_config_enable_auto_open(),
+                label="approval_preview",
+                result=_approval_result,
+                result_key="auto_opened",
+            )
+            # _approval_result 에 기록된 auto_opened 를 이 함수의 반환 흐름에서
+            # 활용할 수 있도록 지역 변수에 보관한다(아래 return 들에서 참조).
+            _approval_auto_opened = _approval_result.get("auto_opened")
         except Exception:
             # 미리보기 갱신 실패는 승인 자체를 막지 않는다 — 사용자가
             # 브라우저를 이미 새로고침하지 않았을 수도 있다. 다만 페이지에
@@ -3640,7 +3692,8 @@ def prepare_listing(
                 "error": _sanitize_text(str(exc)),
             }
 
-    return {
+    # N26: enable_auto_open 이 켜져 있으면 미리보기 HTML 을 브라우저로 자동 연다.
+    _result = {
         "ok": True,
         "product_key": payload.get("product_key"),
         "needs_llm": payload.get("needs_llm") or [],
@@ -3652,6 +3705,13 @@ def prepare_listing(
         "template_saved": template_saved,
         "error": None,
     }
+    _auto_open.maybe_open_screen(
+        _result.get("preview_path"),
+        enabled=_config_enable_auto_open(),
+        label="preview",
+        result=_result,
+    )
+    return _result
 
 
 @mcp.tool()
