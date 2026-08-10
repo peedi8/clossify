@@ -441,8 +441,12 @@ class TestSuspendResumeConfirmGate:
 
         with mock.patch.object(naver_client, "get_product", side_effect=_get_recorder):
             with mock.patch.object(naver_client, "search_products", side_effect=_search_recorder):
-                with mock.patch.object(naver_client, "update_product", side_effect=_update_recorder):
-                    result = mcp_server.manage_products(action="suspend", origin_product_no="100001")
+                with mock.patch.object(
+                    naver_client, "update_product", side_effect=_update_recorder
+                ):
+                    result = mcp_server.manage_products(
+                        action="suspend", origin_product_no="100001"
+                    )
 
         assert result["ok"] is False
         assert result["dry_run"] is True
@@ -472,7 +476,9 @@ class TestSuspendResumeConfirmGate:
 
         with mock.patch.object(naver_client, "get_product", side_effect=_get_recorder):
             with mock.patch.object(naver_client, "search_products", side_effect=_search_recorder):
-                with mock.patch.object(naver_client, "update_product", side_effect=_update_recorder):
+                with mock.patch.object(
+                    naver_client, "update_product", side_effect=_update_recorder
+                ):
                     result = mcp_server.manage_products(action="resume", origin_product_no="100001")
 
         assert result["ok"] is False
@@ -503,7 +509,9 @@ class TestSuspendResumeConfirmGate:
                 "search_products",
                 side_effect=_mock_search_products_factory(),
             ):
-                with mock.patch.object(naver_client, "update_product", side_effect=_update_recorder):
+                with mock.patch.object(
+                    naver_client, "update_product", side_effect=_update_recorder
+                ):
                     result = mcp_server.manage_products(
                         action="suspend", origin_product_no="100001", confirm=True
                     )
@@ -532,7 +540,9 @@ class TestSuspendResumeConfirmGate:
                 "search_products",
                 side_effect=_mock_search_products_factory(),
             ):
-                with mock.patch.object(naver_client, "update_product", side_effect=_update_recorder):
+                with mock.patch.object(
+                    naver_client, "update_product", side_effect=_update_recorder
+                ):
                     result = mcp_server.manage_products(
                         action="resume", origin_product_no="100001", confirm=True
                     )
@@ -563,7 +573,9 @@ class TestSuspendResumeConfirmGate:
                 "search_products",
                 side_effect=_mock_search_products_factory(body=_SEARCH_BODY_EMPTY),
             ):
-                with mock.patch.object(naver_client, "update_product", side_effect=_update_recorder):
+                with mock.patch.object(
+                    naver_client, "update_product", side_effect=_update_recorder
+                ):
                     result = mcp_server.manage_products(
                         action="suspend", origin_product_no="999999", confirm=True
                     )
@@ -573,9 +585,9 @@ class TestSuspendResumeConfirmGate:
         # 명확한 사유 — 조용한 실패가 아니다.
         err = result.get("error") or ""
         assert "channel_product_no" in err or "search_products" in err, f"사유 불명확: {err}"
-        assert "999999" in err or "일치" in err or "listing 없음" in err, (
-            f"대상 번호 또는 일치 언급 없음: {err}"
-        )
+        assert (
+            "999999" in err or "일치" in err or "listing 없음" in err
+        ), f"대상 번호 또는 일치 언급 없음: {err}"
 
     def test_resume_channel_not_found_clear_reason_zero_updates(self, tmp_path, monkeypatch):
         """(c) resume 도 검색에서 못 찾으면 명확한 사유 + update 호출 0회."""
@@ -592,7 +604,9 @@ class TestSuspendResumeConfirmGate:
                 "search_products",
                 side_effect=_mock_search_products_factory(body=_SEARCH_BODY_EMPTY),
             ):
-                with mock.patch.object(naver_client, "update_product", side_effect=_update_recorder):
+                with mock.patch.object(
+                    naver_client, "update_product", side_effect=_update_recorder
+                ):
                     result = mcp_server.manage_products(
                         action="resume", origin_product_no="999999", confirm=True
                     )
