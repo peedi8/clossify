@@ -772,6 +772,135 @@ def transform_product_to_template_input(
 
 
 # ---------------------------------------------------------------------------
+# prepared payload → 템플릿 입력 변환 (N15).
+#
+# prepared payload 의 ``product`` 블록은 **이미 우리 입력 모양**이다 —
+# ``notice``, ``as_tel``, ``origin_code``, ``manufacturer``, ``importer`` 등
+# ``save_template`` 이 읽는 키가 이미 들어 있다. 따라서 API 응답 경로
+# (``transform_product_to_template_input``) 처럼 경로를 걷어낼 필요가 없다.
+#
+# 본 함수가 하는 일은 **완전성 보고**다 — prepared 의 고시 본문에서 읽은
+# 필드가 정본 대비 몇 개인지, 어느 필드가 빠졌는지를 ``transform_product_to_
+# template_input`` 과 **동일한 형식**으로 계산한다. 새 변환 규칙을 만들지
+# 않는다 — 완전성 계산의 단일 진실 공급원(``_notice_type_fields_for`` +
+# ``_NOTICE_BODY_SKIP_KEYS``)을 그대로 쓴다.
+#
+# **네트워크 호출 0회** — 로컬 파일(prepared payload)과 정본 데이터
+# (``data/notice_types.json`` 캐싱)만 읽는다. 이미지 재업로드가 없다.
+# ---------------------------------------------------------------------------
+
+
+def transform_prepared_to_template_input(
+    prepared_product: dict[str, Any],
+) -> dict[str, Any]:
+    """prepared payload 의 ``product`` 블록에서 템플릿 입력과 완전성을 뽑는다.
+
+    prepared payload 의 ``product`` 는 이미 우리 입력 모양이므로, 값을
+    *옮기지 않는다* — 그대로 ``save_template`` 에 넘길 수 있다. 본 함수가
+    추가로 하는 일은 ``transform_product_to_template_input`` 과 **동일한
+    완전성 계산**을 수행해, 결과 메타에 ``notice_type``/``completeness``/
+    ``notice_field_count`` 를 채우는 것이다.
+
+    고시 타입은 ``product.notice.productInfoProvidedNoticeType`` 에서 읽는다.
+    없으면 ETC 폴백 — prepared 단계에서 컴플라이언스 보정이 이미 타입을
+    주입했을 수 있으므로, 여기서 새로 추론하지 않는다(규제값 창작 금지).
+    다만 타입을 못 읽었을 때 ``ok=True`` 를 유지하되 ``reason`` 에 사실을
+    담는다 — prepared 의 값 자체는 유효하므로 저장을 막지 않는다.
+
+    **네트워크 호출 0회** — 로컬 파일만 읽는다.
+
+    Args:
+        prepared_product: prepared payload 의 ``product`` dict (또는 그와
+            동일한 모양의 dict). ``notice``, ``as_tel``, ``origin_code`` 등을
+            포함.
+
+    Returns:
+        ``transform_product_to_template_input`` 과 **동일한 형식**::
+
+            {"ok": bool,
+             "notice_type": str,
+             "product": dict,           # save_template 용 입력(그대로 전달)
+             "reason": str | None,
+             "notice_field_count": int,
+             "completeness": {filled_count, type_field_total, missing_fields}}
+    """
+    if not isinstance(prepared_product, dict):
+        return {
+            "ok": False,
+            "notice_type": "",
+            "product": {},
+            "reason": "prepared_product 가 dict 가 아닙니다.",
+            "notice_field_count": 0,
+            "completeness": {
+                "filled_count": 0,
+                "type_field_total": 0,
+                "missing_fields": [],
+            },
+        }
+
+    # 고시 타입 읽기 — notice.productInfoProvidedNoticeType 우선.
+    user_notice = prepared_product.get("notice")
+    raw_type = ""
+    if isinstance(user_notice, dict):
+        raw_type = (
+            str(
+                user_notice.get("productInfoProvidedNoticeType")
+                or user_notice.get("notice_type")
+                or ""
+            )
+            .strip()
+            .upper()
+        )
+    # prepared 단계에서 ETC 로 떨어질 수 있다 — 그것은 "정말 ETC" 일 수도
+    # 있고 "추론 실패" 일 수도 있다. 여기서 새로 추론하지 않는다. ETC 도
+    # 유효한 고시 타입이므로 그대로 둔다.
+
+    # 고시 본문에서 채워진 필드 수 계산 — _extract_notice_body 와 동일한
+    # 로직으로 filled_set 을 만든다 (단일 진실 공급원 존중).
+    skip_keys = _NOTICE_BODY_SKIP_KEYS
+    filled_set: set[str] = set()
+    field_count = 0
+    if isinstance(user_notice, dict):
+        for node_key, node_value in user_notice.items():
+            if not isinstance(node_value, dict):
+                continue
+            if node_key in ("productInfoProvidedNoticeType", "notice_type"):
+                continue
+            for field, value in node_value.items():
+                if field in skip_keys:
+                    continue
+                if value is None:
+                    continue
+                if isinstance(value, str) and not value.strip():
+                    continue
+                filled_set.add(str(field))
+                field_count += 1
+
+    # 완전성 계산 — transform_product_to_template_input 과 동일한 로직.
+    type_fields = _notice_type_fields_for(raw_type) if raw_type else ()
+    type_field_set = {f for f in type_fields if f not in skip_keys}
+    if type_field_set:
+        missing = sorted(type_field_set - filled_set)
+        filled_count = len(filled_set & type_field_set)
+    else:
+        missing = []
+        filled_count = len(filled_set)
+
+    return {
+        "ok": True,
+        "notice_type": raw_type,
+        "product": dict(prepared_product),  # 얕은 복사 — save_template 이 화이트리스트 추출.
+        "reason": None,
+        "notice_field_count": field_count,
+        "completeness": {
+            "filled_count": filled_count,
+            "type_field_total": len(type_field_set),
+            "missing_fields": missing,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
 # 공개 API: 저장·조회·적용.
 # ---------------------------------------------------------------------------
 
@@ -1256,5 +1385,6 @@ __all__ = [
     "list_templates",
     "save_template",
     "templates_path",
+    "transform_prepared_to_template_input",
     "transform_product_to_template_input",
 ]

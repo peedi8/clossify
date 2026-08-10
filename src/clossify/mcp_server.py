@@ -3655,7 +3655,11 @@ def prepare_listing(
 
 
 @mcp.tool()
-def submit_reviews(product_key: str, reviews: list[dict[str, Any]]) -> dict[str, Any]:
+def submit_reviews(
+    product_key: str,
+    reviews: list[dict[str, Any]],
+    save_prepared_as_template: str = "",
+) -> dict[str, Any]:
     """클라이언트 LLM 의 검수 회신을 prepared payload 의 QA 기록에 병합.
 
     신뢰 모델(타협 불가):
@@ -3667,21 +3671,38 @@ def submit_reviews(product_key: str, reviews: list[dict[str, Any]]) -> dict[str,
       - 제출 가능 agent 는 ``{"image","copy"}`` 로 고정. ``compliance`` 제출은
         ``ValueError`` (결정론 검사를 클라이언트가 뒤집을 수 없다).
 
+    템플릿 저장 (N15 — 미리보기에서 "이 구성을 템플릿으로"):
+        - ``save_prepared_as_template``: 빈 문자열이 아닌 이름을 주면, **이미
+          준비된 payload** 를 재준비 없이 템플릿으로 저장한다. 네트워크 호출
+          0회 — 로컬 파일만 읽는다(이미지 재업로드 금지). 상품명·가격·재고·
+          이미지·옵션·비밀값은 어떤 경우에도 담기지 않는다(화이트리스트).
+          출처로 prepared 식별자(``prepared:<product_key>``) 와 시각을 기록한다.
+          완전성 보고(정본 대비 몇/몇) 를 ``template_saved.completeness`` 에
+          실는다 — ``get_product`` 경로와 같은 형식. 빈 문자열이면 저장하지
+          않는다(암묵 저장 없음).
+
     Args:
         product_key: prepared payload 의 product_key.
         reviews: ``[{"agent": "image"|"copy", "verdict": "PASS"|"WARN"|
             "FAIL"|"PENDING", "violations": [...], "summary": str}, ...]``.
+        save_prepared_as_template: 준비된 payload 를 템플릿으로 저장할 때 쓸
+            이름. 빈 문자열(기본) → 저장 안 함.
 
     Returns:
-        ``{"ok": bool, "qa": {...}, "gate_allowed": bool, "error": str | None}``
+        ``{"ok": bool, "qa": {...}, "gate_allowed": bool,
+        "template_saved": {...}|None, "error": str | None}``
         - ``gate_allowed``: 갱신 후 QA 게이트가 등록을 허용하는지(PENDING/FAIL
           이 없으면 True).
+        - ``template_saved``: ``save_prepared_as_template`` 가 비어있지 않을 때
+          저장 결과 메타. ``get_product`` 경로의 ``template_saved`` 와 같은
+          형식.
     """
     if not isinstance(product_key, str) or not product_key.strip():
         return {
             "ok": False,
             "qa": {},
             "gate_allowed": False,
+            "template_saved": None,
             "error": "product_key 는 비어있지 않은 문자열이어야 합니다.",
         }
     if not isinstance(reviews, list) or not reviews:
@@ -3689,6 +3710,7 @@ def submit_reviews(product_key: str, reviews: list[dict[str, Any]]) -> dict[str,
             "ok": False,
             "qa": {},
             "gate_allowed": False,
+            "template_saved": None,
             "error": "reviews 는 최소 1개 이상의 검수 항목 리스트여야 합니다.",
         }
     try:
@@ -3698,6 +3720,7 @@ def submit_reviews(product_key: str, reviews: list[dict[str, Any]]) -> dict[str,
             "ok": False,
             "qa": {},
             "gate_allowed": False,
+            "template_saved": None,
             "error": _sanitize_text(str(exc)),
         }
     except Exception as exc:
@@ -3705,6 +3728,7 @@ def submit_reviews(product_key: str, reviews: list[dict[str, Any]]) -> dict[str,
             "ok": False,
             "qa": {},
             "gate_allowed": False,
+            "template_saved": None,
             "error": f"submit_reviews 중 오류: {_sanitize_error(exc)}",
         }
     # 갱신 후 게이트 통과 여부를 계산해 회신.
@@ -3713,10 +3737,82 @@ def submit_reviews(product_key: str, reviews: list[dict[str, Any]]) -> dict[str,
         allowed, _reason = qa_agents.qa_gate(_prepared)
     except Exception:
         allowed = False
+        _prepared = None
+
+    # --- 템플릿 저장 (N15: prepared → template, 재준비 없이) ---
+    # 미리보기를 본 뒤 "이 구성을 템플릿으로" 저장하는 경로다.
+    # **네트워크 호출 0회** — 로컬 파일(prepared payload)만 읽는다.
+    # ``transform_prepared_to_template_input`` 이 완전성을 계산하고,
+    # ``save_template`` 이 화이트리스트로 안전한 필드만 추출한다.
+    # 출처는 ``prepared:<product_key>`` 로 — 규제값이 어디서 왔는지 추적 가능.
+    template_saved: dict[str, Any] | None = None
+    save_name = str(save_prepared_as_template or "").strip()
+    if save_name:
+        try:
+            # prepared payload 가 이미 메모리에 있으면 재사용, 없으면 다시 로드.
+            if _prepared is None:
+                _prepared = _register_mod.load_prepared_payload(product_key=product_key)
+            prepared_product = (
+                _prepared.get("product") if isinstance(_prepared.get("product"), dict) else {}
+            )
+            transformed = _templates_mod.transform_prepared_to_template_input(prepared_product)
+            if not transformed.get("ok"):
+                # 변환 거부 — 빈 템플릿을 만들지 않는다. 사유를 결과에 드러낸다.
+                template_saved = {
+                    "ok": False,
+                    "name": save_name,
+                    "reason": transformed.get("reason")
+                    or "prepared payload 를 템플릿 입력으로 변환하지 못했습니다.",
+                    "notice_type": transformed.get("notice_type") or "",
+                    "notice_field_count": int(transformed.get("notice_field_count") or 0),
+                    "completeness": transformed.get("completeness")
+                    or {
+                        "filled_count": 0,
+                        "type_field_total": 0,
+                        "missing_fields": [],
+                    },
+                }
+            else:
+                notice_type = str(transformed.get("notice_type") or "")
+                template_saved = _templates_mod.save_template(
+                    name=save_name,
+                    notice_type=notice_type,
+                    product=transformed["product"],
+                    source={
+                        "origin_product_no": f"prepared:{product_key.strip()}",
+                        "completeness": transformed.get("completeness"),
+                        "reason": transformed.get("reason"),
+                    },
+                )
+        except _templates_mod.TemplateStoreError as exc:
+            template_saved = {
+                "ok": False,
+                "name": save_name,
+                "reason": (
+                    f"템플릿 저장소가 손상되어 저장할 수 없습니다: {exc}. "
+                    "조용히 넘기지 않습니다 — 저장소 파일을 점검하세요."
+                ),
+            }
+        except _templates_mod.TemplateNameError as exc:
+            template_saved = {
+                "ok": False,
+                "name": save_name,
+                "reason": (
+                    f"템플릿 저장을 거부했습니다(이름 형식 오류): {exc}. " "조용히 넘기지 않습니다."
+                ),
+            }
+        except Exception as exc:
+            template_saved = {
+                "ok": False,
+                "name": save_name,
+                "reason": _sanitize_text(str(exc)),
+            }
+
     return {
         "ok": True,
         "qa": aggregated,
         "gate_allowed": bool(allowed),
+        "template_saved": template_saved,
         "error": None,
     }
 
