@@ -51,6 +51,14 @@ packages = ["src/clossify"]
 [tool.hatch.build.targets.sdist]
 include = ["src/clossify", "config.example.json", "README.md", "LICENSE.md", "pyproject.toml"]
 
+# pytest 설정.
+# pythonpath 가 없으면 콘솔 스크립트 `pytest` 로 실행할 때 저장소 루트가 sys.path 에
+# 들어가지 않아 `from tests.x import ...` 가 ModuleNotFoundError 로 죽는다.
+# `python -m pytest` 는 CWD 를 자동으로 넣어주므로 로컬에서는 통과하고 CI 에서만 터진다.
+# 호출 방식에 의존하지 않도록 여기서 고정한다.
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
 # ruff 설정. CI 가 `ruff check .` 를 실행하며, 이 설정이 없으면 ruff 의
 # 기본 룰셋이 적용되어 프로젝트 의도와 무관한 대량 위반이 발생한다. 아래 룰셋은
 # 프로젝트 코드 품질에 의미 있는 규칙만 켜고, 각각 끄는 규칙은 사유를 남긴다.
