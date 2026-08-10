@@ -72,6 +72,26 @@ jobs:
             echo 'REVIEW_GUIDE_EOF'
           } >> "$GITHUB_OUTPUT"
 
+      # 게시 전 게시물 수를 센다. 아래 '결과 요약' 이 이 값과 비교해
+      # **실제로 리뷰가 붙었는지**를 판정한다 — 액션의 outcome 은 믿을 수 없다.
+      # (액션은 스스로 건너뛴 경우에도 outcome=success 로 끝난다)
+      - name: 게시물 수 세기 (전)
+        if: steps.guard.outputs.ready == 'true'
+        id: before
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          count_all() {
+            {
+              gh api "repos/$REPO/pulls/$PR/comments" --paginate --jq 'length'
+              gh api "repos/$REPO/issues/$PR/comments" --paginate --jq 'length'
+              gh api "repos/$REPO/pulls/$PR/reviews"   --paginate --jq 'length'
+            } | awk '{s+=$1} END {print s+0}'
+          }
+          echo "count=$(count_all)" >> "$GITHUB_OUTPUT"
+
       - name: AI 리뷰 실행
         if: steps.guard.outputs.ready == 'true'
         id: ai
@@ -102,17 +122,56 @@ jobs:
               `로컬에서 확인함` 또는 `미검증` 을 함께 적어라.
             - 지적이 없으면 "지적 사항 없음" 을 한 줄로 게시하라(침묵 금지).
 
+      # ⚠️ 이 스텝의 존재 이유: 액션의 outcome 을 완료 신호로 쓰면 **거짓 완료**가 난다.
+      # 액션은 스스로 건너뛴 경우(아래 '워크플로 검증')에도 outcome=success 로 끝나므로,
+      # 판정은 반드시 **게시물이 실제로 늘었는지**로 한다. 이 비교를 없애지 마라.
       - name: 결과 요약
         if: always() && steps.guard.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ steps.before.outputs.count }}
+          AI_OUTCOME: ${{ steps.ai.outcome }}
         run: |
-          # continue-on-error 스텝은 conclusion 이 항상 success 다.
-          # 실패 감지는 outcome 으로 해야 한다.
-          if [ "${{ steps.ai.outcome }}" = "success" ]; then
-            echo "### AI 보조 리뷰 완료" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "::warning::AI 리뷰가 실패했습니다(결정론 검사는 정상)."
+          count_all() {
             {
-              echo "### AI 보조 리뷰 실패"
+              gh api "repos/$REPO/pulls/$PR/comments" --paginate --jq 'length'
+              gh api "repos/$REPO/issues/$PR/comments" --paginate --jq 'length'
+              gh api "repos/$REPO/pulls/$PR/reviews"   --paginate --jq 'length'
+            } | awk '{s+=$1} END {print s+0}'
+          }
+          posted=$(( $(count_all) - ${BEFORE:-0} ))
+
+          # 액션은 PR 이 워크플로 파일을 고치면 스스로 건너뛴다
+          # ("workflow file must have identical content to the default branch").
+          # PR 에서 워크플로를 고쳐 시크릿을 빼가는 걸 막는 장치이므로 우회하지 마라.
+          # 원인을 모르면 배선 문제로 오진하게 되니 여기서 이름을 붙여준다.
+          if gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename' \
+               | grep -q '^\.github/workflows/'; then
+            wf_changed=yes
+          else
+            wf_changed=no
+          fi
+
+          if [ "$posted" -gt 0 ]; then
+            {
+              echo "### AI 보조 리뷰 완료"
+              echo "게시물 **${posted}건**."
+            } >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$wf_changed" = "yes" ]; then
+            echo "::warning::워크플로 파일을 수정한 PR 이라 AI 리뷰가 건너뛰어졌습니다(정상 동작)."
+            {
+              echo "### AI 보조 리뷰 건너뜀 — 워크플로 파일 수정 PR"
+              echo "이 PR 이 \`.github/workflows/\` 를 고치므로 액션이 스스로 실행을 거부했습니다."
+              echo "PR 에서 워크플로를 고쳐 시크릿을 탈취하는 것을 막는 장치입니다 — **배선 문제가 아닙니다.**"
+              echo "이 PR 이 머지되면 다음 PR 부터 리뷰가 정상 동작합니다."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::AI 리뷰가 한 건도 게시되지 않았습니다(결정론 검사는 정상)."
+            {
+              echo "### AI 보조 리뷰 미게시"
+              echo "액션 결과: \`${AI_OUTCOME}\` · 게시물 증가: **0건**"
               echo "결정론 검사(ruff·pytest·gitleaks)는 그대로 동작합니다."
               echo ""
               echo "확인 순서: GitHub App 설치 → API 키 → 사용 한도 → 허용 도구 목록 → 최대 턴 수."
