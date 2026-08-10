@@ -108,15 +108,15 @@ def _wait_for_port(port: int, timeout: float = 3.0) -> bool:
 
 
 def _port_is_closed(port: int, timeout: float = 3.0) -> bool:
-    """포트가 닫혔는지 확인(연결 시도가 실패하면 닫힌 것)."""
+    """포트가 닫혔는지 확인(연결 실패 = 닫힘)."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                return False
+                time.sleep(0.1)  # 아직 열려 있음.
         except OSError:
-            return True
-    return True
+            return True  # 닫힘.
+    return False
 
 
 # ---------------------------------------------------------------------------
