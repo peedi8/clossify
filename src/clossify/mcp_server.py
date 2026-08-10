@@ -575,9 +575,14 @@ def _notice_field_answer_shape(field: str) -> str:
     라벨을 새로 창작하지 않는다 — 데이터에 기록된 타입에서 기계적으로 산출한다.
     미기재 필드(문자열)는 빈 문자열을 반환해 기존 동작을 보존한다.
 
-    boolean/date 타입 필드는 "미루기 불가" 안내를 포함한다 — 네이버 API 가
-    문자열 placeholder 를 Boolean/date 타입으로 받지 않으므로, 실제 값을
-    입력해야 함을 명시한다.
+    boolean/연월/연월일 타입 필드는 "미루기 불가" 안내를 포함한다 — 네이버 API 가
+    문자열 placeholder 를 Boolean/YearMonth/LocalDate 타입으로 받지 않으므로,
+    실제 값을 입력해야 함을 명시한다.
+
+    타입을 추측하지 않는다 — ``data/notice_field_types.json`` 의 API 정답표가
+    선언한 fieldType(YearMonth → year_month, LocalDate → local_date) 에서
+    기계적으로 산출한다. 종전에는 date 를 한 덩어리로 묶어 안내했으나, API 가
+    연월(yyyy-MM) 과 연월일(yyyy-MM-dd) 을 구분하므로 안내도 같이 구분한다.
     """
     ftype = qa_agents._notice_field_type(field)
     if ftype == "boolean":
@@ -587,12 +592,43 @@ def _notice_field_answer_shape(field: str) -> str:
             "네이버 API 가 문자열을 Boolean 으로 받지 않습니다. "
             "true 또는 false(Python bool) 로 답해주세요."
         )
+    if ftype == "year_month":
+        return (
+            "이 필드는 연월(yyyy-MM) 항목입니다. "
+            "미루기('상세페이지 참조')가 불가능합니다 — "
+            "네이버 API 가 문자열을 YearMonth 타입으로 받지 않습니다. "
+            "예: 2024-03 과 같이 정확한 연월(yyyy-MM) 로 답해주세요."
+        )
+    if ftype == "local_date":
+        return (
+            "이 필드는 연월일(yyyy-MM-dd) 항목입니다. "
+            "미루기('상세페이지 참조')가 불가능합니다 — "
+            "네이버 API 가 문자열을 LocalDate 타입으로 받지 않습니다. "
+            "예: 2024-03-15 와 같이 정확한 연월일(yyyy-MM-dd) 로 답해주세요."
+        )
     if ftype == "date":
+        # 과거 호환 — 종전 date 를 한 덩어리로 다루던 호출 경로. API 정답표가
+        # year_month/local_date 로 세분화했으므로 이 분기는 닿지 않아야 하지만,
+        # 데이터가 없는 필드가 임의 date 로 분류되는 회귀를 막기 위해 남긴다.
         return (
             "이 필드는 날짜 항목입니다. "
             "미루기('상세페이지 참조')가 불가능합니다 — "
             "네이버 API 가 문자열을 날짜 타입으로 받지 않습니다. "
             "정확한 형식은 네이버 고시 스펙을 확인해주세요."
+        )
+    if ftype == "integer":
+        return (
+            "이 필드는 정수(Integer) 항목입니다. "
+            "미루기('상세페이지 참조')가 불가능합니다 — "
+            "네이버 API 가 문자열을 Integer 타입으로 받지 않습니다. "
+            "예: 30 과 같이 정확한 정수로 답해주세요."
+        )
+    if ftype == "long":
+        return (
+            "이 필드는 정수(Long) 항목입니다. "
+            "미루기('상세페이지 참조')가 불가능합니다 — "
+            "네이버 API 가 문자열을 Long 타입으로 받지 않습니다. "
+            "예: 1234567890 과 같이 정확한 정수로 답해주세요."
         )
     # string/미기재 — 기존 동작(자유 텍스트). 빈 문자열로 둬 기존 필드와 회귀 없이.
     return ""
@@ -1973,7 +2009,7 @@ def register_product(
     status: str = "SALE",
     stock: int = 1,
     delivery_fee: int = 3000,
-    courier: str = "CJGLS",
+    courier: str = "",
     notice: dict[str, Any] | None = None,
     preview_confirmed: bool = False,
     option_groups: list[str] | None = None,
@@ -2024,7 +2060,12 @@ def register_product(
         stock: 단일 품목(옵션 없음)일 때의 재고. ``options`` 제공 시 무시되고
             옵션별 재고 합으로 계산된다.
         delivery_fee: 기본 배송비 (KRW). 기본 3000.
-        courier: 택배사 코드. 기본 ``"CJGLS"``.
+        courier: 택배사 코드. 기본 ``""`` (빈 문자열 = 사용자가 명시적으로
+            제공해야 함). ``naver_client._resolve_delivery_company`` 가
+            ``p.courier`` → ``config.smartstore_notice_defaults.delivery_company``
+            순으로 찾고, 둘 다 없으면 ``ValueError`` (fail-closed).
+            과거 기본값 ``"CJGLS"`` 제거 — 택배사 코드는 판매자가 실제 계약한
+            택배사를 신고하는 규제값이므로 코드가 임의로 정하면 안 된다.
         notice: 상품정보제공고시 오버라이드. ``{"productInfoProvidedNoticeType":
             "ETC"|"FURNITURE", ...}`` 형태. 미제공 시 naver_client 가
             카테고리/기본값으로 자동 완성.

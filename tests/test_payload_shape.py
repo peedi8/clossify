@@ -53,7 +53,9 @@ def _make_product(**overrides) -> dict:
 
 def _build_payload(p: dict) -> dict:
     """내부 config 의존(config 로드/KC)을 끊고 build_payload 만 실행."""
-    with mock.patch.object(naver_client, "_notice_config", return_value={}):
+    with mock.patch.object(
+        naver_client, "_notice_config", return_value={"delivery_company": "HKSTRANS"}
+    ):
         with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
             return naver_client.build_payload(p, "<html></html>", ["http://x/img.png"])
 

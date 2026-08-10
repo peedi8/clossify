@@ -227,6 +227,7 @@ class TestNaverRegisterRejectsEmptyRepresentativeImage:
                     "representativeImage": {"url": ""},
                     "optionalImages": [],
                 },
+                "deliveryInfo": {"deliveryCompany": "HKSTRANS"},
             },
         }
         post_calls: list = []
@@ -245,6 +246,7 @@ class TestNaverRegisterRejectsEmptyRepresentativeImage:
                     "representativeImage": {"url": "   "},
                     "optionalImages": [],
                 },
+                "deliveryInfo": {"deliveryCompany": "HKSTRANS"},
             },
         }
         post_calls: list = []
@@ -261,6 +263,7 @@ class TestNaverRegisterRejectsEmptyRepresentativeImage:
                     "representativeImage": {"url": None},
                     "optionalImages": [],
                 },
+                "deliveryInfo": {"deliveryCompany": "HKSTRANS"},
             },
         }
         post_calls: list = []
@@ -274,6 +277,7 @@ class TestNaverRegisterRejectsEmptyRepresentativeImage:
         payload = {
             "originProduct": {
                 "images": {},
+                "deliveryInfo": {"deliveryCompany": "HKSTRANS"},
             },
         }
         post_calls: list = []

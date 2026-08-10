@@ -96,7 +96,7 @@ def _make_prepared_payload(
             "importer": "",
             "as_tel": "",
             "as_guide": "",
-            "courier": "CJGLS",
+            "courier": "HKSTRANS",
             "delivery_fee": 3000,
         },
         "images": {

@@ -9,7 +9,7 @@
 일관되게 반영되는지 확인한다:
 
   - ``importDeclaration`` → **boolean** (네이버 응답 ``java.lang.Boolean``).
-  - ``releaseDate`` → **date** (네이버 응답 date parse error, 형식 미확정).
+  - ``releaseDate`` → **year_month** (API 정답표 YearMonth, yyyy-MM).
 
 핵심 회귀: boolean ``False`` 가 "미제공" 으로 읽혀 게이트가 차단하던 결정적
 결함을 바로잡는다 — ``False`` 는 유효한 답이다 (수입신고 대상 아님).
@@ -51,6 +51,7 @@ _KITCHEN_CFG = {
     "qualityAssuranceStandard": "[CFG] 품질 보증 기준",
     "compensationProcedure": "[CFG] 보상 절차",
     "troubleShootingContents": "[CFG] 고장 대처",
+    "delivery_company": "HKSTRANS",
 }
 
 # KITCHEN_UTENSILS 의 필수 필드 전체에서 boolean/date 필드 이외의 값을 채운
@@ -331,14 +332,18 @@ class TestBooleanStringRefused:
 
 
 class TestUntypedFieldStringBehavior:
-    """(e) 타입 미기재 필드는 기존 문자열 동작을 유지한다."""
+    """(e) 타입 미기재 필드는 기존 문자열 동작을 유지한다.
+
+    2026-08-10 이후 notice_field_types.json 이 118개 필드를 전수 수록하므로,
+    material/returnCostReason/size 는 이제 '명시적 string 타입' 이다.
+    데이터에 없는 필드(totallyUnknownField 등)만이 '미기재 = string' 경로를 탄다.
+    """
 
     def test_e_untyped_field_type_returns_string(self):
         """미기재 필드의 _notice_field_type 은 'string'."""
-        # material 은 notice_field_types.json 에 없다.
-        assert qa_agents._notice_field_type("material") == "string"
-        assert qa_agents._notice_field_type("returnCostReason") == "string"
-        assert qa_agents._notice_field_type("size") == "string"
+        # 데이터 파일에 없는 필드만 미기재 경로를 탄다.
+        assert qa_agents._notice_field_type("totallyUnknownField") == "string"
+        assert qa_agents._notice_field_type("nonexistentField123") == "string"
 
     def test_e_untyped_field_judged_as_before(self):
         """미기재 필드는 기존 placeholder 판정을 따른다."""
@@ -384,9 +389,14 @@ class TestNeedsUserBooleanAnswerShape:
         assert mcp_server._notice_field_answer_shape("returnCostReason") == ""
 
     def test_f_answer_shape_date(self):
-        """date 필드의 answer_shape 은 날짜 안내."""
+        """date 계열 필드의 answer_shape 은 날짜 안내.
+
+        API 정답표가 releaseDate 를 YearMonth(yyyy-MM) 로 선언하므로
+        answer_shape 도 '연월' 안내로 나온다. 종전 'date' 한덩어리에서
+        연월/연월일로 세분화되었으므로 둘 중 하나의 키워드가 있으면 된다.
+        """
         shape = mcp_server._notice_field_answer_shape("releaseDate")
-        assert "날짜" in shape, f"date 안내에 날짜 가 없음: {shape!r}"
+        assert "연월" in shape or "날짜" in shape, f"date 계열 안내에 연월/날짜 가 없음: {shape!r}"
 
     def test_f_needs_user_has_answer_shape_for_boolean(self, monkeypatch, isolated_prepared_dir):
         """필수 boolean 필드 누락 시 needs_user 에 answer_shape 가 붙는다.
@@ -512,59 +522,92 @@ class TestDateFieldPassThrough:
 
 
 class TestNoticeFieldTypesDataIntegrity:
-    """notice_field_types.json 데이터 파일 무결성 검증."""
+    """notice_field_types.json 데이터 파일 무결성 검증.
 
-    def test_only_confirmed_fields_in_data(self):
-        """데이터에는 확인된 필드만 있다 (타입 추측 금지).
+    본 테스트 클래스는 데이터 파일이 API 정본(GET /external/v1/products-for-provided-notice)
+    전수를 수록하고 있는지 검증한다. 2026-08-10 이전에는 8개 필드만 있었고
+    나머지 비-String 필드(Integer·Long 등)가 String 으로 오판정되어 미루기가
+    적용되는 결함이 있었다. 이제 API 의 모든 타입의 모든 필드를 전수 수록한다.
+    """
 
-        확인된 것:
-          - importDeclaration → boolean (기존)
-          - releaseDate → date (기존)
-          - geneticallyModified → boolean (2026-08-04 수확)
-          - importDeclarationCheck → boolean (2026-08-04 수확)
-          - packDate → date (2026-08-04 수확)
-          - consumptionDate → date (2026-08-04 수확)
-          - expirationDate → date (2026-08-04 date-parse probe 수확)
-          - publishDate → date (2026-08-04 date-parse probe 수확)
+    def test_known_non_string_types_present(self):
+        """API 에서 비-String 타입으로 선언된 모든 필드가 데이터에 있다.
+
+        확인된 것 (API 정답표 전수 — 36 타입 118 고유 필드명):
+          - importDeclaration → boolean
+          - geneticallyModified → boolean
+          - importDeclarationCheck → boolean
+          - releaseDate → year_month (YearMonth, yyyy-MM)
+          - packDate → local_date (LocalDate, yyyy-MM-dd) — mixed with YearMonth
+          - consumptionDate → local_date (LocalDate, yyyy-MM-dd)
+          - expirationDate → local_date (LocalDate, yyyy-MM-dd) — mixed with YearMonth
+          - publishDate → local_date (LocalDate, yyyy-MM-dd)
+          - periodStartDate → local_date (GIFT_CARD)
+          - periodEndDate → local_date (GIFT_CARD)
+          - periodDays → integer (GIFT_CARD)
+          - useStoreAddressId → long (GIFT_CARD)
         """
         types = qa_agents._load_notice_field_types()
         assert isinstance(types, dict)
-        # 확인된 필드만 있어야 한다. 다른 필드가 우연히 들어가면 안 된다.
-        assert "importDeclaration" in types
+        # boolean 3개.
         assert types["importDeclaration"]["type"] == "boolean"
-        assert "releaseDate" in types
-        assert types["releaseDate"]["type"] == "date"
-        # 2026-08-04 수확분.
         assert types["geneticallyModified"]["type"] == "boolean"
         assert types["importDeclarationCheck"]["type"] == "boolean"
-        assert types["packDate"]["type"] == "date"
-        assert types["consumptionDate"]["type"] == "date"
-        # 2026-08-04 date-parse probe 수확분.
-        assert types["expirationDate"]["type"] == "date"
-        assert types["publishDate"]["type"] == "date"
+        # year_month 1개.
+        assert types["releaseDate"]["type"] == "year_month"
+        # local_date 6개. expirationDate 와 packDate 는 mixed types 이지만
+        # 비-String 중 하나로 정규화되어 있으므로 미루기 불가 판정에는 영향 없음.
+        assert types["packDate"]["type"] in ("local_date", "year_month")
+        assert types["consumptionDate"]["type"] == "local_date"
+        assert types["expirationDate"]["type"] in ("local_date", "year_month")
+        assert types["publishDate"]["type"] == "local_date"
+        assert types["periodStartDate"]["type"] == "local_date"
+        assert types["periodEndDate"]["type"] == "local_date"
+        # integer / long.
+        assert types["periodDays"]["type"] == "integer"
+        assert types["useStoreAddressId"]["type"] == "long"
 
-    def test_no_unconfirmed_types(self):
-        """미확인 필드가 데이터에 없다.
+    def test_all_non_string_fields_are_non_deferrable(self):
+        """API 비-String 타입 전체가 미루기 불가로 판정된다 (String 만 미루기 가능).
 
-        핵심 계약: 타입을 지어내지 않는다. 확인된 것만 기록한다.
-        잘못 들어간 필드가 있는지 확인.
+        핵심 계약: 미루기 가능 = (type == 'string').
+        비-String 타입(boolean·year_month·local_date·integer·long) 으로
+        선언된 필드는 어떤 것도 미루기 대상이 아니다.
         """
         types = qa_agents._load_notice_field_types()
-        # 허용된 필드 집합 — 확인된 것만.
-        # 기존 2개 + 2026-08-04 야간 수확 4개 (boolean 2, date 2)
-        # + 2026-08-04 date-parse probe 수확 2개 (date 2).
-        allowed = {
-            # 기존 기록분.
-            "importDeclaration",
-            "releaseDate",
-            # 2026-08-04 야간 수확 (live API 400 response).
-            "geneticallyModified",
-            "importDeclarationCheck",
-            "packDate",
-            "consumptionDate",
-            # 2026-08-04 date-parse probe 수확.
-            "expirationDate",
-            "publishDate",
+        non_string = {
+            name: entry["type"] for name, entry in types.items() if entry["type"] != "string"
         }
-        extra = set(types.keys()) - allowed
-        assert not extra, f"확인되지 않은 필드가 데이터에 있습니다 (타입 추측 금지 위반): {extra}"
+        assert non_string, "비-String 필드가 하나도 없음 — 데이터 손상 의심"
+        for name, ftype in non_string.items():
+            assert qa_agents._is_field_deferrable(name) is False, (
+                f"비-String 필드 {name}({ftype}) 가 deferrable=True — 미루기가 적용되면 "
+                f"네이버가 거절한다"
+            )
+
+    def test_field_count_matches_api(self):
+        """필드 수가 API 정본과 일치한다 (118 고유 필드명)."""
+        types = qa_agents._load_notice_field_types()
+        assert (
+            len(types) == 118
+        ), f"필드 수가 118 이 아님: {len(types)} (API 정본 = 118 고유 필드명)"
+
+    def test_every_field_has_description(self):
+        """모든 필드에 field_description 이 있다 (사용자 안내 재료)."""
+        types = qa_agents._load_notice_field_types()
+        missing = [
+            name
+            for name, entry in types.items()
+            if not str(entry.get("field_description") or "").strip()
+        ]
+        assert not missing, f"field_description 이 없는 필드: {missing}"
+
+    def test_api_field_type_preserved(self):
+        """각 필드에 API 원값(api_field_type)이 보존되어 있다 (정본 추적)."""
+        types = qa_agents._load_notice_field_types()
+        missing = [
+            name
+            for name, entry in types.items()
+            if not str(entry.get("api_field_type") or "").strip()
+        ]
+        assert not missing, f"api_field_type 이 없는 필드: {missing}"

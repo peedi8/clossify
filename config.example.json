@@ -32,7 +32,7 @@
     "vision_model": "{VISION_MODEL}"
   },
   "smartstore_notice_defaults": {
-    "_comment": "상품정보제공고시 자동완성 기본값. 판매자가 실제 신고하는 값을 입력. 미입력 시 등록이 거부됩니다 (fail-closed, 조용한 기본값 금지). 이 섹션에 넣은 값은 35종 고시의 공통 5필드(returnCostReason/noRefundReason/qualityAssuranceStandard/compensationProcedure/troubleShootingContents) 및 제조자/AS연락처/수입자 등의 기본값으로 사용됩니다. 코드가 임의 문구를 지어내지 않습니다 — 값이 없으면 해당 고시 필드가 비고 컴플라이언스 검사에서 FAIL 차단됩니다. 공통 5필드는 빈 문자열(아래)로만 배포됩니다 — 판매자가 실제 신고 문구로 채워야 하며, 빈 문자열/공백뿐인 값은 미설정으로 취급되어 매번 사용자에게 묻게 됩니다. config 에서 채워진 항목은 페이로드 메타(notice_filled_from_config)에 명시됩니다.",
+    "_comment": "상품정보제공고시 자동완성 기본값. 판매자가 실제 신고하는 값을 입력. 미입력 시 등록이 거부됩니다 (fail-closed, 조용한 기본값 금지). 이 섹션에 넣은 값은 35종 고시의 공통 5필드(returnCostReason/noRefundReason/qualityAssuranceStandard/compensationProcedure/troubleShootingContents) 및 제조자/AS연락처/수입자 등의 기본값으로 사용됩니다. 코드가 임의 문구를 지어내지 않습니다 — 값이 없으면 해당 고시 필드가 비고 컴플라이언스 검사에서 FAIL 차단됩니다. 공통 5필드는 빈 문자열(아래)로만 배포됩니다 — 판매자가 실제 신고 문구로 채워야 하며, 빈 문자열/공백뿐인 값은 미설정으로 취급되어 매번 사용자에게 묻게 됩니다. config 에서 채워진 항목은 페이로드 메타(notice_filled_from_config)에 명시됩니다. delivery_company 는 반품/교환 택배사 코드(네이버 커머스API enum) — 판매자가 실제 사용하는 택배사 코드로 입력. 미입력 시 코드가 임의 값을 지어내지 않고 사용자에게 요구합니다(fail-closed).",
     "origin_area_code": "REPLACE_WITH_ORIGIN_AREA_CODE",
     "origin_content": "REPLACE_WITH_ORIGIN_CONTENT",
     "importer": "REPLACE_WITH_IMPORTER_OR_EMPTY",
@@ -44,7 +44,8 @@
     "noRefundReason": "",
     "qualityAssuranceStandard": "",
     "compensationProcedure": "",
-    "troubleShootingContents": ""
+    "troubleShootingContents": "",
+    "delivery_company": "REPLACE_WITH_DELIVERY_COMPANY_CODE"
   },
   "kc_declaration": {
     "_comment": "KC 인증 신고값. 판매자가 실제 신고하는 값을 입력. 미입력 시 등록이 거부됩니다 (fail-closed, 조용한 기본값 금지).kcCertifiedProductExclusionYn / kcExemptionType 두 값 중 하나라도 비어있으면 KC 필드 전체가 payload에서 생략되며, 네이버 커머스 API가 요구하면 에러로 알려줍니다.",

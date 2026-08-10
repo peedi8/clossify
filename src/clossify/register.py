@@ -433,7 +433,7 @@ def _build_product_dict(d, seo_title, category_id):
         "salePrice": int(sale_price),
         "options": d.get("options") or [],
         "tags": d.get("tags") or [],
-        "courier": d.get("courier") or "CJGLS",
+        "courier": d.get("courier") or "",
         "delivery_fee": d.get("delivery_fee", 3000),
         "notice": d.get("notice") or {},
         "as_tel": d.get("as_tel") or "",
@@ -483,7 +483,7 @@ def _build_register_product_dict(d, name, category_id, *, resolved_tags=None):
         "tags": tags_value,
         "stock": int(d.get("stock", 1)),
         "delivery_fee": int(d.get("delivery_fee", 3000)),
-        "courier": d.get("courier") or "CJGLS",
+        "courier": d.get("courier") or "",
     }
     if d.get("options"):
         product["options"] = d.get("options")
@@ -1805,7 +1805,7 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None, recommend_fn=None, r
             "importer": d.get("importer") or "",
             "as_tel": d.get("as_tel") or "",
             "as_guide": d.get("as_guide") or "",
-            "courier": d.get("courier") or "CJGLS",
+            "courier": d.get("courier") or "",
             "delivery_fee": d.get("delivery_fee", 3000),
             # option_groups: 다축 옵션의 그룹 이름(예: ["색상","사이즈"]).
             # naver_client._option_group_list 가 "option_groups" 키를 읽어

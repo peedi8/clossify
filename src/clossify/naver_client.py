@@ -35,29 +35,39 @@ KNOWN_RESTRICTED_SELLER_TAGS = {"인테리어", "화병", "도자기", "꽃병"}
 # 네이버 커머스 API 상품명 최대 길이(정책). 초과 시 등록 거절.
 MAX_PRODUCT_NAME_LEN = 50
 
+
 # 네이버 커머스 API originAreaInfo.originAreaCode 표준 코드 화이트리스트.
 # 특정 해외국 코드를 기본값으로 갖지 않는다. 원산지는 판매자가 config 에
 # 명시한 값만 허용하며, 화이트리스트 벗어남/누락 시 ValueError 로 등록 거부(fail-closed).
-_VALID_ORIGIN_AREA_CODES = frozenset(
-    {
-        "01",
-        "02",
-        "03",
-        "04",
-        "05",
-        "06",
-        "07",
-        "08",
-        "09",
-        "10",
-        "11",
-        "12",
-        "13",
-        "14",
-        "15",
-        "16",
-    }
-)
+#
+# 과거 이 목록은 하드코딩된 ``{"01".."16"}`` 이었다 — 실측(D64) 으로 535개
+# (최상위 6 + 시·도 27 + 시·군·구 502) 코드가 확인되었고, 하드코딩은 ``00 국산``
+# 이 빠져 있고 ``10``-``16`` 같은 존재하지 않는 코드가 섞여 있었다.
+# 이제 ``data/product_origin_areas.json`` 의 단일 진실 공급원에서 읽는다.
+# 파일 부재/손상 시 빈 frozenset 이 되며, 이 경우 모든 코드가 거부된다
+# (fail-closed — 파일이 없으면 코드를 임의로 통과시키지 않는다).
+def _load_origin_area_codes() -> frozenset:
+    try:
+        path = common.package_data_path("product_origin_areas.json")
+        if not path.exists():
+            return frozenset()
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+    except (OSError, ValueError):
+        return frozenset()
+    codes: set[str] = set()
+    for key in ("top_level", "state_level", "city_level"):
+        bucket = doc.get(key) if isinstance(doc, dict) else None
+        if isinstance(bucket, list):
+            for entry in bucket:
+                if isinstance(entry, dict):
+                    code = str(entry.get("code") or "").strip()
+                    if code:
+                        codes.add(code)
+    return frozenset(codes)
+
+
+_VALID_ORIGIN_AREA_CODES: frozenset = _load_origin_area_codes()
 
 
 def resolve_config_path() -> str:
@@ -271,9 +281,51 @@ def _resolve_origin_area_code(p, cfg_notice):
         raise ValueError(
             "config 에 원산지 설정이 필요합니다: smartstore_notice_defaults.origin_area_code"
         )
+    if not _VALID_ORIGIN_AREA_CODES:
+        # 데이터 파일(product_origin_areas.json) 부재/손상 — 모든 코드가 거부된다.
+        # fail-closed: 파일이 없으면 코드를 임의로 통과시키지 않는다.
+        raise ValueError(
+            "원산지 코드 화이트리스트(data/product_origin_areas.json)를 불러올 수 없습니다. "
+            "패키지 데이터 파일이 손상되었거나 누락되었습니다. "
+            "scripts/fetch_origin_and_notice_types.py 로 재생성하거나 패키지를 재설치하세요."
+        )
     if code not in _VALID_ORIGIN_AREA_CODES:
-        raise ValueError(f"원산지 코드가 네이버 커머스 API 화이트리스트에 없습니다: {code!r}")
+        raise ValueError(
+            f"원산지 코드가 네이버 커머스 API 화이트리스트에 없습니다: {code!r} "
+            f"(data/product_origin_areas.json 의 535개 코드 중 하나여야 합니다)"
+        )
     return code
+
+
+def _resolve_delivery_company(p, cfg_notice):
+    """``deliveryInfo.deliveryCompany`` 값을 결정한다 (임의값 금지, 빈 값 허용).
+
+    과거 코드는 ``"CJGLS"`` 를 기본값/폴백으로 박았다. 택배사 코드는 **판매자가
+    실제 계약한 택배사** 를 신고하는 규제값이며, 우리가 임의로 정하면 안 된다.
+    실측(D64) 확인: 이 스토어는 한진택배(HKSTRANS) 를 쓰고 있어 CJGLS 기본값은
+    틀린 신고였다.
+
+    후보 순서: ``p.courier`` → ``cfg_notice.delivery_company``.
+    둘 다 없으면 **빈 문자열을 반환한다** (``as_tel``/``manufacturer``/``importer``
+    와 동일한 패턴). 본 함수는 페이로드 **구성 단계** 에서 호출되므로, 여기서
+    예외를 던지면 ``build_payload`` 순수 구성 함수가 깨진다. fail-closed 검증은
+    **등록 경계**(``register_product``) 에서 별도로 수행한다 — 빈 택배사 코드가
+    네이버 API 로 나가는 것을 거부한다.
+
+    본 함수는 택배사 코드를 **검증하지 않는다.** 네이버 커머스 API 의 택배사
+    enum 은 스토어마다 다를 수 있고(판매자가 계약한 택배사만 노출) 실시간 조회
+    엔드포인트(``GET /external/v2/product-delivery-info/return-delivery-companies``)
+    로 알 수 있다. 정적 데이터 파일로 굳히지 않는다(§4 계약).
+    """
+    raw = _first_value(
+        p.get("courier"),
+        p.get("delivery_company"),
+        p.get("deliveryCompany"),
+        cfg_notice.get("delivery_company"),
+        cfg_notice.get("deliveryCompany"),
+        default="",
+    )
+    return str(raw or "").strip()
 
 
 def _notice_defaults(p):
@@ -389,6 +441,13 @@ def _notice_defaults(p):
         ),
         "origin_area_code": _resolve_origin_area_code(p, cfg_notice),
         "origin_content": made_in,
+        # 택배사 코드 — 판매자가 config/상품입력으로 제공한 값.
+        # _resolve_delivery_company 는 상품 입력 → config 순으로 찾고, 둘 다
+        # 없으면 빈 문자열을 반환한다 (as_tel/manufacturer/importor 와 동일).
+        # fail-closed 검증은 register_product 등록 경계에서 수행한다.
+        # 과거 이 자리에 "CJGLS" 하드코딩 폴백이 있었다 — 실측(D64) 으로
+        # 이 스토어가 한진택배를 쓰는 것이 확인되어 틀린 신고였다.
+        "delivery_company": _resolve_delivery_company(p, cfg_notice),
         "return_delivery_fee": _int_value(
             p.get("return_delivery_fee", cfg_notice.get("return_delivery_fee")),
             3000,
@@ -1300,6 +1359,24 @@ def _strip_internal_meta(payload):
 
 def register_product(payload, tk=None):
     """POST /external/v2/products. (origin/channel No 반환)"""
+    # 등록 경계 게이트: 페이로드 구성 단계(build_payload)와 분리된 최종 검증.
+    # 택배사 코드(deliveryCompany)가 빈 값이면 네이버 API 로 나가는 것을 거부한다.
+    # _resolve_delivery_company 는 as_tel/manufacturer/importer 와 동일하게 빈
+    # 문자열을 반환하므로, 실제 API 송신 직전에 이 지점에서 fail-closed 한다.
+    # "CJGLS" 같은 임의 기본값을 박는 대신 사용자에게 요구하는 것이 정답이다.
+    try:
+        delivery_company = (
+            payload.get("originProduct", {}).get("deliveryInfo", {}).get("deliveryCompany", "")
+        )
+    except AttributeError:
+        delivery_company = ""
+    if not isinstance(delivery_company, str) or not delivery_company.strip():
+        raise ValueError(
+            "config 에 택배사(delivery_company) 설정이 필요합니다: "
+            "smartstore_notice_defaults.delivery_company — 판매자가 실제 사용하는 "
+            "택배사 코드(네이버 커머스 API enum). 미입력 시 코드가 임의 값을 "
+            "지어내지 않고 사용자에게 요구합니다."
+        )
     # 디스크의 prepared payload 를 그대로 등록하는 경로의 마지막 방어선.
     # 대표 이미지 URL 이 비어 있으면 페이로드 생성 단계의 게이트가 우회됐을 수 있으므로
     # POST 송신 전에 한 번 더 검증한다 (fail-closed).
@@ -1814,7 +1891,11 @@ def build_payload(p, detail_html, images, status="SALE", deferred_notice_fields=
             "deliveryInfo": {
                 "deliveryType": "DELIVERY",
                 "deliveryAttributeType": "NORMAL",
-                "deliveryCompany": p.get("courier", "CJGLS"),
+                # 택배사 코드 — defaults["delivery_company"] 에서만 받는다.
+                # _resolve_delivery_company 가 상품 입력 → config 순으로 찾고,
+                # 둘 다 없으면 빈 문자열 (register_product 경계에서 fail-closed).
+                # "CJGLS" 기본값 제거.
+                "deliveryCompany": defaults["delivery_company"],
                 "deliveryBundleGroupUsable": False,
                 "deliveryFee": {
                     "deliveryFeeType": "PAID",

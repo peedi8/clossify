@@ -100,6 +100,7 @@ class TestFix5NameTruncation:
             "origin_content": "중국",
             "as_tel": "070-1234-5678",
             "manufacturer": "테스트제조사",
+            "delivery_company": "HKSTRANS",
         }
         _common_cfg = {
             "smartstore_notice_defaults": {"origin_content": "중국"},
@@ -148,6 +149,7 @@ class TestFix5NameTruncation:
             "origin_content": "중국",
             "as_tel": "070-1234-5678",
             "manufacturer": "테스트제조사",
+            "delivery_company": "HKSTRANS",
         }
         _common_cfg = {
             "smartstore_notice_defaults": {"origin_content": "중국"},

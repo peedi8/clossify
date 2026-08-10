@@ -71,6 +71,7 @@ _NOTICE_CFG_FULL = {
     "quality_assurance_standard": "관련법에 따름",
     "compensation_procedure": "소비자분쟁해결기준",
     "trouble_shooting_contents": "고객센터 문의",
+    "delivery_company": "HKSTRANS",
 }
 
 
@@ -162,7 +163,7 @@ def _make_passing_prepared(name: str, price: int = 10000, category_id: str = "50
             "importer": "",
             "as_tel": "070-1234-5678",
             "as_guide": "",
-            "courier": "CJGLS",
+            "courier": "HKSTRANS",
             "delivery_fee": 3000,
             "option_groups": [],
         },

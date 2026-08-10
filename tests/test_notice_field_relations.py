@@ -54,6 +54,7 @@ _KITCHEN_CFG = {
     "qualityAssuranceStandard": "[CFG] 품질 보증 기준",
     "compensationProcedure": "[CFG] 보상 절차",
     "troubleShootingContents": "[CFG] 고장 대처",
+    "delivery_company": "HKSTRANS",
 }
 
 # ETC 카테고리 컴플라이언스 통과용 최소 config notice 섹션.
@@ -67,6 +68,7 @@ _ETC_CFG = {
     "qualityAssuranceStandard": "[CFG] 품질 보증 기준",
     "compensationProcedure": "[CFG] 보상 절차",
     "troubleShootingContents": "[CFG] 고장 대처",
+    "delivery_company": "HKSTRANS",
 }
 
 

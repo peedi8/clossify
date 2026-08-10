@@ -311,9 +311,11 @@ def _notice_type_spec(notice_type):
 # 필드만 기록된다. 미기재 필드는 문자열(기존 동작)로 둔다. 확인되지
 # 않은 필드를 "아마 boolean 일 것이다" 로 채우면 규제 필드 오신고가 된다.
 #
-# 값은 ``string`` / ``boolean`` / ``date`` 세 가지. ``string`` 은 기존
-# 동작(공백·placeholder = 미제공)을, ``boolean`` 은 True/False 둘 다
-# 제공으로, ``date`` 는 비어있지 않으면 제공(형식 미확정)으로 다룬다.
+# 값은 ``string`` / ``boolean`` / ``date`` / ``year_month`` / ``local_date`` /
+# ``integer`` / ``long`` 일곱 가지. ``string`` 은 기존 동작(공백·placeholder =
+# 미제공)을, ``boolean`` 은 True/False 둘 다 제공으로, ``date``/``year_month``/
+# ``local_date``/``integer``/``long`` 은 비어있지 않으면 제공(형식 미확정)으로
+# 다룬다.
 # ---------------------------------------------------------------------------
 _NOTICE_FIELD_TYPES_CACHE: dict[str, dict] | None = None
 
@@ -322,8 +324,9 @@ def _load_notice_field_types() -> dict[str, dict]:
     """``data/notice_field_types.json`` 의 ``field_types`` 맵을 반환 (캐싱).
 
     Returns:
-        필드명 → 타입 딕셔너리. 각 값은 최소한 ``{"type": "string"|"boolean"|
-        "date"}`` 키를 갖는다.
+        필드명 → 타입 딕셔너리. 각 값은 최소한 ``{"type": ...}`` 키를 갖는다.
+        가능한 type 값: ``"string"`` / ``"boolean"`` / ``"date"`` /
+        ``"year_month"`` / ``"local_date"`` / ``"integer"`` / ``"long"``.
 
     Raises:
         RuntimeError: 파일이 부재하거나 구조가 올바르지 않을 때 (fail-closed).
@@ -355,7 +358,16 @@ def _load_notice_field_types() -> dict[str, dict]:
     # date 필드의 경우 format(사람 읽기용 설명)과 formats_by_type(타입별 확정
     # 형식 맵) 키가 있으면 함께 보존한다 — 그렇지 않으면 reader 가 형식 정보를
     # 조용히 버려 소비자가 잘못된 형식을 보고하게 된다.
-    valid_types = frozenset({"string", "boolean", "date"})
+    #
+    # 2026-08-10 개정 (D64 실측 계약): ``year_month`` / ``local_date`` /
+    # ``integer`` / ``long`` 이 추가되었다. 이 중 하나라도 누락하면
+    # ``_NON_DEFERRABLE_FIELD_TYPES`` 에는 들어 있지만 loader 가 통과시키지
+    # 않아, 해당 필드가 문자열로 취급되며 미루기 대상이 되어 버린다
+    # (fail-open 회귀). 따라서 여기의 집합은 ``_NON_DEFERRABLE_FIELD_TYPES``
+    # 와 정확히 짝을 이룬다 — ``string`` 을 제외한 모든 non-deferrable 타입.
+    valid_types = frozenset(
+        {"string", "boolean", "date", "year_month", "local_date", "integer", "long"}
+    )
     normalized: dict[str, dict] = {}
     for name, entry in field_types.items():
         if not isinstance(entry, dict):
@@ -367,6 +379,19 @@ def _load_notice_field_types() -> dict[str, dict]:
         raw_format = entry.get("format")
         if isinstance(raw_format, str) and raw_format.strip():
             item["format"] = raw_format.strip()
+        # 2026-08-10: API 원값(api_field_type)과 사람 읽기용 설명
+        # (field_description / field_add_description) 을 보존한다.
+        # 티켓 요구사항 (e): "필드 설명이 조회 가능" 하려면 loader 가 이 키들을
+        # 통과시켜야 한다 — 그렇지 않으면 JSON 에 있어도 소비자가 못 본다.
+        raw_api_ft = entry.get("api_field_type")
+        if isinstance(raw_api_ft, str) and raw_api_ft.strip():
+            item["api_field_type"] = raw_api_ft.strip()
+        raw_desc = entry.get("field_description")
+        if isinstance(raw_desc, str) and raw_desc.strip():
+            item["field_description"] = raw_desc.strip()
+        raw_add_desc = entry.get("field_add_description")
+        if isinstance(raw_add_desc, str) and raw_add_desc.strip():
+            item["field_add_description"] = raw_add_desc.strip()
         raw_fbt = entry.get("formats_by_type")
         if isinstance(raw_fbt, dict):
             fbt: dict[str, str] = {}
@@ -384,8 +409,10 @@ def _notice_field_type(field: str) -> str:
     """특정 고시 필드의 타입을 반환.
 
     Returns:
-        ``"string"`` / ``"boolean"`` / ``"date"``. 미기재 필드는 ``"string"``
-        (기존 동작). 타입을 추측하지 않는다 — 데이터에 없으면 문자열이다.
+        ``"string"`` / ``"boolean"`` / ``"date"`` / ``"year_month"`` /
+        ``"local_date"`` / ``"integer"`` / ``"long"``. 미기재 필드는
+        ``"string"`` (기존 동작). 타입을 추측하지 않는다 — 데이터에 없으면
+        문자열이다.
     """
     types = _load_notice_field_types()
     entry = types.get(str(field or ""))
@@ -397,10 +424,18 @@ def _notice_field_type(field: str) -> str:
 # 미루기(deferred) 불가능한 필드 타입 집합.
 # boolean 필드는 "상세페이지 참조" 같은 문자열을 네이버 API 가 거부한다
 # (live API: Cannot deserialize value of type `java.lang.Boolean` from String).
-# date 필드도 마찬가지로 문자열 placeholder 를 거부한다
-# (live API: date parse error). 따라서 이 타입의 필드는 미루기 대상에서
-# 제외하고, 사용자에게 실제 값을 요구한다 (needs_user 로 안내).
-_NON_DEFERRABLE_FIELD_TYPES = frozenset({"boolean", "date"})
+# date 계열(YearMonth/LocalDate) 필드도 마찬가지로 문자열 placeholder 를 거부한다
+# (live API: date parse error). integer/long 도 마찬가지로 문자열 placeholder 를
+# 거부한다. 따라서 이 타입의 필드는 미루기 대상에서 제외하고, 사용자에게 실제
+# 값을 요구한다 (needs_user 로 안내).
+#
+# 2026-08-10 개정 (D64 실측 계약): API fieldType 분포가 String/YearMonth/
+# LocalDate/Boolean/Integer/Long 6종으로 확인되었다. 과거의 ``date`` 한 덩어리
+# 표현을 ``year_month`` 와 ``local_date`` 로 분리한다. ``date`` 도 backward-compat
+# 용으로 남겨둔다(구 데이터 파일 호환). ``String`` 만 미루기 가능하다.
+_NON_DEFERRABLE_FIELD_TYPES = frozenset(
+    {"boolean", "date", "year_month", "local_date", "integer", "long"}
+)
 
 
 def _is_field_deferrable(field: str) -> bool:
@@ -503,7 +538,10 @@ def _notice_field_filled(notice_body, field) -> bool:
     ``_notice_field_missing`` 의 단일 필드 판정 로직을 분리한 헬퍼.
     XOR 그룹 판정에서 재사용하기 위해 같은 규칙을 적용한다:
       - ``boolean``: None 만 미제공, True/False 모두 제공.
-      - ``date``: placeholder 가 아니면 제공.
+      - ``integer``/``long``: None 만 미제공, 0 포함 모든 숫자 제공.
+        (``_is_placeholder_value(0)`` 은 True 를 반환하므로 placeholder 경로에
+        맡기면 0 이 미제공으로 판정되는 회귀가 생긴다.)
+      - ``date``/``year_month``/``local_date``: placeholder 가 아니면 제공.
       - ``string``/미기재: placeholder 가 아니면 제공.
     """
     if not isinstance(notice_body, dict):
@@ -511,6 +549,10 @@ def _notice_field_filled(notice_body, field) -> bool:
     raw = notice_body.get(field)
     ftype = _notice_field_type(field)
     if ftype == "boolean":
+        return raw is not None
+    if ftype in ("integer", "long"):
+        # 0 은 유효한 정수값이다 — _is_placeholder_value(0) == True 이므로
+        # placeholder 경로에 맡기면 안 된다. None/키부재만 미제공.
         return raw is not None
     if ftype == "date":
         return not _is_placeholder_value(raw)
@@ -1071,6 +1113,12 @@ def _field_missing_with_deferred(
             if ftype == "boolean":
                 if raw is None:
                     missing.append(field)
+            elif ftype in ("integer", "long"):
+                # 0 은 유효한 정수값이다 — _is_placeholder_value(0) == True 이므로
+                # placeholder 경로에 맡기면 0 이 미제공으로 판정되는 회귀가 생긴다.
+                # None/키부재만 미제공.
+                if raw is None:
+                    missing.append(field)
             elif ftype == "date":
                 if _is_placeholder_value(raw):
                     missing.append(field)
@@ -1112,6 +1160,12 @@ def _field_missing_with_deferred(
         raw = notice_body.get(field)
         ftype = _notice_field_type(field)
         if ftype == "boolean":
+            if raw is None:
+                missing_x.append(field)
+        elif ftype in ("integer", "long"):
+            # 0 은 유효한 정수값이다 — _is_placeholder_value(0) == True 이므로
+            # placeholder 경로에 맡기면 0 이 미제공으로 판정되는 회귀가 생긴다.
+            # None/키부재만 미제공.
             if raw is None:
                 missing_x.append(field)
         elif ftype == "date":
@@ -1172,6 +1226,12 @@ def _notice_field_missing(notice_body, fields):
             if raw is None:
                 missing.append(field)
             # bool True/False 또는 그 외 타입은 제공된 것으로 간주.
+        elif ftype in ("integer", "long"):
+            # 0 은 유효한 정수값이다 — _is_placeholder_value(0) == True 이므로
+            # placeholder 경로에 맡기면 0 이 미제공으로 판정되는 회귀가 생긴다.
+            # None/키부재만 미제공.
+            if raw is None:
+                missing.append(field)
         elif ftype == "date":
             # 비어있지 않은 값이면 제공. 형식 검증은 하지 않는다(형식 미확정).
             if _is_placeholder_value(raw):
@@ -1239,6 +1299,12 @@ def _notice_field_missing_with_relations(notice_body, fields, notice_type=None):
         raw = notice_body.get(field)
         ftype = _notice_field_type(field)
         if ftype == "boolean":
+            if raw is None:
+                missing.append(field)
+        elif ftype in ("integer", "long"):
+            # 0 은 유효한 정수값이다 — _is_placeholder_value(0) == True 이므로
+            # placeholder 경로에 맡기면 0 이 미제공으로 판정되는 회귀가 생긴다.
+            # None/키부재만 미제공.
             if raw is None:
                 missing.append(field)
         elif ftype == "date":

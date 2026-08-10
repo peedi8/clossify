@@ -1071,18 +1071,20 @@ class TestDeferredCommonValueRegression:
 
 
 # --------------------------------------------------------------------------- #
-# 8. 타입 인지 미루기 — boolean/date 필드는 미루기 불가 (계약 a-f).
+# 8. 타입 인지 미루기 — boolean/date/integer/long 계열 필드는 미루기 불가 (계약 a-f).
 #
-# data/notice_field_types.json 에 boolean/date 타입으로 등록된 8개 필드
-# (3 boolean + 5 date) 는 네이버 API 가 문자열 placeholder 를 받지 않는다.
-# 이 필드들을 deferred_notice_fields 로 올리면 allowlist 에서 거부되며,
-# needs_user 안내에 "미루기 불가" 사유가 포함되고, 기본값(fabricated) 이
-# 만들어지지 않는다.
+# data/notice_field_types.json 에 boolean/year_month/local_date/integer/long 타입으로
+# 등록된 필드(2026-08-10 기준 12개 비-String 필드)는 네이버 API 가 문자열
+# placeholder 를 받지 않는다. 이 필드들을 deferred_notice_fields 로 올리면
+# allowlist 에서 거부되며, needs_user 안내에 "미루기 불가" 사유가 포함되고,
+# 기본값(fabricated) 이 만들어지지 않는다.
 #
-# 20개 notice 타입이 이 8개 필드 중 하나 이상을 포함한다.
+# 2026-08-10 이전에는 8개만 인지했고 4개(periodDays·periodStartDate·
+# periodEndDate·useStoreAddressId) 가 String 으로 오판정되어 미루기가
+# 적용되는 결함이 있었다. API 정본 전수 수록으로 12개 전부 인지한다.
 # --------------------------------------------------------------------------- #
 
-# notice_field_types.json 에 boolean/date 로 등록된 8개 필드 (3 boolean + 5 date).
+# notice_field_types.json 에 비-String 타입으로 등록된 12개 필드.
 _BOOLEAN_TYPED_FIELDS = [
     "importDeclaration",
     "geneticallyModified",
@@ -1094,8 +1096,18 @@ _DATE_TYPED_FIELDS = [
     "consumptionDate",
     "expirationDate",
     "publishDate",
+    "periodStartDate",
+    "periodEndDate",
 ]
-_ALL_TYPED_FIELDS = _BOOLEAN_TYPED_FIELDS + _DATE_TYPED_FIELDS
+_INTEGER_TYPED_FIELDS = [
+    "periodDays",
+]
+_LONG_TYPED_FIELDS = [
+    "useStoreAddressId",
+]
+_ALL_TYPED_FIELDS = (
+    _BOOLEAN_TYPED_FIELDS + _DATE_TYPED_FIELDS + _INTEGER_TYPED_FIELDS + _LONG_TYPED_FIELDS
+)
 
 
 class TestTypedFieldsExcludedFromAllowlist:
@@ -1160,12 +1172,19 @@ class TestTypedFieldsNeedsUserGuidance:
 
     @pytest.mark.parametrize("field", _DATE_TYPED_FIELDS)
     def test_b_date_answer_shape_mentions_deferred_impossible(self, field):
-        """date 필드의 answer_shape 에 '미루기 불가' 안내가 포함된다."""
+        """date 계열 필드의 answer_shape 에 '미루기 불가' 안내가 포함된다.
+
+        API 정답표가 date 를 YearMonth(연월, yyyy-MM) 와 LocalDate(연월일,
+        yyyy-MM-dd) 로 세분화하므로, answer_shape 에 '날짜' 대신 '연월' 또는
+        '연월일' 이 나온다. 셋 중 하나면 된다.
+        """
         shape = mcp_server._notice_field_answer_shape(field)
         assert (
             "미루기" in shape or "불가능" in shape
         ), f"date 필드 {field} 의 answer_shape 에 미루기 불가 안내 없음: {shape!r}"
-        assert "날짜" in shape, f"date 필드 {field} 의 answer_shape 에 날짜 안내 없음: {shape!r}"
+        assert (
+            "날짜" in shape or "연월" in shape
+        ), f"date 필드 {field} 의 answer_shape 에 날짜/연월 안내 없음: {shape!r}"
 
 
 class TestNoFabricatedDefaultsForTypedFields:

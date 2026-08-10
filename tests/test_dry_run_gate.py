@@ -106,6 +106,7 @@ def _make_compliant_payload() -> dict:
             "images": {
                 "representativeImage": {"url": "http://cdn/test/representative.png"},
             },
+            "deliveryInfo": {"deliveryCompany": "HKSTRANS"},
             "detailAttribute": {
                 "productInfoProvidedNotice": {
                     "productInfoProvidedNoticeType": "WEAR",

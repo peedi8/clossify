@@ -64,6 +64,7 @@ _CFG_FULL = {
     "qualityAssuranceStandard": "[CFG] 품질 보증 기준",
     "compensationProcedure": "[CFG] 보상 절차",
     "troubleShootingContents": "[CFG] 고장 대처",
+    "delivery_company": "HKSTRANS",
 }
 
 # config 에 공통 5필드가 전혀 없는 최소 notice 섹션.
@@ -72,6 +73,7 @@ _CFG_EMPTY_COMMON = {
     "origin_content": "중국",
     "as_tel": "070-1234-5678",
     "manufacturer": "테스트제조사",
+    "delivery_company": "HKSTRANS",
 }
 
 

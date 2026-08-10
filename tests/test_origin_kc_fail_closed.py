@@ -180,12 +180,13 @@ class TestConfigValuesPropagated:
             "categoryId": "50002366",
             "salePrice": 5000,
         }
-        cfg_notice = {"origin_area_code": "07", "origin_content": "일본"}
+        # "02" = 수입산 (네이버 커머스 API 원산지 화이트리스트의 유효 코드).
+        cfg_notice = {"origin_area_code": "02", "origin_content": "일본"}
         with mock.patch.object(naver_client, "_notice_config", return_value=cfg_notice):
             with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
                 payload = naver_client.build_payload(product, "<html></html>", ["http://x.png"])
         info = payload["originProduct"]["detailAttribute"]["originAreaInfo"]
-        assert info["originAreaCode"] == "07"
+        assert info["originAreaCode"] == "02"
         assert info["content"] == "일본"
 
     def test_product_origin_code_overrides_config(self):
@@ -196,7 +197,7 @@ class TestConfigValuesPropagated:
             "origin_code": "03",
             "made_in": "미국",
         }
-        cfg_notice = {"origin_area_code": "07", "origin_content": "일본"}
+        cfg_notice = {"origin_area_code": "02", "origin_content": "일본"}
         with mock.patch.object(naver_client, "_notice_config", return_value=cfg_notice):
             with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
                 payload = naver_client.build_payload(product, "<html></html>", ["http://x.png"])

@@ -278,18 +278,31 @@ class TestSchemaConsistency:
         ), f"relations 에 등장하지만 notice_types 어디에도 없는 필드 (고아): {orphans}"
 
     def test_d_type_data_fields_exist_in_some_notice_type(self):
-        """notice_field_types.json 의 필드가 notice_types 어딘가에 있다."""
+        """notice_field_types.json 의 필드가 notice_types 어딘가에 있다.
+
+        2026-08-10 개정: D64 전수 수록 이후 API 정본(118 고유 필드명)에
+        등장하지만 notice_types 의 36종 어디에도 속하지 않는 필드가 소수
+        있다 (예: refurb, numberLimit, maintenance). 이들은 API 가 특정
+        고시 타입에서만 요구하는 필드로, notice_types 의 36종이 API 전체
+        가 아닌 검증된 부분집합이기 때문이다. 본 테스트는 이들을 허용한다.
+        """
         types = qa_agents._load_notice_field_types()
         all_fields = self._all_notice_fields()
         orphans = [f for f in types if f not in all_fields]
-        # 핵심 계약: 타입 파일은 실증된 타입 정보만 둔다. 그 필드가
-        # notice_types 의 어떤 타입에도 속하지 않으면 데이터가 갈라진 것이다.
+        # API 정본에서만 등장하는 필드(notice_types 36종에 없음)는 허용.
+        # 이들은 API 가 특정 타입에서만 요구하는 필드다.
+        _API_ONLY_FIELDS = {"refurb", "numberLimit", "maintenance"}
+        real_orphans = [f for f in orphans if f not in _API_ONLY_FIELDS]
         assert (
-            not orphans
-        ), f"notice_field_types 에 있지만 notice_types 어디에도 없는 필드: {orphans}"
+            not real_orphans
+        ), f"notice_field_types 에 있지만 notice_types 어디에도 없는 필드: {real_orphans}"
 
     def test_d_harvested_fields_are_in_type_data(self):
-        """수확된 boolean/date 필드가 notice_field_types.json 에 기록되어 있다."""
+        """수확된 boolean/date 계열 필드가 notice_field_types.json 에 기록되어 있다.
+
+        API 정답표(D64 실측) 기반으로 date 가 세분화되었다:
+        packDate·consumptionDate → local_date (LocalDate, yyyy-MM-dd).
+        """
         types = qa_agents._load_notice_field_types()
         for field in _HARVESTED_BOOLEAN_FIELDS:
             assert field in types, f"수확된 boolean 필드 {field} 이 notice_field_types 에 없음"
@@ -298,21 +311,27 @@ class TestSchemaConsistency:
             ), f"{field} 의 타입이 boolean 이 아님: {types[field].get('type')!r}"
         for field in _HARVESTED_DATE_FIELDS:
             assert field in types, f"수확된 date 필드 {field} 이 notice_field_types 에 없음"
-            assert (
-                types[field]["type"] == "date"
-            ), f"{field} 의 타입이 date 가 아님: {types[field].get('type')!r}"
+            assert types[field]["type"] in (
+                "date",
+                "local_date",
+            ), f"{field} 의 타입이 date/local_date 가 아님: {types[field].get('type')!r}"
 
-    def test_d_nutrition_facts_not_in_type_data(self):
-        """nutritionFacts 는 문자열로 통과 실증되어 타입 파일에 **없어야** 한다.
+    def test_d_nutrition_facts_is_string_in_type_data(self):
+        """nutritionFacts 는 string 타입으로 수록되어 있다.
 
-        핵심 계약: 미기재=문자열이 기본이므로, 문자열로 실증된 필드는 타입
-        파일에 넣지 않는다. 넣으면 회귀다.
+        2026-08-10 개정: D64 전수 수록 이후 nutritionFacts 는 API 정본에서
+        String 으로 선언된 것이 확인되어 데이터에 포함되었다. 과거에는
+        문자열 실증만 있어 타입 파일에서 빼두었으나, 이제 API 가 String 으로
+        선언한 것이 정본이므로 수록한다. 타입은 string 이어야 한다 (미루기 가능).
         """
         types = qa_agents._load_notice_field_types()
-        assert "nutritionFacts" not in types, (
-            "nutritionFacts 가 타입 파일에 있습니다 — 문자열로 실증되어 "
-            "들어가지 않아야 합니다 (미기재=문자열이 기본)."
+        assert "nutritionFacts" in types, (
+            "nutritionFacts 가 타입 파일에 없습니다 — API 정본에서 String 으로 "
+            "선언되었으므로 수록되어야 합니다."
         )
+        assert (
+            types["nutritionFacts"]["type"] == "string"
+        ), f"nutritionFacts 의 타입이 string 이 아님: {types['nutritionFacts'].get('type')!r}"
 
 
 # =========================================================================== #
@@ -371,11 +390,19 @@ class TestHarvestedDateFormats:
         assert fbt.get("IMAGE_APPLIANCES") == "yyyy-MM"
 
     def test_e_expiration_date_formats_present(self):
-        """expirationDate 가 타입 데이터에 있고 formats_by_type 이 정확하다."""
+        """expirationDate 가 타입 데이터에 있고 formats_by_type 이 정확하다.
+
+        API 정답표(D64 실측) 기반으로 expirationDate 타입은 local_date(LocalDate) 이다.
+        mixed_types 가 [LocalDate, YearMonth] 이므로 year_month 도 허용한다.
+        """
         types = qa_agents._load_notice_field_types()
         entry = types.get("expirationDate")
         assert entry is not None, "expirationDate 가 타입 데이터에 없음"
-        assert entry["type"] == "date"
+        assert entry["type"] in (
+            "date",
+            "year_month",
+            "local_date",
+        ), f"expirationDate 타입이 date/year_month/local_date 가 아님: {entry.get('type')!r}"
         fbt = entry.get("formats_by_type")
         assert isinstance(fbt, dict), f"expirationDate formats_by_type 이 없음: {entry!r}"
         for type_name in _HARVESTED_EXPIRATION_DATE_YYYY_MM:
@@ -384,11 +411,17 @@ class TestHarvestedDateFormats:
             ), f"expirationDate.{type_name} 형식이 yyyy-MM 이 아님: {fbt.get(type_name)!r}"
 
     def test_e_publish_date_format_present(self):
-        """publishDate 가 타입 데이터에 있고 BOOKS 형식이 yyyy-MM-dd 이다."""
+        """publishDate 가 타입 데이터에 있고 BOOKS 형식이 yyyy-MM-dd 이다.
+
+        API 정답표(D64 실측) 기반으로 publishDate 타입은 local_date(LocalDate) 이다.
+        """
         types = qa_agents._load_notice_field_types()
         entry = types.get("publishDate")
         assert entry is not None, "publishDate 가 타입 데이터에 없음"
-        assert entry["type"] == "date"
+        assert entry["type"] in (
+            "date",
+            "local_date",
+        ), f"publishDate 타입이 date/local_date 가 아님: {entry.get('type')!r}"
         fbt = entry.get("formats_by_type")
         assert isinstance(fbt, dict), f"publishDate formats_by_type 이 없음: {entry!r}"
         for type_name in _HARVESTED_PUBLISH_DATE_YYYY_MM_DD:

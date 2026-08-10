@@ -1,46 +1,451 @@
 {
-  "generated_at": "2026-08-04T00:00:00Z",
-  "method": "live API observation",
-  "sources": [
-    {
-      "url": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
-      "what": "Naver Commerce API live response (category 50004528, KITCHEN_UTENSILS) returned: Cannot deserialize value of type `java.lang.Boolean` from String for importDeclaration. This directly establishes importDeclaration is a Boolean field. The same live observation showed releaseDate reject free-text with a date parse error at index 7, confirming it is a date-typed field (exact format still unconfirmed)."
-    },
-    {
-      "url": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
-      "what": "Live API 400 Boolean deserialize response, 2026-08-04. GENERAL_FOOD and DIET_FOOD probe payloads returned 'Cannot deserialize value of type `java.lang.Boolean`' for geneticallyModified and importDeclarationCheck (column location cross-referenced against the sent body to identify the field). Both are Boolean. Confirmed in both GENERAL_FOOD and DIET_FOOD. Source: live API 400 Boolean response, 2026-08-04."
-    },
-    {
-      "url": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
-      "what": "Live API date format observation, 2026-08-04. packDate/consumptionDate on FOOD, GENERAL_FOOD and DIET_FOOD accepted 'yyyy-MM-dd' (a 'yyyy-MM' value failed parsing at index 7; 'yyyy-MM-dd' parsed and proceeded to the XOR stage). releaseDate on KITCHEN_UTENSILS and IMAGE_APPLIANCES accepted 'yyyy-MM' (a 'yyyy-MM-dd' value was truncated at index 7). No other type's date field format is confirmed — only the listed fields. Source: live API date format observation, 2026-08-04."
-    },
-    {
-      "url": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
-      "what": "Live API date-parse probe, 2026-08-04. Non-Text date fields of the following notice types were probed: a full yyyy-MM-dd value was refused (date parse error at index 7), confirming the accepted format is yyyy-MM for: BIOCHEMISTRY.expirationDate, CAR_ARTICLES.releaseDate, CELLPHONE.releaseDate, COSMETIC.expirationDate, HOME_APPLIANCES.releaseDate, KIDS.releaseDate, MEDICAL_APPLIANCES.releaseDate, MICROELECTRONICS.releaseDate, MUSICAL_INSTRUMENT.releaseDate, NAVIGATION.releaseDate, OFFICE_APPLIANCES.releaseDate, OPTICS_APPLIANCES.releaseDate, SEASON_APPLIANCES.releaseDate, SPORTS_EQUIPMENT.releaseDate. BOOKS.publishDate accepted yyyy-MM-dd and proceeded to a successful HTTP 200 registration (format confirmed yyyy-MM-dd). BIOCHEMISTRY.packDate was not probed and remains format-unconfirmed. Source: live API date-parse probe, 2026-08-04."
-    }
+  "generated_at": "2026-08-10T09:36:00Z",
+  "method": "live API",
+  "source": "GET /external/v1/products-for-provided-notice",
+  "source_url": "https://api.commerce.naver.com/external/v1/products-for-provided-notice",
+  "api_notice_type_count": 36,
+  "api_field_count_total": 411,
+  "api_field_type_distribution": {
+    "String": 374,
+    "YearMonth": 18,
+    "LocalDate": 12,
+    "Boolean": 5,
+    "Integer": 1,
+    "Long": 1
+  },
+  "mixed_type_fields": [
+    "expirationDate",
+    "packDate"
   ],
-  "note": "확인된 것만 기록한다. 필드 이름만 보고 타입을 추측하지 않는다. 미기재 필드는 문자열(기존 동작)로 둔다. date 필드의 정확한 형식은 확인된 필드에만 기록하며, 그 외의 date 필드는 형식 미확정으로 둔다. nutritionFacts 는 문자열로 통과 실증되어 타입 파일에 넣지 않는다 (미기재=문자열이 기본). 필드별로 형식이 타입마다 다를 수 있으므로 formats_by_type 에 타입별 확정 형식을 기록한다.",
+  "postponable_rule": "String 만 미루기 가능. YearMonth·LocalDate·Boolean·Integer·Long 은 사용자 요구. 미루기 가능 = (type == 'string').",
   "field_types": {
-    "importDeclaration": {
-      "type": "boolean",
-      "source": "live API: java.lang.Boolean deserialize error",
-      "collected_at": "2026-08-04"
+    "material": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "제품 소재",
+      "field_add_description": "섬유의 조성 또는 혼용율을 백분율로 표시, 기능성인 경우 성적서 또는 허가서",
+      "observed_in_types": [
+        "BAG",
+        "FASHION_ITEMS",
+        "FURNITURE",
+        "JEWELLERY",
+        "KIDS",
+        "KITCHEN_UTENSILS",
+        "MUSICAL_INSTRUMENT",
+        "SHOES",
+        "SLEEPING_GEAR",
+        "SPORTS_EQUIPMENT",
+        "WEAR"
+      ]
     },
-    "geneticallyModified": {
-      "type": "boolean",
-      "source": "live API: java.lang.Boolean deserialize error (GENERAL_FOOD, DIET_FOOD)",
-      "collected_at": "2026-08-04"
+    "color": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "색상",
+      "field_add_description": "",
+      "observed_in_types": [
+        "BAG",
+        "FURNITURE",
+        "KIDS",
+        "MUSICAL_INSTRUMENT",
+        "SHOES",
+        "SLEEPING_GEAR",
+        "SPORTS_EQUIPMENT",
+        "WEAR"
+      ]
     },
-    "importDeclarationCheck": {
-      "type": "boolean",
-      "source": "live API: java.lang.Boolean deserialize error (GENERAL_FOOD, DIET_FOOD)",
-      "collected_at": "2026-08-04"
+    "size": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "치수",
+      "field_add_description": "",
+      "observed_in_types": [
+        "BAG",
+        "BOOKS",
+        "CAR_ARTICLES",
+        "CELLPHONE",
+        "FASHION_ITEMS",
+        "FOOD",
+        "FURNITURE",
+        "HOME_APPLIANCES",
+        "IMAGE_APPLIANCES",
+        "JEWELLERY",
+        "KIDS",
+        "KITCHEN_UTENSILS",
+        "MICROELECTRONICS",
+        "MUSICAL_INSTRUMENT",
+        "NAVIGATION",
+        "OFFICE_APPLIANCES",
+        "OPTICS_APPLIANCES",
+        "SEASON_APPLIANCES",
+        "SHOES",
+        "SLEEPING_GEAR",
+        "SPORTS_EQUIPMENT",
+        "WEAR"
+      ]
+    },
+    "manufacturer": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "제조자(사)",
+      "field_add_description": "",
+      "observed_in_types": [
+        "BAG",
+        "BIOCHEMISTRY",
+        "BIOCIDAL",
+        "CAR_ARTICLES",
+        "CELLPHONE",
+        "COSMETIC",
+        "ETC",
+        "FASHION_ITEMS",
+        "FURNITURE",
+        "HOME_APPLIANCES",
+        "IMAGE_APPLIANCES",
+        "JEWELLERY",
+        "KIDS",
+        "KITCHEN_UTENSILS",
+        "MEDICAL_APPLIANCES",
+        "MICROELECTRONICS",
+        "MUSICAL_INSTRUMENT",
+        "NAVIGATION",
+        "OFFICE_APPLIANCES",
+        "OPTICS_APPLIANCES",
+        "SEASON_APPLIANCES",
+        "SHOES",
+        "SLEEPING_GEAR",
+        "SPORTS_EQUIPMENT",
+        "WEAR"
+      ]
+    },
+    "caution": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "세탁 방법 및 취급 시 주의사항",
+      "field_add_description": "",
+      "observed_in_types": [
+        "BAG",
+        "BIOCHEMISTRY",
+        "BIOCIDAL",
+        "CAR_ARTICLES",
+        "COSMETIC",
+        "FASHION_ITEMS",
+        "JEWELLERY",
+        "KIDS",
+        "MEDICAL_APPLIANCES",
+        "SHOES",
+        "SLEEPING_GEAR",
+        "WEAR"
+      ]
+    },
+    "packDate": {
+      "type": "local_date",
+      "api_field_type": "LocalDate",
+      "field_description": "제조연월",
+      "field_add_description": "",
+      "observed_in_types": [
+        "BIOCHEMISTRY",
+        "FOOD",
+        "GENERAL_FOOD",
+        "WEAR"
+      ],
+      "mixed_types": [
+        "LocalDate",
+        "YearMonth"
+      ],
+      "formats_by_type": {
+        "FOOD": "yyyy-MM-dd",
+        "GENERAL_FOOD": "yyyy-MM-dd",
+        "DIET_FOOD": "yyyy-MM-dd"
+      },
+      "format": "yyyy-MM-dd accepted for FOOD, GENERAL_FOOD, DIET_FOOD; other types unconfirmed"
+    },
+    "packDateText": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "제조연월 직접 입력",
+      "field_add_description": "",
+      "observed_in_types": [
+        "BIOCHEMISTRY",
+        "FOOD",
+        "GENERAL_FOOD",
+        "WEAR"
+      ]
+    },
+    "warrantyPolicy": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "품질 보증 기준",
+      "field_add_description": "",
+      "observed_in_types": [
+        "BAG",
+        "CAR_ARTICLES",
+        "CELLPHONE",
+        "COSMETIC",
+        "FASHION_ITEMS",
+        "FURNITURE",
+        "HOME_APPLIANCES",
+        "IMAGE_APPLIANCES",
+        "JEWELLERY",
+        "KIDS",
+        "KITCHEN_UTENSILS",
+        "MEDICAL_APPLIANCES",
+        "MICROELECTRONICS",
+        "MUSICAL_INSTRUMENT",
+        "NAVIGATION",
+        "OFFICE_APPLIANCES",
+        "OPTICS_APPLIANCES",
+        "SEASON_APPLIANCES",
+        "SHOES",
+        "SLEEPING_GEAR",
+        "SPORTS_EQUIPMENT",
+        "WEAR"
+      ]
+    },
+    "afterServiceDirector": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "A/S 책임자와 전화번호",
+      "field_add_description": "",
+      "observed_in_types": [
+        "BAG",
+        "CAR_ARTICLES",
+        "CELLPHONE",
+        "ETC",
+        "FASHION_ITEMS",
+        "FURNITURE",
+        "HOME_APPLIANCES",
+        "IMAGE_APPLIANCES",
+        "JEWELLERY",
+        "KIDS",
+        "KITCHEN_UTENSILS",
+        "MEDICAL_APPLIANCES",
+        "MICROELECTRONICS",
+        "MUSICAL_INSTRUMENT",
+        "NAVIGATION",
+        "OFFICE_APPLIANCES",
+        "OPTICS_APPLIANCES",
+        "SEASON_APPLIANCES",
+        "SHOES",
+        "SLEEPING_GEAR",
+        "SPORTS_EQUIPMENT",
+        "WEAR"
+      ]
+    },
+    "height": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "굽높이",
+      "field_add_description": "굽 재료를 사용하는 여성화에 한함(단위: cm)",
+      "observed_in_types": [
+        "SHOES"
+      ]
+    },
+    "type": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "종류",
+      "field_add_description": "",
+      "observed_in_types": [
+        "BAG",
+        "FASHION_ITEMS"
+      ]
+    },
+    "components": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "제품 구성",
+      "field_add_description": "",
+      "observed_in_types": [
+        "BOOKS",
+        "FURNITURE",
+        "MUSICAL_INSTRUMENT",
+        "SLEEPING_GEAR",
+        "SPORTS_EQUIPMENT"
+      ]
+    },
+    "itemName": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "품명",
+      "field_add_description": "",
+      "observed_in_types": [
+        "CAR_ARTICLES",
+        "CELLPHONE",
+        "ETC",
+        "FURNITURE",
+        "HOME_APPLIANCES",
+        "IMAGE_APPLIANCES",
+        "KIDS",
+        "KITCHEN_UTENSILS",
+        "MEDICAL_APPLIANCES",
+        "MICROELECTRONICS",
+        "MUSICAL_INSTRUMENT",
+        "NAVIGATION",
+        "OFFICE_APPLIANCES",
+        "OPTICS_APPLIANCES",
+        "RENTAL_ETC",
+        "SEASON_APPLIANCES",
+        "SPORTS_EQUIPMENT"
+      ]
+    },
+    "certificationType": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "KC 인증정보",
+      "field_add_description": "｢전기용품 및 생활용품 안전관리법｣에 따른 공급자적합성확인대상제품에 한함",
+      "observed_in_types": [
+        "CAR_ARTICLES",
+        "CELLPHONE",
+        "COSMETIC",
+        "FURNITURE",
+        "HOME_APPLIANCES",
+        "IMAGE_APPLIANCES",
+        "KIDS",
+        "MICROELECTRONICS",
+        "NAVIGATION",
+        "OFFICE_APPLIANCES",
+        "OPTICS_APPLIANCES",
+        "SEASON_APPLIANCES",
+        "SPORTS_EQUIPMENT"
+      ]
+    },
+    "importer": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "수입자",
+      "field_add_description": "수입품의 경우 수입자를 함께 표시. 구성품별 제조자가 다른 경우 각 구성품의 수입자",
+      "observed_in_types": [
+        "BIOCHEMISTRY",
+        "BIOCIDAL",
+        "CELLPHONE",
+        "FURNITURE"
+      ]
+    },
+    "producer": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "제조국",
+      "field_add_description": "구성품별 제조국이 다른 경우 각 구성품의 제조국",
+      "observed_in_types": [
+        "BIOCHEMISTRY",
+        "BIOCIDAL",
+        "CELLPHONE",
+        "COSMETIC",
+        "DIET_FOOD",
+        "DIGITAL_CONTENTS",
+        "FOOD",
+        "FURNITURE",
+        "GENERAL_FOOD",
+        "JEWELLERY",
+        "KITCHEN_UTENSILS"
+      ]
+    },
+    "installedCharge": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "배송 설치 비용",
+      "field_add_description": "",
+      "observed_in_types": [
+        "FURNITURE",
+        "SEASON_APPLIANCES"
+      ]
+    },
+    "refurb": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "재공급 사유 및 하자",
+      "field_add_description": "재공급(리퍼브) 가구의 경우 재공급 사유 및 하자 부위 표시(예: 전시 상품으로 식탁 상판 등에 미세한 흠집 있음)",
+      "observed_in_types": [
+        "FURNITURE"
+      ]
+    },
+    "modelName": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "모델명",
+      "field_add_description": "",
+      "observed_in_types": [
+        "CAR_ARTICLES",
+        "CELLPHONE",
+        "ETC",
+        "HOME_APPLIANCES",
+        "IMAGE_APPLIANCES",
+        "KIDS",
+        "KITCHEN_UTENSILS",
+        "MEDICAL_APPLIANCES",
+        "MICROELECTRONICS",
+        "MUSICAL_INSTRUMENT",
+        "NAVIGATION",
+        "OFFICE_APPLIANCES",
+        "OPTICS_APPLIANCES",
+        "RENTAL_ETC",
+        "SEASON_APPLIANCES",
+        "SPORTS_EQUIPMENT"
+      ]
+    },
+    "ratedVoltage": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "정격전압",
+      "field_add_description": "",
+      "observed_in_types": [
+        "HOME_APPLIANCES",
+        "IMAGE_APPLIANCES",
+        "MEDICAL_APPLIANCES",
+        "MICROELECTRONICS",
+        "NAVIGATION",
+        "OFFICE_APPLIANCES",
+        "SEASON_APPLIANCES"
+      ]
+    },
+    "powerConsumption": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "소비전력",
+      "field_add_description": "",
+      "observed_in_types": [
+        "HOME_APPLIANCES",
+        "IMAGE_APPLIANCES",
+        "MEDICAL_APPLIANCES",
+        "MICROELECTRONICS",
+        "NAVIGATION",
+        "OFFICE_APPLIANCES",
+        "SEASON_APPLIANCES"
+      ]
+    },
+    "energyEfficiencyRating": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "에너지소비효율등급",
+      "field_add_description": "｢에너지이용 합리화법｣에 따른 에너지소비효율등급 표시대상 기자재에 한함",
+      "observed_in_types": [
+        "HOME_APPLIANCES",
+        "IMAGE_APPLIANCES",
+        "OFFICE_APPLIANCES",
+        "SEASON_APPLIANCES"
+      ]
     },
     "releaseDate": {
-      "type": "date",
-      "source": "live API: date parse error at index 7",
-      "collected_at": "2026-08-04",
-      "format": "per-type; see formats_by_type",
+      "type": "year_month",
+      "api_field_type": "YearMonth",
+      "field_description": "동일 모델의 출시연월",
+      "field_add_description": "",
+      "observed_in_types": [
+        "CAR_ARTICLES",
+        "CELLPHONE",
+        "HOME_APPLIANCES",
+        "IMAGE_APPLIANCES",
+        "KIDS",
+        "KITCHEN_UTENSILS",
+        "MEDICAL_APPLIANCES",
+        "MICROELECTRONICS",
+        "MUSICAL_INSTRUMENT",
+        "NAVIGATION",
+        "OFFICE_APPLIANCES",
+        "OPTICS_APPLIANCES",
+        "SEASON_APPLIANCES",
+        "SPORTS_EQUIPMENT"
+      ],
       "formats_by_type": {
         "KITCHEN_UTENSILS": "yyyy-MM",
         "IMAGE_APPLIANCES": "yyyy-MM",
@@ -56,61 +461,1146 @@
         "OPTICS_APPLIANCES": "yyyy-MM",
         "SEASON_APPLIANCES": "yyyy-MM",
         "SPORTS_EQUIPMENT": "yyyy-MM"
-      }
+      },
+      "format": "per-type; see formats_by_type"
     },
-    "packDate": {
-      "type": "date",
-      "source": "live API: yyyy-MM-dd accepted for FOOD, GENERAL_FOOD, DIET_FOOD (2026-08-04)",
-      "collected_at": "2026-08-04",
-      "format": "yyyy-MM-dd accepted for FOOD, GENERAL_FOOD, DIET_FOOD; other types unconfirmed",
-      "formats_by_type": {
-        "FOOD": "yyyy-MM-dd",
-        "GENERAL_FOOD": "yyyy-MM-dd",
-        "DIET_FOOD": "yyyy-MM-dd"
-      }
+    "releaseDateText": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "동일 모델 출시연월일 직접 입력",
+      "field_add_description": "",
+      "observed_in_types": [
+        "CAR_ARTICLES",
+        "CELLPHONE",
+        "HOME_APPLIANCES",
+        "IMAGE_APPLIANCES",
+        "KIDS",
+        "KITCHEN_UTENSILS",
+        "MEDICAL_APPLIANCES",
+        "MICROELECTRONICS",
+        "MUSICAL_INSTRUMENT",
+        "NAVIGATION",
+        "OFFICE_APPLIANCES",
+        "OPTICS_APPLIANCES",
+        "SEASON_APPLIANCES",
+        "SPORTS_EQUIPMENT"
+      ]
     },
-    "consumptionDate": {
-      "type": "date",
-      "source": "live API: yyyy-MM-dd accepted for FOOD, GENERAL_FOOD, DIET_FOOD (2026-08-04)",
-      "collected_at": "2026-08-04",
-      "format": "yyyy-MM-dd accepted for FOOD, GENERAL_FOOD, DIET_FOOD; other types unconfirmed",
-      "formats_by_type": {
-        "FOOD": "yyyy-MM-dd",
-        "GENERAL_FOOD": "yyyy-MM-dd",
-        "DIET_FOOD": "yyyy-MM-dd"
-      }
+    "additionalCost": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "추가 설치 비용",
+      "field_add_description": "",
+      "observed_in_types": [
+        "HOME_APPLIANCES",
+        "IMAGE_APPLIANCES"
+      ]
+    },
+    "displaySpecification": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "화면 사양",
+      "field_add_description": "화면 크기, 해상도, 화면 비율 등",
+      "observed_in_types": [
+        "IMAGE_APPLIANCES"
+      ]
+    },
+    "area": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "냉난방 면적",
+      "field_add_description": "",
+      "observed_in_types": [
+        "SEASON_APPLIANCES"
+      ]
+    },
+    "weight": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "무게",
+      "field_add_description": "무게는 노트북 등 휴대형 기기에 한함",
+      "observed_in_types": [
+        "BIOCHEMISTRY",
+        "BIOCIDAL",
+        "CELLPHONE",
+        "DIET_FOOD",
+        "FOOD",
+        "GENERAL_FOOD",
+        "JEWELLERY",
+        "KIDS",
+        "MICROELECTRONICS",
+        "NAVIGATION",
+        "OFFICE_APPLIANCES",
+        "OPTICS_APPLIANCES",
+        "SPORTS_EQUIPMENT"
+      ]
+    },
+    "specification": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "주요 사양",
+      "field_add_description": "컴퓨터와 노트북의 경우 성능, 용량, 운영체제 포함 여부 등. 프린터의 경우 인쇄 속도 등.",
+      "observed_in_types": [
+        "CELLPHONE",
+        "COSMETIC",
+        "DIET_FOOD",
+        "JEWELLERY",
+        "MICROELECTRONICS",
+        "NAVIGATION",
+        "OFFICE_APPLIANCES",
+        "OPTICS_APPLIANCES",
+        "RENTAL_HA"
+      ]
+    },
+    "updateCost": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "맵 업데이트 비용",
+      "field_add_description": "",
+      "observed_in_types": [
+        "NAVIGATION"
+      ]
+    },
+    "freeCostPeriod": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "무상 기간",
+      "field_add_description": "",
+      "observed_in_types": [
+        "NAVIGATION"
+      ]
+    },
+    "applyModel": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "적용 차종",
+      "field_add_description": "",
+      "observed_in_types": [
+        "CAR_ARTICLES"
+      ]
+    },
+    "roadWorthyCertification": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "검사합격증 번호",
+      "field_add_description": "｢대기환경보전법｣에 따른 첨가제·촉매제에 한함",
+      "observed_in_types": [
+        "CAR_ARTICLES"
+      ]
+    },
+    "licenceNo": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "허가·인증·신고번호",
+      "field_add_description": "｢의료기기법｣에 따른 허가·인증·신고 대상 의료기기에 한함",
+      "observed_in_types": [
+        "MEDICAL_APPLIANCES"
+      ]
+    },
+    "advertisingCertificationType": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "광고사전심의 필 유무",
+      "field_add_description": "",
+      "observed_in_types": [
+        "MEDICAL_APPLIANCES"
+      ]
+    },
+    "purpose": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "제품의 사용 목적",
+      "field_add_description": "",
+      "observed_in_types": [
+        "MEDICAL_APPLIANCES"
+      ]
+    },
+    "usage": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "사용 방법",
+      "field_add_description": "",
+      "observed_in_types": [
+        "COSMETIC",
+        "MEDICAL_APPLIANCES"
+      ]
+    },
+    "component": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "구성품",
+      "field_add_description": "",
+      "observed_in_types": [
+        "KITCHEN_UTENSILS"
+      ]
+    },
+    "importDeclaration": {
+      "type": "boolean",
+      "api_field_type": "Boolean",
+      "field_description": "수입식품안전관리특별법에 따른 수입신고",
+      "field_add_description": "｢수입식품안전관리 특별법｣에 따른 수입기구 또는 용기·포장의 경우",
+      "observed_in_types": [
+        "KITCHEN_UTENSILS"
+      ]
+    },
+    "capacity": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "내용물의 용량 및 중량",
+      "field_add_description": "",
+      "observed_in_types": [
+        "COSMETIC"
+      ]
     },
     "expirationDate": {
-      "type": "date",
-      "source": "live API: date-parse probe, 2026-08-04",
-      "collected_at": "2026-08-04",
-      "format": "per-type; see formats_by_type",
+      "type": "local_date",
+      "api_field_type": "LocalDate",
+      "field_description": "사용기한 또는 개봉 후 사용기간",
+      "field_add_description": "",
+      "observed_in_types": [
+        "BIOCHEMISTRY",
+        "BIOCIDAL",
+        "COSMETIC",
+        "DIET_FOOD",
+        "FOOD",
+        "GENERAL_FOOD"
+      ],
+      "mixed_types": [
+        "LocalDate",
+        "YearMonth"
+      ],
       "formats_by_type": {
         "COSMETIC": "yyyy-MM",
         "BIOCHEMISTRY": "yyyy-MM"
-      }
+      },
+      "format": "per-type; see formats_by_type"
+    },
+    "expirationDateText": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "사용기한 또는 개봉 후 사용기간 직접 입력",
+      "field_add_description": "",
+      "observed_in_types": [
+        "BIOCHEMISTRY",
+        "BIOCIDAL",
+        "COSMETIC",
+        "DIET_FOOD",
+        "FOOD",
+        "GENERAL_FOOD"
+      ]
+    },
+    "distributor": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "화장품책임판매업자",
+      "field_add_description": "",
+      "observed_in_types": [
+        "COSMETIC"
+      ]
+    },
+    "customizedDistributor": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "맞춤형 화장품판매업자",
+      "field_add_description": "",
+      "observed_in_types": [
+        "COSMETIC"
+      ]
+    },
+    "mainIngredient": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "｢화장품법｣에 따라 기재ㆍ표시하여야 하는 모든 성분",
+      "field_add_description": "",
+      "observed_in_types": [
+        "COSMETIC"
+      ]
+    },
+    "customerServicePhoneNumber": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "소비자 상담 관련 전화번호",
+      "field_add_description": "",
+      "observed_in_types": [
+        "BIOCHEMISTRY",
+        "BIOCIDAL",
+        "COSMETIC",
+        "DIET_FOOD",
+        "DIGITAL_CONTENTS",
+        "ETC",
+        "ETC_SERVICE",
+        "FOOD",
+        "GENERAL_FOOD",
+        "GIFT_CARD",
+        "MOBILE_COUPON",
+        "MOVIE_SHOW",
+        "RENTAL_ETC"
+      ]
+    },
+    "purity": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "순도",
+      "field_add_description": "",
+      "observed_in_types": [
+        "JEWELLERY"
+      ]
+    },
+    "bandMaterial": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "밴드 재질",
+      "field_add_description": "시계의 경우",
+      "observed_in_types": [
+        "JEWELLERY"
+      ]
+    },
+    "provideWarranty": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "보증서 제공 여부",
+      "field_add_description": "",
+      "observed_in_types": [
+        "JEWELLERY"
+      ]
+    },
+    "foodItem": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "품목 또는 명칭",
+      "field_add_description": "",
+      "observed_in_types": [
+        "FOOD"
+      ]
+    },
+    "amount": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "포장 단위별 수량",
+      "field_add_description": "",
+      "observed_in_types": [
+        "DIET_FOOD",
+        "FOOD",
+        "GENERAL_FOOD"
+      ]
+    },
+    "consumptionDate": {
+      "type": "local_date",
+      "api_field_type": "LocalDate",
+      "field_description": "소비기한 또는 품질유지기한",
+      "field_add_description": "",
+      "observed_in_types": [
+        "DIET_FOOD",
+        "FOOD",
+        "GENERAL_FOOD"
+      ],
+      "formats_by_type": {
+        "FOOD": "yyyy-MM-dd",
+        "GENERAL_FOOD": "yyyy-MM-dd",
+        "DIET_FOOD": "yyyy-MM-dd"
+      },
+      "format": "yyyy-MM-dd accepted for FOOD, GENERAL_FOOD, DIET_FOOD; other types unconfirmed"
+    },
+    "consumptionDateText": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "소비기한 또는 품질유지기한 직접 입력",
+      "field_add_description": "",
+      "observed_in_types": [
+        "DIET_FOOD",
+        "FOOD",
+        "GENERAL_FOOD"
+      ]
+    },
+    "relevantLawContent": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "세부 품목군별 표시사항",
+      "field_add_description": "농산물\n- ｢농수산물 품질관리법｣에 따른 유전자변형농수산물 표시, 지리적 표시 축산물\n- 축산법에 따른 등급 표시 등급(1++ 국내산 쇠고기의 경우 ｢소·돼지 식육의 표시방법 및 부위 구분기준｣에 따라 근내지방도 정보를 포함하여 표시), ｢가축 및 축산물 이력관리에 관한 법률｣에 따른 이력관리대상축산물 유무 수입 농수축산물\n- 수입식품안전관리특별법에 따른 수입신고를 필함",
+      "observed_in_types": [
+        "FOOD"
+      ]
+    },
+    "productComposition": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "상품 구성",
+      "field_add_description": "",
+      "observed_in_types": [
+        "FOOD"
+      ]
+    },
+    "keep": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "보관 방법 또는 취급 방법",
+      "field_add_description": "",
+      "observed_in_types": [
+        "FOOD"
+      ]
+    },
+    "adCaution": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "소비자 안전을 위한 주의사항",
+      "field_add_description": "｢식품 등의 표시ㆍ광고에 관한 법률 시행규칙｣ 제5조 및 [별표 2]에 따른 표시사항을 말함",
+      "observed_in_types": [
+        "FOOD"
+      ]
+    },
+    "productName": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "제품명",
+      "field_add_description": "",
+      "observed_in_types": [
+        "BIOCHEMISTRY",
+        "BIOCIDAL",
+        "DIET_FOOD",
+        "GENERAL_FOOD"
+      ]
+    },
+    "foodType": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "식품의 유형",
+      "field_add_description": "",
+      "observed_in_types": [
+        "GENERAL_FOOD"
+      ]
+    },
+    "location": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "소재지",
+      "field_add_description": "수입품의 경우 생산자, 수입자 및 제조국",
+      "observed_in_types": [
+        "DIET_FOOD",
+        "GENERAL_FOOD"
+      ]
+    },
+    "ingredients": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "원재료명(｢농수산물의 원산지 표시 등에 관한 법률｣에 따른 원산지 표시 포함) 및 함량",
+      "field_add_description": "단, 함량의 경우에는 원재료 함량 표시대상 식품에 한함",
+      "observed_in_types": [
+        "DIET_FOOD",
+        "GENERAL_FOOD"
+      ]
+    },
+    "nutritionFacts": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "영양 성분",
+      "field_add_description": "영양성분 표시대상 식품에 한함",
+      "observed_in_types": [
+        "DIET_FOOD",
+        "GENERAL_FOOD"
+      ]
+    },
+    "geneticallyModified": {
+      "type": "boolean",
+      "api_field_type": "Boolean",
+      "field_description": "유전자변형식품에 해당하는 경우의 표시",
+      "field_add_description": "",
+      "observed_in_types": [
+        "DIET_FOOD",
+        "GENERAL_FOOD"
+      ]
+    },
+    "consumerSafetyCaution": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "소비자안전을 위한 주의사항",
+      "field_add_description": "｢식품 등의 표시ㆍ광고에 관한 법률 시행규칙｣ 제5조 및 [별표 2]에 따른 표시사항을 말함",
+      "observed_in_types": [
+        "DIET_FOOD",
+        "GENERAL_FOOD"
+      ]
+    },
+    "importDeclarationCheck": {
+      "type": "boolean",
+      "api_field_type": "Boolean",
+      "field_description": "수입식품의 경우 신고 필 유무",
+      "field_add_description": "",
+      "observed_in_types": [
+        "DIET_FOOD",
+        "GENERAL_FOOD"
+      ]
+    },
+    "storageMethod": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "보관방법",
+      "field_add_description": "",
+      "observed_in_types": [
+        "DIET_FOOD"
+      ]
+    },
+    "cautionAndSideEffect": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "섭취량, 섭취 방법 및 섭취 시 주의사항",
+      "field_add_description": "",
+      "observed_in_types": [
+        "DIET_FOOD"
+      ]
+    },
+    "nonMedicinalUsesMessage": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "질병의 예방 및 치료를 위한 의약품이 아니라는 내용의 문구",
+      "field_add_description": "",
+      "observed_in_types": [
+        "DIET_FOOD"
+      ]
+    },
+    "recommendedAge": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "사용 연령 또는 권장 사용 연령",
+      "field_add_description": "",
+      "observed_in_types": [
+        "KIDS"
+      ]
+    },
+    "numberLimit": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "크기·체중의 한계",
+      "field_add_description": "착용 또는 탑승용 어린이제품과 같이 크기·체중에 제한이 있는 품목의 경우 반드시 표시",
+      "observed_in_types": [
+        "KIDS"
+      ]
+    },
+    "detailContent": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "상품별 세부 사양",
+      "field_add_description": "",
+      "observed_in_types": [
+        "MUSICAL_INSTRUMENT",
+        "SPORTS_EQUIPMENT"
+      ]
+    },
+    "title": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "도서명",
+      "field_add_description": "",
+      "observed_in_types": [
+        "BOOKS"
+      ]
+    },
+    "author": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "저자",
+      "field_add_description": "",
+      "observed_in_types": [
+        "BOOKS"
+      ]
+    },
+    "publisher": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "출판사",
+      "field_add_description": "",
+      "observed_in_types": [
+        "BOOKS"
+      ]
+    },
+    "pages": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "쪽수",
+      "field_add_description": "",
+      "observed_in_types": [
+        "BOOKS"
+      ]
     },
     "publishDate": {
-      "type": "date",
-      "source": "live API: date-parse probe, 2026-08-04 (yyyy-MM-dd accepted, HTTP 200)",
-      "collected_at": "2026-08-04",
-      "format": "per-type; see formats_by_type",
+      "type": "local_date",
+      "api_field_type": "LocalDate",
+      "field_description": "발행일",
+      "field_add_description": "｢출판문화산업 진흥법｣ 제2조 및 제22조의 규정에 따른 것으로, 매 판을 처음 인쇄한 날을 말함. 단, 매 판을 구분할 때에 오탈자의 변경 등 경미한 변경에 따라 다시 인쇄하는 경우는 제외",
+      "observed_in_types": [
+        "BOOKS"
+      ],
       "formats_by_type": {
         "BOOKS": "yyyy-MM-dd"
-      }
+      },
+      "format": "per-type; see formats_by_type"
+    },
+    "publishDateText": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "발행일 직접 입력",
+      "field_add_description": "｢출판문화산업 진흥법｣ 제2조 및 제22조의 규정에 따른 것으로, 매 판을 처음 인쇄한 날을 말함. 단, 매 판을 구분할 때에 오탈자의 변경 등 경미한 변경에 따라 다시 인쇄하는 경우는 제외",
+      "observed_in_types": [
+        "BOOKS"
+      ]
+    },
+    "description": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "목차 또는 책 소개",
+      "field_add_description": "아동용 학습교재의 경우 사용 연령을 포함",
+      "observed_in_types": [
+        "BOOKS"
+      ]
+    },
+    "ownershipTransferCondition": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "소유권 이전 조건",
+      "field_add_description": "소유권이 이전되는 경우에 한하며, 소유권 이전에 필요한 렌탈 기간 또는 총 렌탈 금액 등 요건을 구체적으로 명시",
+      "observed_in_types": [
+        "RENTAL_ETC"
+      ]
+    },
+    "payingForLossOrDamage": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "상품의 고장, 분실, 훼손 시 소비자 책임",
+      "field_add_description": "",
+      "observed_in_types": [
+        "RENTAL_ETC"
+      ]
+    },
+    "refundPolicyForCancel": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "중도 해약 시 환불 기준",
+      "field_add_description": "",
+      "observed_in_types": [
+        "RENTAL_ETC"
+      ]
+    },
+    "maintenance": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "유지 보수 조건",
+      "field_add_description": "",
+      "observed_in_types": [
+        "RENTAL_HA"
+      ]
+    },
+    "termsOfUse": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "이용 조건",
+      "field_add_description": "",
+      "observed_in_types": [
+        "DIGITAL_CONTENTS",
+        "GIFT_CARD"
+      ]
+    },
+    "usePeriod": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "이용 기간",
+      "field_add_description": "",
+      "observed_in_types": [
+        "DIGITAL_CONTENTS"
+      ]
+    },
+    "medium": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "상품 제공 방식",
+      "field_add_description": "CD, 다운로드, 실시간 스트리밍 등",
+      "observed_in_types": [
+        "DIGITAL_CONTENTS"
+      ]
+    },
+    "requirement": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "최소 시스템 사양, 필수 소프트웨어",
+      "field_add_description": "",
+      "observed_in_types": [
+        "DIGITAL_CONTENTS"
+      ]
+    },
+    "cancelationPolicy": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "청약철회 및 계약의 해제, 해지에 따른 효과",
+      "field_add_description": "",
+      "observed_in_types": [
+        "DIGITAL_CONTENTS",
+        "ETC_SERVICE",
+        "MOBILE_COUPON",
+        "MOVIE_SHOW"
+      ]
+    },
+    "issuer": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "발행자",
+      "field_add_description": "",
+      "observed_in_types": [
+        "GIFT_CARD",
+        "MOBILE_COUPON"
+      ]
+    },
+    "periodStartDate": {
+      "type": "local_date",
+      "api_field_type": "LocalDate",
+      "field_description": "유효기간 시작일",
+      "field_add_description": "",
+      "observed_in_types": [
+        "GIFT_CARD"
+      ]
+    },
+    "periodEndDate": {
+      "type": "local_date",
+      "api_field_type": "LocalDate",
+      "field_description": "유효기간 종료일",
+      "field_add_description": "",
+      "observed_in_types": [
+        "GIFT_CARD"
+      ]
+    },
+    "periodDays": {
+      "type": "integer",
+      "api_field_type": "Integer",
+      "field_description": "유효기간(구매일로부터 00일)",
+      "field_add_description": "",
+      "observed_in_types": [
+        "GIFT_CARD"
+      ]
+    },
+    "useStorePlace": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "이용 가능 매장(장소)",
+      "field_add_description": "",
+      "observed_in_types": [
+        "GIFT_CARD"
+      ]
+    },
+    "useStoreAddressId": {
+      "type": "long",
+      "api_field_type": "Long",
+      "field_description": "이용 가능 매장(판매자 주소 ID)",
+      "field_add_description": "",
+      "observed_in_types": [
+        "GIFT_CARD"
+      ]
+    },
+    "useStoreUrl": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "이용 가능 매장(URL)",
+      "field_add_description": "",
+      "observed_in_types": [
+        "GIFT_CARD"
+      ]
+    },
+    "refundPolicy": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "잔액 환급 조건",
+      "field_add_description": "",
+      "observed_in_types": [
+        "GIFT_CARD"
+      ]
+    },
+    "usableCondition": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "유효기간, 이용 조건",
+      "field_add_description": "유효기간 경과 시 보상 기준 포함",
+      "observed_in_types": [
+        "ETC_SERVICE",
+        "MOBILE_COUPON"
+      ]
+    },
+    "usableStore": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "이용 가능 매장",
+      "field_add_description": "",
+      "observed_in_types": [
+        "MOBILE_COUPON"
+      ]
+    },
+    "sponsor": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "주최 또는 기획",
+      "field_add_description": "공연에 한함",
+      "observed_in_types": [
+        "MOVIE_SHOW"
+      ]
+    },
+    "actor": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "주연",
+      "field_add_description": "공연에 한함",
+      "observed_in_types": [
+        "MOVIE_SHOW"
+      ]
+    },
+    "rating": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "관람 등급",
+      "field_add_description": "",
+      "observed_in_types": [
+        "MOVIE_SHOW"
+      ]
+    },
+    "showTime": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "상영ㆍ공연 시간",
+      "field_add_description": "",
+      "observed_in_types": [
+        "MOVIE_SHOW"
+      ]
+    },
+    "showPlace": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "상영ㆍ공연 장소",
+      "field_add_description": "",
+      "observed_in_types": [
+        "MOVIE_SHOW"
+      ]
+    },
+    "cancelationCondition": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "예매 취소 조건",
+      "field_add_description": "",
+      "observed_in_types": [
+        "MOVIE_SHOW"
+      ]
+    },
+    "serviceProvider": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "서비스 제공 사업자",
+      "field_add_description": "",
+      "observed_in_types": [
+        "ETC_SERVICE"
+      ]
+    },
+    "certificateDetails": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "법에 의한 인증ㆍ허가 등을 받았음을 확인할 수 있는 경우 그에 대한 사항",
+      "field_add_description": "",
+      "observed_in_types": [
+        "ETC",
+        "ETC_SERVICE"
+      ]
+    },
+    "cancelationStandard": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "취소ㆍ중도해약ㆍ해지 조건 및 환불 기준",
+      "field_add_description": "",
+      "observed_in_types": [
+        "ETC_SERVICE"
+      ]
+    },
+    "dosageForm": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "용도 및 제형",
+      "field_add_description": "표백제의 경우 계열을 함께 표시",
+      "observed_in_types": [
+        "BIOCHEMISTRY"
+      ]
+    },
+    "effect": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "효능ㆍ효과",
+      "field_add_description": "승인 대상 생활화학제품에 한함",
+      "observed_in_types": [
+        "BIOCHEMISTRY",
+        "BIOCIDAL"
+      ]
+    },
+    "childProtection": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "어린이보호포장 대상 제품 여부",
+      "field_add_description": "",
+      "observed_in_types": [
+        "BIOCHEMISTRY",
+        "BIOCIDAL"
+      ]
+    },
+    "chemicals": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "제품에 사용된 화학 물질 명칭",
+      "field_add_description": "｢안전확인대상 생활화학제품 지정 및 안전·표시기준｣ [별표6]에 따른 표시대상 화학물질로서 주요물질, 보존제, 알레르기반응가능물질 등의 명칭",
+      "observed_in_types": [
+        "BIOCHEMISTRY"
+      ]
+    },
+    "safeCriterionNo": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "안전기준적합확인신고번호 또는 안전확인대상 생활화학제품승인번호",
+      "field_add_description": "화학제품안전법 시행일(경과조치 기간 포함) 이전에 생산·수입된 위해우려제품의 경우 종전 법에 따른 자가 검사번호를 표시",
+      "observed_in_types": [
+        "BIOCHEMISTRY"
+      ]
+    },
+    "rangeOfUse": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "사용 대상자 및 사용 범위",
+      "field_add_description": "",
+      "observed_in_types": [
+        "BIOCIDAL"
+      ]
+    },
+    "harmfulChemicalSubstance": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "살생물물질, 나노물질, 유해화학물질(또는 중점관리물질)의 명칭",
+      "field_add_description": "",
+      "observed_in_types": [
+        "BIOCIDAL"
+      ]
+    },
+    "maleficence": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "제품 유해성ㆍ위해성 표시",
+      "field_add_description": "",
+      "observed_in_types": [
+        "BIOCIDAL"
+      ]
+    },
+    "approvalNumber": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "승인번호",
+      "field_add_description": "",
+      "observed_in_types": [
+        "BIOCIDAL"
+      ]
+    },
+    "telecomType": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "이동통신사",
+      "field_add_description": "",
+      "observed_in_types": [
+        "CELLPHONE"
+      ]
+    },
+    "joinProcess": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "가입절차",
+      "field_add_description": "",
+      "observed_in_types": [
+        "CELLPHONE"
+      ]
+    },
+    "extraBurden": {
+      "type": "string",
+      "api_field_type": "String",
+      "field_description": "소비자의 추가적인 부담사항",
+      "field_add_description": "가입비, 유심카드 구입비 등 추가로 부담하여야 할 금액, 부가서비스, 의무사용기간, 위약금 등",
+      "observed_in_types": [
+        "CELLPHONE"
+      ]
     }
   },
-  "doc_cross_check": {
-    "checked_at": "2026-08-05",
-    "source": "공식 문서 스키마(사용자 저장본) — harvest_doc_fields.json 에서 고시 필드만 발췌",
-    "note": "공식 문서가 고시 필드에 대해 명시한 boolean/date 선언을 live-실증 결과와 대조. 문서가 boolean 으로 선언한 고시 필드는 geneticallyModified, importDeclaration, importDeclarationCheck 3종 — 모두 이미 live 실증 boolean 으로 type 파일에 등록되어 있어 충돌 0건. 문서가 'yyyy-MM' 형식을 명시한 고시 date 필드는 releaseDate, packDate, expirationDate 3종 — releaseDate/expirationDate 의 live 실증 포맷과 일치. packDate 는 live 실증 포맷이 yyyy-MM-dd (FOOD/GENERAL_FOOD/DIET_FOOD) 이고 문서는 yyyy-MM 이라 충돌이나, packDate 의 live 실증은 BIOCHEMISTRY 등 다른 타입에서는 미확정이므로 formats_by_type 의 FOOD/GENERAL_FOOD/DIET_FOOD 항목은 live 실증값으로 유지 (실증 우선 원칙). publishDate/consumptionDate 는 문서에 명시적 포맷이 없어 live 실증값이 유일한 근거. 충돌 0건(FOOD 계열 packDate 의 yyyy-MM-dd vs 문서 yyyy-MM 은 formats_by_type 이 타입별로 다를 수 있다는 본 파일의 설계 원칙에 따라 충돌이 아님).",
-    "doc_declared_types": {
-      "geneticallyModified": { "doc_type": "boolean", "live_type": "boolean", "match": true },
-      "importDeclaration": { "doc_type": "boolean", "live_type": "boolean", "match": true },
-      "importDeclarationCheck": { "doc_type": "boolean", "live_type": "boolean", "match": true },
-      "releaseDate": { "doc_type": "date(yyyy-MM)", "live_type": "date(yyyy-MM per type)", "match": true },
-      "packDate": { "doc_type": "date(yyyy-MM)", "live_type": "date(yyyy-MM-dd for FOOD family)", "match": "per-type divergence — live wins for probed types" },
-      "expirationDate": { "doc_type": "date(yyyy-MM)", "live_type": "date(yyyy-MM per type)", "match": true }
+  "api_types": [
+    {
+      "type": "BAG",
+      "name_ko": "가방",
+      "field_count": 8
+    },
+    {
+      "type": "BIOCHEMISTRY",
+      "name_ko": "생활화학제품",
+      "field_count": 16
+    },
+    {
+      "type": "BIOCIDAL",
+      "name_ko": "살생물제품",
+      "field_count": 15
+    },
+    {
+      "type": "BOOKS",
+      "name_ko": "서적",
+      "field_count": 9
+    },
+    {
+      "type": "CAR_ARTICLES",
+      "name_ko": "자동차용품 (자동차부품/기타 자동차용품 등)",
+      "field_count": 12
+    },
+    {
+      "type": "CELLPHONE",
+      "name_ko": "휴대폰 통신기기(휴대폰/태블릿 등)",
+      "field_count": 16
+    },
+    {
+      "type": "COSMETIC",
+      "name_ko": "화장품",
+      "field_count": 14
+    },
+    {
+      "type": "DIET_FOOD",
+      "name_ko": "건강기능식품",
+      "field_count": 19
+    },
+    {
+      "type": "DIGITAL_CONTENTS",
+      "name_ko": "디지털콘텐츠(음원,게임,인터넷강의 등)",
+      "field_count": 7
+    },
+    {
+      "type": "ETC",
+      "name_ko": "기타 재화",
+      "field_count": 6
+    },
+    {
+      "type": "ETC_SERVICE",
+      "name_ko": "기타 용역",
+      "field_count": 6
+    },
+    {
+      "type": "FASHION_ITEMS",
+      "name_ko": "패션잡화(모자/벨트/액세서리 등)",
+      "field_count": 7
+    },
+    {
+      "type": "FOOD",
+      "name_ko": "식품(농.축.수산물)",
+      "field_count": 16
+    },
+    {
+      "type": "FURNITURE",
+      "name_ko": "가구(침대/소파/싱크대/DIY제품 등)",
+      "field_count": 13
+    },
+    {
+      "type": "GENERAL_FOOD",
+      "name_ko": "가공식품",
+      "field_count": 18
+    },
+    {
+      "type": "GIFT_CARD",
+      "name_ko": "상품권/쿠폰",
+      "field_count": 10
+    },
+    {
+      "type": "HOME_APPLIANCES",
+      "name_ko": "가정용전기제품(냉장고/세탁기/식기세척기/전자레인지 등)",
+      "field_count": 13
+    },
+    {
+      "type": "IMAGE_APPLIANCES",
+      "name_ko": "영상가전(TV류)",
+      "field_count": 14
+    },
+    {
+      "type": "JEWELLERY",
+      "name_ko": "귀금속/보석/시계류",
+      "field_count": 12
+    },
+    {
+      "type": "KIDS",
+      "name_ko": "어린이제품",
+      "field_count": 15
+    },
+    {
+      "type": "KITCHEN_UTENSILS",
+      "name_ko": "주방용품",
+      "field_count": 12
+    },
+    {
+      "type": "MEDICAL_APPLIANCES",
+      "name_ko": "의료기기",
+      "field_count": 14
+    },
+    {
+      "type": "MICROELECTRONICS",
+      "name_ko": "소형전자(MP3/전자사전 등)",
+      "field_count": 13
+    },
+    {
+      "type": "MOBILE_COUPON",
+      "name_ko": "모바일쿠폰",
+      "field_count": 5
+    },
+    {
+      "type": "MOVIE_SHOW",
+      "name_ko": "영화/공연",
+      "field_count": 8
+    },
+    {
+      "type": "MUSICAL_INSTRUMENT",
+      "name_ko": "악기",
+      "field_count": 12
+    },
+    {
+      "type": "NAVIGATION",
+      "name_ko": "내비게이션",
+      "field_count": 15
+    },
+    {
+      "type": "OFFICE_APPLIANCES",
+      "name_ko": "사무용기기(컴퓨터/노트북/프린터 등)",
+      "field_count": 14
+    },
+    {
+      "type": "OPTICS_APPLIANCES",
+      "name_ko": "광학기기(디지털카메라/캠코더 등)",
+      "field_count": 11
+    },
+    {
+      "type": "RENTAL_ETC",
+      "name_ko": "물품대여서비스(서적,유아용품,행사용품 등)",
+      "field_count": 6
+    },
+    {
+      "type": "RENTAL_HA",
+      "name_ko": "물품대여서비스(정수기,비데,공기청정기 등)",
+      "field_count": 2
+    },
+    {
+      "type": "SEASON_APPLIANCES",
+      "name_ko": "계절가전(에어컨/온풍기 등)",
+      "field_count": 14
+    },
+    {
+      "type": "SHOES",
+      "name_ko": "구두/신발",
+      "field_count": 8
+    },
+    {
+      "type": "SLEEPING_GEAR",
+      "name_ko": "침구류/커튼",
+      "field_count": 8
+    },
+    {
+      "type": "SPORTS_EQUIPMENT",
+      "name_ko": "스포츠용품",
+      "field_count": 14
+    },
+    {
+      "type": "WEAR",
+      "name_ko": "의류",
+      "field_count": 9
     }
-  }
+  ]
 }
