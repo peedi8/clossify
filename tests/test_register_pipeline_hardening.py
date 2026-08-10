@@ -437,35 +437,35 @@ class TestFix8Packaging:
 
 
 # ============================================================================ #
-# 검증 — 7 MCP tools registered
+# 검증 — MCP 서버가 등록한 도구 이름 집합
 # ============================================================================ #
 class TestToolRegistration:
-    """MCP 서버가 정확히 7개의 도구를 등록했는가.
+    """MCP 서버가 기대하는 도구 이름 집합을 등록했는가.
 
-    delete_product 가 추가되면서 도구 수가 6 → 7 로 늘었다.
+    도구가 추가·삭제·개명되면 이름 집합 비교가 잡아낸다.
     """
 
-    def test_six_tools_registered(self):
-        tools = mcp_server.mcp.list_tools()
-        # MCPServer.list_tools() 가 코루틴이면 async 로 실행.
+    def test_registered_tool_names(self):
         import asyncio
 
-        if hasattr(tools, "__await__"):
-            tools = (
-                asyncio.get_event_loop().run_until_complete(tools)
-                if not asyncio.iscoroutinefunction(mcp_server.mcp.list_tools)
-                else asyncio.run(mcp_server.mcp.list_tools())
-            )
-        # list_tools 의 반환형이 list[MCPTool] 또는 유사 객체.
-        # 도구 이름들을 추출.
-        names = []
-        for t in tools:
-            name = getattr(t, "name", None) or getattr(t, "name", None)
-            if name:
-                names.append(name)
-        # 8개 도구: check_config, upload_images, register_product, get_product,
-        # delete_product, prepare_listing, submit_reviews, manage_products
-        assert len(tools) == 8, f"Expected 8 tools, got {len(tools)}: {names}"
+        tools = asyncio.run(mcp_server.mcp.list_tools())
+        names = {getattr(t, "name", None) for t in tools}
+        expected = {
+            "check_config",
+            "delete_product",
+            "get_product",
+            "manage_products",
+            "prepare_listing",
+            "register_product",
+            "submit_reviews",
+            "upload_images",
+        }
+        missing = expected - names
+        extra = names - expected
+        assert names == expected, (
+            f"Tool name set mismatch. missing={sorted(missing)}, "
+            f"extra={sorted(extra)}, actual={sorted(names)}"
+        )
 
 
 # ============================================================================ #
