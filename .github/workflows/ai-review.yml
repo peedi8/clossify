@@ -103,11 +103,16 @@ jobs:
           claude_args: >-
             --model sonnet
             --max-turns 40
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Read,Grep,Glob"
-          # allowedTools 주의: 배타적 허용 목록이다.
-          #   - inline_comment 가 있어야 액션이 게시용 MCP 서버를 설치한다(없으면 게시 수단 자체가 없음)
-          #   - Read/Grep/Glob 이 있어야 diff 밖 파일을 읽는 교차 정합성 리뷰가 된다
-          #     (없으면 권한 거부로 몇 초 만에 포기한다)
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git status:*)"
+          # allowedTools 는 **추가** 목록이다(배타적 허용 목록이 아니다).
+          # 저장소 기본 도구는 항상 포함되고, 여기 적은 것이 거기에 더해진다.
+          #   - inline_comment: 게시 수단. 없으면 리뷰를 남길 방법이 없다.
+          #   - Read/Grep/Glob: diff 밖 파일을 읽어야 교차 정합성 리뷰가 된다.
+          #   - Bash(git ...): 이 이벤트에서는 변경 내용이 프롬프트에 자동으로 들어오지
+          #     않는다. 리뷰어가 스스로 diff 를 읽어야 하는데 Bash 는 기본 포함이 아니다.
+          #     범위를 읽기 전용 git 하위명령으로 좁혀 둔다(체크아웃은 fetch-depth 0).
+          # 실측 근거: 이 줄이 없던 판(run 31413683298)은 22턴 · 권한 거부 11회 후
+          # 아무것도 게시하지 못하고 끝났다.
           prompt: |
             이 PR 을 아래 지침에 따라 리뷰하고, **반드시 인라인 코멘트로 게시**하라.
             게시하지 않은 리뷰는 존재하지 않는 것과 같다.
@@ -121,6 +126,45 @@ jobs:
             - 수정 코드는 **한 파일·몇 줄·판단이 개입하지 않을 때만** 제시하고,
               `로컬에서 확인함` 또는 `미검증` 을 함께 적어라.
             - 지적이 없으면 "지적 사항 없음" 을 한 줄로 게시하라(침묵 금지).
+
+      # 리뷰가 안 붙었을 때 원인을 **추측하지 않기 위한** 스텝.
+      # 거부된 도구 이름만 뽑는다 — 대화 본문은 찍지 않는다(길고, 저장소 내용이 로그에 남는다).
+      - name: 거부된 도구 확인
+        if: always() && steps.ai.outputs.execution_file != ''
+        env:
+          EXEC_FILE: ${{ steps.ai.outputs.execution_file }}
+        run: |
+          [ -f "$EXEC_FILE" ] || { echo "실행 기록 파일 없음"; exit 0; }
+          python3 - "$EXEC_FILE" <<'PY'
+          import json, sys, collections
+          try:
+              data = json.load(open(sys.argv[1], encoding="utf-8"))
+          except Exception as exc:
+              print(f"실행 기록을 읽지 못함: {exc}")
+              raise SystemExit(0)
+          denials = []
+          def walk(node):
+              if isinstance(node, dict):
+                  found = node.get("permission_denials")
+                  if isinstance(found, list):
+                      denials.extend(found)
+                  for value in node.values():
+                      walk(value)
+              elif isinstance(node, list):
+                  for value in node:
+                      walk(value)
+          walk(data)
+          if not denials:
+              print("거부된 도구 없음")
+          else:
+              counted = collections.Counter(
+                  d.get("tool_name", "?") if isinstance(d, dict) else str(d)
+                  for d in denials
+              )
+              print("거부된 도구 (이름: 횟수)")
+              for name, n in counted.most_common():
+                  print(f"  {name}: {n}")
+          PY
 
       # ⚠️ 이 스텝의 존재 이유: 액션의 outcome 을 완료 신호로 쓰면 **거짓 완료**가 난다.
       # 액션은 스스로 건너뛴 경우(아래 '워크플로 검증')에도 outcome=success 로 끝나므로,
