@@ -355,6 +355,13 @@ class TestApprovalEditRecheck:
         태그 편집 자체는 결정론 검사 대상이 아니지만(현재 코드에서), LLM 카피
         품질 검사가 재실행되지 않는다는 것을 라벨과 unreviewed 목록으로
         드러내야 한다 — 거짓 "full" 라벨 금지.
+
+        ★ N60 — 본 테스트는 ``_post_product_payload`` 만 mock 했고 ``get_token``
+        을 mock 하지 않아, 게이트를 통과한 뒤 등록 직전 ``naver_client.get_token``
+        이 네이버 OAuth 토큰 엔드포인트(223.130.196.242:443) 로 실제 POST 를
+        보냈다. IP 허용목록이 풀려 있으면 우연히 초록불, 불일치하면 빨간불 —
+        테스트 통과가 남의 서버 상태에 좌우되는 사고(2026-08-08) 의 원인이었다.
+        이제 ``get_token`` 도 mock 하여 네이버 없이도 통과한다.
         """
         fake_srv = _mock_approval_server(edits={"태그": "겨울, 신상품"})
         monkeypatch.delenv("COMMERCE_DRY_RUN", raising=False)
@@ -387,6 +394,10 @@ class TestApprovalEditRecheck:
             mock.patch.object(
                 register, "resolve_prepared_for_register", return_value=(passing_payload, {})
             ),
+            # N60 — 네이버 OAuth 토큰 엔드포인트로의 실호출 차단.
+            # 가짜 토큰을 반환한다 (실제 API 형태: access_token 문자열).
+            # _post_product_payload 도 mock 했으므로 이 토큰은 쓰이지 않는다.
+            mock.patch.object(naver_client, "get_token", return_value="test-token-mock"),
             mock.patch.object(naver_client, "_post_product_payload", side_effect=_count_post),
             mock.patch.object(
                 common, "cfg", return_value={"smartstore_notice_defaults": _NOTICE_CFG_FULL}
@@ -415,6 +426,10 @@ class TestApprovalEditRecheck:
 
         회귀 방지: 편집이 없을 때도 라벨이 "approval_edited" 로 깎이면
         정상 경로의 신뢰성 표시가 깨진다.
+
+        ★ N60 — test_c 와 같은 이유로 ``get_token`` 이 네이버 OAuth 엔드포인트로
+        실호출했다. ``_post_product_payload`` 옆에 ``get_token`` mock 을 추가하여
+        네이버 없이도 통과한다 (IP 허용목록·서버 상태와 무관).
         """
         fake_srv = _mock_approval_server(edits=None)  # 편집 없음.
         monkeypatch.delenv("COMMERCE_DRY_RUN", raising=False)
@@ -447,6 +462,8 @@ class TestApprovalEditRecheck:
             mock.patch.object(
                 register, "resolve_prepared_for_register", return_value=(passing_payload, {})
             ),
+            # N60 — 네이버 OAuth 토큰 엔드포인트로의 실호출 차단.
+            mock.patch.object(naver_client, "get_token", return_value="test-token-mock"),
             mock.patch.object(naver_client, "_post_product_payload", side_effect=_count_post),
             mock.patch.object(
                 common, "cfg", return_value={"smartstore_notice_defaults": _NOTICE_CFG_FULL}
