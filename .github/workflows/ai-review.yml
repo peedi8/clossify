@@ -187,9 +187,12 @@ jobs:
               print("거부된 도구 없음")
 
           # 조기 실패 = 모델이 일을 시작도 못 했다는 뜻. 원문에 저장소 내용이 없다.
+          # system(init) 이벤트는 도구·명령 목록이라 길기만 하고 원인이 없다 — 빼고 찍는다.
           if failed and turns <= 2:
-              print("--- 조기 실패라 기록 원문을 싣는다 (앞 3000자) ---")
-              print(raw[:3000])
+              events = data if isinstance(data, list) else [data]
+              body = [e for e in events if not (isinstance(e, dict) and e.get("type") == "system")]
+              print("--- 조기 실패: system 외 이벤트 (앞 4000자) ---")
+              print(json.dumps(body, ensure_ascii=False, indent=2)[:4000])
           PY
 
       # ⚠️ 이 스텝의 존재 이유: 액션의 outcome 을 완료 신호로 쓰면 **거짓 완료**가 난다.
