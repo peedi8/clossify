@@ -18,11 +18,23 @@
 
 name: AI 보조 리뷰
 
+# ⚠️ synchronize(새 커밋 푸시)를 **일부러 뺐다.**
+# 인증이 구독 토큰이라 예산이 돈이 아니라 **주간 한도**다 — 리뷰가 도는 만큼 대화형 작업 몫이 줄어든다.
+# 고치고 푸시할 때마다 리뷰가 다시 도는 게 기본이면 PR 하나에 리뷰가 대여섯 번 돈다
+# (2026-08-11 에 실제로 한 PR 에서 5회 돌았다). 자동은 **PR 이 열릴 때 한 번**으로 충분하다.
+# 고친 뒤 다시 보고 싶으면 PR 에 `ai-review` 라벨을 붙인다(뗐다 다시 붙이면 또 돈다).
 on:
   pull_request:
-    types: [opened, synchronize, ready_for_review]
+    types: [opened, ready_for_review, labeled]
+    # 문서·설정만 바뀐 PR 은 리뷰할 코드가 없다. 한도를 쓰지 않는다.
+    # (이 잡은 required check 가 아니므로 아예 안 돌아도 PR 이 막히지 않는다)
+    paths-ignore:
+      - "**/*.md"
+      - ".github/**"
+      - "docs/**"
+      - "LICENSE*"
 
-# 같은 PR 에 새 커밋이 오면 진행 중인 리뷰를 취소한다(중복 과금 방지).
+# 같은 PR 에 리뷰가 겹치면 앞엣것을 취소한다(한도 중복 소모 방지).
 concurrency:
   group: ai-review-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -35,9 +47,11 @@ permissions:
 jobs:
   review:
     # 초안 PR 제외. fork PR 제외(시크릿 노출 차단).
+    # 라벨로 들어온 경우는 `ai-review` 라벨일 때만 — 아무 라벨에나 리뷰가 돌면 한도가 샌다.
     if: >-
       github.event.pull_request.draft == false &&
-      github.event.pull_request.head.repo.full_name == github.repository
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (github.event.action != 'labeled' || github.event.label.name == 'ai-review')
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -107,8 +121,12 @@ jobs:
           # 리뷰에는 상위 모델이 필요 없다(레퍼런스 실측). 비용 대비 효과가 가장 좋은 조합.
           claude_args: >-
             --model sonnet
-            --max-turns 40
+            --max-turns 25
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git status:*)"
+          # 턴 상한 25: 한도를 쓰는 건 턴이 아니라 토큰이지만, 상한은 **폭주를 막는 뚜껑**이다.
+          # 실측 22턴짜리 실행은 그중 11턴이 권한 거부로 날아간 것이었다(그건 위에서 고쳤다).
+          # 아래 프롬프트가 "절반 넘게 썼으면 그 시점 결론을 게시하라"고 지시하므로,
+          # 뚜껑에 닿아도 침묵이 아니라 불완전한 리뷰가 남는다.
           # allowedTools 는 **추가** 목록이다(배타적 허용 목록이 아니다).
           # 저장소 기본 도구는 항상 포함되고, 여기 적은 것이 거기에 더해진다.
           #   - inline_comment: 게시 수단. 없으면 리뷰를 남길 방법이 없다.
