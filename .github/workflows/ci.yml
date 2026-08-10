@@ -26,6 +26,13 @@ jobs:
   gitleaks:
     name: gitleaks
     runs-on: ubuntu-latest
+    # PR 이벤트에서 이 액션은 PR 커밋 목록을 조회한다. 그 권한이 없으면
+    # 스캔에 들어가기도 전에 403 으로 죽는다 — push 에서는 조회할 PR 이 없어
+    # 드러나지 않고 PR 에서만 터진다. 잡 단위 permissions 는 최상위 설정을
+    # 통째로 대체하므로 contents 도 여기 다시 적어야 한다.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,6 +43,10 @@ jobs:
         env:
           # 커스텀 룰셋 사용 — 네이버 계열 키 패턴 포함.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # PR 코멘트 기능을 끈다. 켜두면 write 권한이 필요할 뿐 아니라,
+          # 탐지된 값의 주변 맥락이 PR 코멘트로 남을 수 있다 — 공개 전환 시
+          # 유출 경로가 된다. 발견은 잡 실패와 로그로 충분히 드러난다.
+          GITLEAKS_ENABLE_COMMENTS: "false"
         with:
           config-path: .gitleaks.toml
 
