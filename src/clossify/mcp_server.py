@@ -5,7 +5,7 @@
 """Clossify MCP 서버 — 네이버 스마트스토어 등록 능력을 MCP 클라이언트 LLM에 부여.
 
 이 모듈은 MCP Python SDK(v2, PyPI `mcp`)의 `MCPServer`(FastMCP 후속)를 사용해
-로컬 stdio MCP 서버를 노출한다. 서버는 7개의 도구를 제공한다:
+로컬 stdio MCP 서버를 노출한다. 서버는 8개의 도구를 제공한다:
 
 - ``check_config``: 자격증명/설정 파일 존재 및 형식 검사. 기본은 외부 API 호출
   없음. ``read_existing=True`` 면 기존 상품에서 정책값을 읽어 제안(온보딩).
@@ -16,6 +16,8 @@
 - ``submit_reviews``: 클라이언트 LLM 의 검수 회신을 prepared payload 에 병합.
 - ``delete_product``: 등록된 상품(origin product) 단건을 영구 삭제. 확인 인자가
   명시적으로 참일 때만 동작하며, 성공 시 로컬 등록 기록도 함께 지운다.
+- ``manage_products``: 등록 후 관리 — 상품 목록 조회, 판매중지/재개, 네이버
+  검수(수정요청) 확인. 정적 관리 패널 HTML 을 생성한다.
 
 모든 자격증명은 프로젝트 루트의 ``.local/config.json`` 에만 존재한다
 (ADR-0002 로컬 MCP + BYO-key). 이 서버 자체는 자격증명을 수탁/저장하지 않는다.
@@ -26,6 +28,7 @@
 
 from __future__ import annotations
 
+import html
 import json
 import os
 from typing import Any
@@ -3914,6 +3917,856 @@ def submit_reviews(
         "qa": aggregated,
         "gate_allowed": bool(allowed),
         "template_saved": template_saved,
+        "error": None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# N27+N64: manage_products — 등록 후 관리 (목록/중지/재개/검수).
+#
+# 노선: **조작은 브라우저 창, 확인은 패널.** 이 도구는 등록된 상품을 **읽고
+# 상태를 바꾸는** 유일한 통로다. 7개 도구가 "등록" 흐름을 담당했다면, 이 8번째
+# 도구는 "등록 후" 를 담당한다 — 목록 조회, 판매중지/재개, 네이버 검수(수정요청)
+# 확인.
+#
+# 안전 불변식 (타협 불가):
+#   - **dry-run 기본**: suspend/resume 은 ``confirm=True`` 일 때만 API 호출.
+#     ``confirm=False`` (기본값) 면 네이버 API 호출 0회 (기존 규율 준수).
+#   - **fail-open 검수**: 검수(inspection) 조회가 실패해도 목록(list)은 나온다.
+#     단, "조회 실패" 와 "0건" 을 화면에서 구분되게 한다 (3상태 구분).
+#   - **정적 패널**: 관리 패널 HTML 은 ``<script>``·``<button>``·``<input>``·
+#     ``contenteditable`` 이 0개다. 조작은 대화로(LM 에게).
+#   - **비밀값 비노출**: 패널과 반환에 토큰·시크릿을 담지 않는다.
+#   - **상태 폴더 밖 파일 금지**: 패널 HTML 은 STATE_DIR 하위에만 쓴다.
+#   - **존재하지 않는 action 거부**: 알 수 없는 action 을 조용히 무시하지 않고
+#     명확하게 거부 + 유효한 action 목록을 안내한다.
+# ---------------------------------------------------------------------------
+
+# 판매중지/재개 페이로드 — template_migration_harvest._SUSPEND_PAYLOAD 와 동일한
+# 형태(channelProductDisplayStatusType 만 바꾼 최소 페이로드).
+_MANAGE_SUSPEND_PAYLOAD = {"channelProductDisplayStatusType": "SUSPENSION"}
+_MANAGE_RESUME_PAYLOAD = {"channelProductDisplayStatusType": "SALE"}
+
+# 유효한 manage_products action 목록.
+_MANAGE_VALID_ACTIONS = ("list", "suspend", "resume", "inspections")
+
+# suspend/resume 채널 번호 해석용 검색 페이지 상한.
+# search_products 를 훑어 originProductNo 일치 항목을 찾는다 — 상한에 걸리면
+# 못 찾았다는 사실을 사유에 담는다 (조용한 실패 금지).
+_MANAGE_RESOLVE_MAX_PAGES = 20
+_MANAGE_RESOLVE_PAGE_SIZE = 100
+
+
+def _resolve_channel_no_via_search(
+    origin_no: str,
+    harvest_mod: Any,
+) -> tuple[str, str, int, int]:
+    """search_products 를 훑어 originProductNo 일치 항목의 channelProductNo 를 얻는다.
+
+    ``get_product`` 응답에는 channelProductNo 가 존재하지 않는다 (실측) —
+    suspend/resume 이 channel 번호를 얻는 **유일한 실측 가능 경로** 는
+    search_products 응답의 ``contents[].originProductNo`` 와
+    ``contents[].channelProducts[0].channelProductNo`` 다.
+
+    수확 파이프라인(``template_migration_harvest``)의 검증된 추출 함수
+    ``_extract_origin_no`` / ``_extract_channel_no`` 를 재사용한다 —
+    같은 스키마(검색 응답 listing) 에서 같은 값을 뽑는다.
+
+    Args:
+        origin_no: 찾을 originProductNo (문자열).
+        harvest_mod: ``template_migration_harvest`` 모듈 (추출 함수 재사용).
+
+    Returns:
+        ``(channel_no, reason, pages_scanned, listings_scanned)``.
+        - ``channel_no``: 찾았으면 문자열, 못 찾았으면 빈 문자열.
+        - ``reason``: 못 찾은 이유 (상한 도달 / 일치 0건 / 검색 실패).
+          찾았으면 빈 문자열.
+        - ``pages_scanned``: 훑은 페이지 수.
+        - ``listings_scanned``: 훑은 listing 총 수 (조용한 실패 방지용).
+    """
+    target = str(origin_no or "").strip()
+    pages_scanned = 0
+    listings_scanned = 0
+
+    for page in range(1, _MANAGE_RESOLVE_MAX_PAGES + 1):
+        try:
+            sc, body = naver_client.search_products(page=page, size=_MANAGE_RESOLVE_PAGE_SIZE)
+        except Exception as exc:
+            return "", f"검색 {page}페이지 오류: {_sanitize_error(exc)}", pages_scanned, listings_scanned
+        pages_scanned = page
+        if not (isinstance(sc, int) and sc == 200) or not isinstance(body, dict):
+            return (
+                "",
+                f"검색 {page}페이지 실패: HTTP {sc}",
+                pages_scanned,
+                listings_scanned,
+            )
+        # contents / products 키 폴백 (harvest 패턴 재사용).
+        listings = body.get("contents")
+        if listings is None:
+            listings = body.get("products")
+        if not isinstance(listings, list) or not listings:
+            # 빈 페이지 — 더 이상 없다.
+            break
+        listings_scanned += len(listings)
+        for entry in listings:
+            if harvest_mod._extract_origin_no(entry) == target:
+                channel_no = harvest_mod._extract_channel_no(entry)
+                if channel_no:
+                    return channel_no, "", pages_scanned, listings_scanned
+                # origin 은 일치하는데 channel 번호가 없으면 사유를 남기되
+                # 계속 훑는다 (다른 페이지에서 같은 origin 이 또 나올 수 있다).
+        # 페이지가 꽉 차지 않으면 끝.
+        if len(listings) < _MANAGE_RESOLVE_PAGE_SIZE:
+            break
+        if page >= _MANAGE_RESOLVE_MAX_PAGES:
+            return (
+                "",
+                f"페이지 상한({_MANAGE_RESOLVE_MAX_PAGES}) 도달 — 더 있을 수 있음",
+                pages_scanned,
+                listings_scanned,
+            )
+
+    if listings_scanned == 0:
+        return "", "훑은 listing 없음 (응답 비었거나 파싱 실패)", pages_scanned, listings_scanned
+    return (
+        "",
+        f"originProductNo={target} 일치 항목 없음 ({listings_scanned}건 훑음)",
+        pages_scanned,
+        listings_scanned,
+    )
+
+
+def _extract_product_summary(listing: Any) -> dict[str, Any]:
+    """검색 응답 listing 1건에서 관리 패널용 요약을 방어적으로 추출.
+
+    네이버 search_products 응답의 ``contents`` 배열 각 원소에서 이름·가격·상태·
+    재고·상품번호를 뽑는다. 응답 스키마가 바뀌어도 조용히 빈 값으로 떨어지지
+    않게 — 찾지 못한 필드는 빈 문자열/0 으로 두고 그대로 돌려준다.
+
+    Returns:
+        ``{origin_product_no, channel_product_no, name, price, status, stock}``
+        dict. 어느 필드든 못 찾으면 빈 문자열/0.
+    """
+    if not isinstance(listing, dict):
+        return {
+            "origin_product_no": "",
+            "channel_product_no": "",
+            "name": "",
+            "price": 0,
+            "status": "",
+            "stock": 0,
+        }
+
+    # originProductNo: 최상위 우선, channelProducts[0] 폴백.
+    origin_no = ""
+    v = listing.get("originProductNo")
+    if v is not None:
+        origin_no = str(v).strip()
+    if not origin_no:
+        channels = listing.get("channelProducts")
+        if isinstance(channels, list) and channels:
+            first = channels[0]
+            if isinstance(first, dict):
+                cv = first.get("originProductNo")
+                if cv is not None:
+                    origin_no = str(cv).strip()
+
+    # channelProductNo: channelProducts[0] 우선, 최상위 폴백.
+    channel_no = ""
+    channels = listing.get("channelProducts")
+    if isinstance(channels, list) and channels:
+        first = channels[0]
+        if isinstance(first, dict):
+            cv = first.get("channelProductNo") or first.get("smartstoreChannelProductNo")
+            if cv is not None:
+                channel_no = str(cv).strip()
+    if not channel_no:
+        cv = listing.get("channelProductNo") or listing.get("smartstoreChannelProductNo")
+        if cv is not None:
+            channel_no = str(cv).strip()
+
+    # name: channelProducts[0].name 우선, originProduct.name 폴백, listing.name 폴백.
+    name = ""
+    if isinstance(channels, list) and channels:
+        first = channels[0]
+        if isinstance(first, dict):
+            nv = first.get("name")
+            if nv is not None:
+                name = str(nv).strip()
+    if not name:
+        op = listing.get("originProduct")
+        if isinstance(op, dict):
+            nv = op.get("name")
+            if nv is not None:
+                name = str(nv).strip()
+    if not name:
+        nv = listing.get("name")
+        if nv is not None:
+            name = str(nv).strip()
+
+    # price: channelProducts[0].salePrice 우선, originProduct.salePrice 폴백.
+    price = 0
+    if isinstance(channels, list) and channels:
+        first = channels[0]
+        if isinstance(first, dict):
+            pv = first.get("salePrice")
+            if pv is not None:
+                try:
+                    price = int(pv)
+                except (TypeError, ValueError):
+                    price = 0
+    if price == 0:
+        op = listing.get("originProduct")
+        if isinstance(op, dict):
+            pv = op.get("salePrice")
+            if pv is not None:
+                try:
+                    price = int(pv)
+                except (TypeError, ValueError):
+                    price = 0
+
+    # status: channelProducts[0].statusType 우선, channelProductDisplayStatusType 폴백.
+    status = ""
+    if isinstance(channels, list) and channels:
+        first = channels[0]
+        if isinstance(first, dict):
+            sv = first.get("statusType")
+            if sv is not None:
+                status = str(sv).strip()
+            if not status:
+                sv = first.get("channelProductDisplayStatusType")
+                if sv is not None:
+                    status = str(sv).strip()
+    if not status:
+        sv = listing.get("statusType")
+        if sv is not None:
+            status = str(sv).strip()
+
+    # stock: originProduct.stockQuantity 우선.
+    stock = 0
+    op = listing.get("originProduct")
+    if isinstance(op, dict):
+        sv = op.get("stockQuantity")
+        if sv is not None:
+            try:
+                stock = int(sv)
+            except (TypeError, ValueError):
+                stock = 0
+
+    return {
+        "origin_product_no": origin_no,
+        "channel_product_no": channel_no,
+        "name": name,
+        "price": price,
+        "status": status,
+        "stock": stock,
+    }
+
+
+def _extract_inspection_items(body: Any) -> list[dict[str, Any]]:
+    """검수 응답 본문에서 항목 배열을 **방어적으로** 찾는다.
+
+    네이버 검수 API 응답의 항목 배열 키 이름은 ``totalElements>0`` 일 때만
+    본문에 나타난다. 0건 응답에는 항목 배열 키 자체가 없다
+    (``{"page":..,"size":..,"totalElements":0,...}``). 따라서 키 이름을
+    단정하지 않고 ``contents`` / ``content`` / ``items`` / ``data`` 후보를
+    순회하며 list 타입인 첫 번째 것을 찾는다. 없으면 빈 리스트.
+
+    본 함수는 항목의 내용을 해석하지 않는다 — 있는 그대로 돌려준다.
+    항목 내부 구조는 totalElements>0 일 때만 관찰 가능하므로 여기서
+    가정하지 않는다(★ 티켓 계약).
+    """
+    if not isinstance(body, dict):
+        return []
+    for key in ("contents", "content", "items", "data"):
+        items = body.get(key)
+        if isinstance(items, list):
+            return items
+    return []
+
+
+def _extract_inspection_total(body: Any) -> int:
+    """검수 응답 본문에서 totalElements 값을 **방어적으로** 추출.
+
+    본문이 dict 가 아니거나 totalElements 키가 없으면 -1 을 반환한다
+    ("조회는 했지만 총계를 못 읽었다" 를 0 과 구분하기 위함).
+    """
+    if not isinstance(body, dict):
+        return -1
+    if "totalElements" not in body:
+        return -1
+    try:
+        return int(body["totalElements"])
+    except (TypeError, ValueError):
+        return -1
+
+
+def _query_inspections() -> dict[str, Any]:
+    """네이버 검수 API 를 호출해 검수 상태를 조회.
+
+    실패해도 예외를 밖으로 전파하지 않는다 — 사유를 반환에 담는다
+    (fail-open: 검수 실패가 목록 조회를 막지 않는다).
+
+    Returns:
+        ``{"ok": bool, "status_code": int|None, "total": int,
+        "items": list, "reason": str|None}``.
+        - ``ok=False`` + ``total=-1``: 조회 실패.
+        - ``ok=True`` + ``total=0``: 성공, 0건.
+        - ``ok=True`` + ``total>0``: 성공, N건.
+    """
+    try:
+        sc, body = naver_client.fetch_product_inspections(page=1, size=100)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "status_code": None,
+            "total": -1,
+            "items": [],
+            "reason": _sanitize_error(exc),
+        }
+    ok = isinstance(sc, int) and 200 <= sc < 300
+    if not ok:
+        reason = _sanitize_text(f"HTTP {sc}: {body}")
+        return {
+            "ok": False,
+            "status_code": sc,
+            "total": -1,
+            "items": [],
+            "reason": reason,
+        }
+    total = _extract_inspection_total(body)
+    items = _extract_inspection_items(body) if total > 0 else []
+    return {
+        "ok": True,
+        "status_code": sc,
+        "total": total,
+        "items": items,
+        "reason": None,
+    }
+
+
+def _status_display(status: str) -> str:
+    """상태 코드를 한국어 표시로. 색상이 아닌 **텍스트** 로 구분 (D39)."""
+    s = str(status or "").strip().upper()
+    if s in {"SALE", "ON"}:
+        return "판매중"
+    if s in {"SUSPENSION", "OFF"}:
+        return "중지"
+    if s == "OUT_OF_STOCK":
+        return "품절"
+    if s == "PROHIBITION":
+        return "판매금지"
+    if s == "CLOSE":
+        return "판매중지(관리자)"
+    return s or "알수없음"
+
+
+# 관리 패널 CSS — inline, harvest_result_page 패턴과 동일한 스타일.
+_MANAGE_PANEL_CSS = """
+body{margin:0;padding:24px;background:#f5f5f5;font-family:-apple-system,
+  BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  color:#222;font-size:14px;line-height:1.6}
+.wrap{max-width:960px;margin:0 auto;background:#fff;padding:32px;
+  border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,0.08)}
+.banner{padding:16px 18px;border-radius:8px;font-size:16px;font-weight:700;
+  margin-bottom:16px}
+.banner.ok{background:#e6f4ea;color:#137333;border:2px solid #137333}
+.banner.warn{background:#fff8e1;color:#8a6d00;border:2px solid #ffc107}
+.banner.err{background:#fce8e6;color:#a50e0e;border:2px solid #a50e0e}
+.banner.zero{background:#eef6ff;color:#1a4d8f;border:2px solid #4a90d9}
+table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #eee}
+th{background:#f8f8f8;font-weight:600;color:#555}
+td.num{font-variant-numeric:tabular-nums;text-align:right}
+td.status{font-weight:600}
+.note{margin-top:20px;padding:12px;background:#eef6ff;border-radius:6px;
+  color:#1a4d8f;font-size:12px;line-height:1.7}
+.note strong{color:#0b3d7a}
+.summary{margin:12px 0;color:#555;font-size:13px}
+"""
+
+
+def _render_manage_panel_html(
+    *,
+    products: list[dict[str, Any]],
+    page: int,
+    size: int,
+    total_returned: int,
+    inspections: dict[str, Any] | None,
+    panel_path: str | None,
+    error: str | None,
+) -> str:
+    """관리 패널 정적 HTML 문자열을 만든다.
+
+    **D39 규칙 (절대)**: ``<script>``, ``<button>``, ``<input>``,
+    ``contenteditable`` 이 0개다. 조작은 대화로.
+
+    검수 배너 3상태 구분:
+      - 성공 + 0건 → ``banner zero`` "네이버 지적 없음"
+      - 성공 + N건 → ``banner warn`` "네이버 수정요청 N건" (상단, 눈에 띄게)
+      - 실패       → ``banner err`` "검수 확인 실패: 사유"
+
+    상태(판매중/중지)는 **텍스트로** 구분한다 — 색상만으로 구분하지 않는다.
+    """
+    parts: list[str] = [
+        "<!DOCTYPE html>",
+        '<html lang="ko"><head><meta charset="utf-8" />',
+        '<meta name="viewport" content="width=device-width, initial-scale=1" />',
+        "<title>상품 관리 패널</title>",
+        "<style>" + _MANAGE_PANEL_CSS + "</style>",
+        "</head><body>",
+        '<div class="wrap">',
+    ]
+
+    # 검수 배너 (상단, 눈에 띄게).
+    if inspections is not None:
+        if not inspections.get("ok"):
+            reason = inspections.get("reason") or "알 수 없는 실패"
+            parts.append(f'<div class="banner err">검수 확인 실패: {html.escape(reason)}</div>')
+        elif inspections.get("total", -1) == 0:
+            parts.append('<div class="banner zero">네이버 지적 없음 (검수 0건)</div>')
+        elif inspections.get("total", -1) > 0:
+            total = inspections["total"]
+            parts.append(
+                f'<div class="banner warn">네이버 수정요청 {total}건 — '
+                "판매자센터에서 확인하세요</div>"
+            )
+        else:
+            # total == -1: 총계를 못 읽음 (ok=True 인데 totalElements 가 없음).
+            parts.append(
+                '<div class="banner err">검수 총계를 읽을 수 없습니다 ' "(totalElements 없음)</div>"
+            )
+
+    # 오류 배너.
+    if error:
+        parts.append(f'<div class="banner err">{html.escape(error)}</div>')
+
+    # 요약.
+    parts.append(
+        f'<div class="summary">조회 페이지 {html.escape(str(page))}, '
+        f"페이지당 {html.escape(str(size))}건, "
+        f"이 페이지에 {html.escape(str(total_returned))}건 표시.</div>"
+    )
+
+    # 상품 테이블.
+    if products:
+        parts.append("<table>")
+        parts.append("<thead><tr>")
+        parts.append("<th>상품번호</th>")
+        parts.append("<th>채널번호</th>")
+        parts.append("<th>상품명</th>")
+        parts.append('<th class="num">가격</th>')
+        parts.append('<th class="num">재고</th>')
+        parts.append("<th>상태</th>")
+        parts.append("</tr></thead>")
+        parts.append("<tbody>")
+        for p in products:
+            origin = html.escape(str(p.get("origin_product_no", "")))
+            channel = html.escape(str(p.get("channel_product_no", "")))
+            name = html.escape(str(p.get("name", "")))
+            price_str = f'{p.get("price", 0):,}' if isinstance(p.get("price"), int) else ""
+            stock_str = str(p.get("stock", 0))
+            status_raw = str(p.get("status", ""))
+            status_text = _status_display(status_raw)
+            parts.append("<tr>")
+            parts.append(f"<td>{origin}</td>")
+            parts.append(f"<td>{channel}</td>")
+            parts.append(f"<td>{name}</td>")
+            parts.append(f'<td class="num">{html.escape(price_str)}</td>')
+            parts.append(f'<td class="num">{html.escape(stock_str)}</td>')
+            # 상태는 텍스트로 구분 — 색상만으로 구분하지 않는다.
+            parts.append(f'<td class="status">{html.escape(status_text)}</td>')
+            parts.append("</tr>")
+        parts.append("</tbody></table>")
+    else:
+        parts.append('<div class="summary">이 페이지에 상품이 없습니다.</div>')
+
+    # 안내.
+    parts.append(
+        '<div class="note">'
+        "<strong>조작은 대화로:</strong> 중지·재개는 이 패널에서 하지 않고 "
+        "manage_products 도구에 action='suspend'/'resume' + confirm=True 로 "
+        "요청하세요. 이 패널은 읽기 전용이다."
+        "</div>"
+    )
+
+    if panel_path:
+        parts.append(
+            f'<div class="note">패널 파일 경로: <code>{html.escape(panel_path)}</code></div>'
+        )
+
+    parts.append("</div></body></html>")
+    return "\n".join(parts)
+
+
+def _write_manage_panel(html_str: str) -> str:
+    """관리 패널 HTML 을 STATE_DIR 하위에 쓰고 경로를 반환한다."""
+    panel_path = os.path.join(str(common.STATE_DIR), "manage_products_panel.html")
+    os.makedirs(os.path.dirname(panel_path), exist_ok=True)
+    with open(panel_path, "w", encoding="utf-8") as f:
+        f.write(html_str)
+    return panel_path
+
+
+@mcp.tool()
+def manage_products(
+    action: str,
+    origin_product_no: str = "",
+    page: int = 1,
+    size: int = 50,
+    confirm: bool = False,
+) -> dict[str, Any]:
+    """등록된 상품 목록 조회, 판매중지/재개, 네이버 검수(수정요청) 확인.
+
+    등록 후가 비어 있다 — 목록도 못 보고, 중지도 못 하고, 네이버가 내 상품을
+    수정요청/제재로 지정해도 모른다. 이 도구가 그 구멍을 막는다. **하나의 도구**에
+    4개 action 을 모은다 (도구 난립 금지).
+
+    Actions:
+        - ``list``: 등록된 상품 목록 + 요약(이름·가격·상태·재고·상품번호).
+          관리 패널 HTML 을 생성한다. ``enable_auto_open`` 이 켜져 있으면
+          브라우저로 자동 연다. 검수 조회도 함께 실행한다(fail-open: 검수
+          실패해도 목록은 나온다).
+        - ``suspend``: 상품 판매중지. ``confirm=True`` 일 때만 실행.
+          ``confirm=False`` 면 무엇을 할지 보여주기만 한다(dry-run).
+        - ``resume``: 상품 판매재개. ``confirm=True`` 일 때만 실행.
+        - ``inspections``: 네이버 검수(수정요청) 목록만 단독 조회.
+
+    안전장치 (타협 불가):
+        - ``confirm`` 이 명시적으로 ``True`` 일 때만 suspend/resume 실행.
+          기본값 ``False``. ``is True`` 비교로 truthy 문자열이 우연히 승인되는
+          것을 막는다(기존 규율).
+        - suspend/resume 은 channel_product_no 가 필요하다. origin_product_no
+          만으로 실행하지 않는다 — channel 번호를 방어적으로 찾는다.
+        - 관리 패널 HTML 은 정적이다: ``<script>``·``<button>``·``<input>``·
+          ``contenteditable`` 이 0개.
+
+    Args:
+        action: ``"list"``, ``"suspend"``, ``"resume"``, ``"inspections"``
+            중 하나. 다른 값은 거부 + 유효 목록 안내.
+        origin_product_no: suspend/resume 대상 상품의 origin product 번호.
+            list/inspections 에서는 사용하지 않는다.
+        page: list action 의 페이지 번호 (1-base). 기본 1.
+        size: list action 의 페이지당 상품 수. 기본 50.
+        confirm: ``True`` 일 때만 suspend/resume 실행. 기본 ``False``.
+
+    Returns:
+        action 마다 반환 형태가 다르다. 공통 키: ``ok``, ``action``, ``error``.
+        list: ``{ok, action, page, size, products, total_returned, inspections,
+        panel_path, auto_opened, error}``.
+        suspend/resume: ``{ok, action, origin_product_no, channel_product_no,
+        before, after, dry_run, error}``.
+        inspections: ``{ok, action, total, items, status_code, error}``.
+    """
+    normalized_action = str(action or "").strip().lower()
+
+    # 존재하지 않는 action 거부 + 유효 목록 안내.
+    if normalized_action not in _MANAGE_VALID_ACTIONS:
+        return {
+            "ok": False,
+            "action": normalized_action,
+            "error": (
+                f"알 수 없는 action: {action!r}. "
+                f"유효한 action: {', '.join(_MANAGE_VALID_ACTIONS)}"
+            ),
+        }
+
+    # --- list ---
+    if normalized_action == "list":
+        try:
+            p_int = int(page)
+        except (TypeError, ValueError):
+            p_int = 1
+        p_int = max(p_int, 1)
+        try:
+            s_int = int(size)
+        except (TypeError, ValueError):
+            s_int = 50
+        # size 가 1 미만이면 기본값(50)으로. max(s_int, 1) 이 아니다 —
+        # size=0 은 "잘못된 값" 이므로 기본값으로 돌아간다.
+        if s_int < 1:
+            s_int = 50
+
+        # 상품 목록 조회.
+        try:
+            sc, body = naver_client.search_products(page=p_int, size=s_int)
+        except Exception as exc:
+            error_msg = _sanitize_error(exc)
+            inspections = None
+            products = []
+            total_returned = 0
+            # 목록 조회 실패 시에도 검수는 시도한다 (fail-open).
+            inspections = _query_inspections()
+            html_str = _render_manage_panel_html(
+                products=products,
+                page=p_int,
+                size=s_int,
+                total_returned=total_returned,
+                inspections=inspections,
+                panel_path=None,
+                error=error_msg,
+            )
+            panel_path = _write_manage_panel(html_str)
+            _result: dict[str, Any] = {
+                "ok": False,
+                "action": "list",
+                "page": p_int,
+                "size": s_int,
+                "products": products,
+                "total_returned": total_returned,
+                "inspections": inspections,
+                "panel_path": panel_path,
+                "status_code": None,
+                "error": error_msg,
+            }
+            _auto_open.maybe_open_screen(
+                panel_path,
+                enabled=_config_enable_auto_open(),
+                label="manage_products_panel",
+                result=_result,
+            )
+            return _result
+
+        ok = isinstance(sc, int) and 200 <= sc < 300
+        if not ok:
+            error_msg = _sanitize_text(f"HTTP {sc}: {body}")
+            inspections = _query_inspections()
+            html_str = _render_manage_panel_html(
+                products=[],
+                page=p_int,
+                size=s_int,
+                total_returned=0,
+                inspections=inspections,
+                panel_path=None,
+                error=error_msg,
+            )
+            panel_path = _write_manage_panel(html_str)
+            _result = {
+                "ok": False,
+                "action": "list",
+                "page": p_int,
+                "size": s_int,
+                "products": [],
+                "total_returned": 0,
+                "inspections": inspections,
+                "panel_path": panel_path,
+                "status_code": sc,
+                "error": error_msg,
+            }
+            _auto_open.maybe_open_screen(
+                panel_path,
+                enabled=_config_enable_auto_open(),
+                label="manage_products_panel",
+                result=_result,
+            )
+            return _result
+
+        # contents / products 키 폴백 (harvest 패턴 재사용).
+        listings = None
+        if isinstance(body, dict):
+            listings = body.get("contents")
+            if listings is None:
+                listings = body.get("products")
+        if not isinstance(listings, list):
+            listings = []
+        products = [_extract_product_summary(item) for item in listings]
+        total_returned = len(products)
+
+        # 검수 조회 — fail-open (목록은 나왔지만 검수는 실패할 수 있다).
+        inspections = _query_inspections()
+
+        html_str = _render_manage_panel_html(
+            products=products,
+            page=p_int,
+            size=s_int,
+            total_returned=total_returned,
+            inspections=inspections,
+            panel_path=None,
+            error=None,
+        )
+        panel_path = _write_manage_panel(html_str)
+        _result = {
+            "ok": True,
+            "action": "list",
+            "page": p_int,
+            "size": s_int,
+            "products": products,
+            "total_returned": total_returned,
+            "inspections": inspections,
+            "panel_path": panel_path,
+            "status_code": sc,
+            "error": None,
+        }
+        _auto_open.maybe_open_screen(
+            panel_path,
+            enabled=_config_enable_auto_open(),
+            label="manage_products_panel",
+            result=_result,
+        )
+        return _result
+
+    # --- inspections ---
+    if normalized_action == "inspections":
+        inspections = _query_inspections()
+        return {
+            "ok": inspections["ok"],
+            "action": "inspections",
+            "total": inspections["total"],
+            "items": inspections["items"],
+            "status_code": inspections["status_code"],
+            "error": inspections["reason"],
+        }
+
+    # --- suspend / resume ---
+    # 입력 검증 — 숫자만 허용 (delete_product 패턴).
+    raw_no = str(origin_product_no or "").strip()
+    if not raw_no or not raw_no.lstrip("+").isdigit():
+        return {
+            "ok": False,
+            "action": normalized_action,
+            "origin_product_no": raw_no,
+            "channel_product_no": "",
+            "before": None,
+            "after": None,
+            "dry_run": not confirm,
+            "error": (
+                "origin_product_no 는 비어있지 않은 숫자여야 합니다. "
+                f"받은 값: {origin_product_no!r}"
+            ),
+        }
+    normalized_no = raw_no.lstrip("+")
+
+    # confirm 게이트 — 명시적 True 만 허용.
+    if confirm is not True:
+        return {
+            "ok": False,
+            "action": normalized_action,
+            "origin_product_no": normalized_no,
+            "channel_product_no": "",
+            "before": None,
+            "after": None,
+            "dry_run": True,
+            "error": (
+                f"{normalized_action} 은(confirm 없이) dry-run 이다. "
+                "confirm=True 를 명시적으로 전달했을 때만 수행한다. "
+                "이 응답은 어떤 API 도 호출하지 않았다."
+            ),
+        }
+
+    # channel_product_no 해석 — search_products 로 페이지를 훑어
+    # originProductNo 일치 항목의 channelProducts[0].channelProductNo 를 얻는다.
+    #
+    # 왜 search 인가 (실측):
+    #   get_product 응답 최상위는 {originProduct, smartstoreChannelProduct}
+    #   (단수 dict) 이고 channelProductNo 가 응답에 존재하지 않는다.
+    #   channelProducts / smartstoreChannelProducts (복수 배열) 키도 없다 —
+    #   그것은 **검색 응답** 모양이다. 따라서 get_product 로는 어떤 폴백으로도
+    #   channel 번호를 못 찾는다. search_products 응답의 contents[].originProductNo
+    #   와 contents[].channelProducts[0].channelProductNo 가 실측상 유일한 공급원.
+    #
+    # get_product 는 before 상태(statusType) 확인 용도로만 유지한다.
+    #
+    # 수확 파이프라인(template_migration_harvest)의 검증된 추출 함수를 재사용한다 —
+    # _extract_origin_no / _extract_channel_no.
+    from . import template_migration_harvest as _harvest_mod
+
+    channel_no, channel_resolve_reason, pages_scanned, listings_scanned = (
+        _resolve_channel_no_via_search(normalized_no, _harvest_mod)
+    )
+
+    # before 상태(statusType) 확인 — get_product 로. 채널 해석에 쓰지 않는다.
+    # get_product 가 실패해도 채널 해석(search 로 이미 얻음) 은 살아있다 —
+    # before_status 를 빈 문자열로 두고 진행한다 (상태 변경 자체는 막지 않는다).
+    before_status = ""
+    get_sc: int | None = None
+    try:
+        get_sc, get_body = naver_client.get_product(normalized_no)
+    except Exception as exc:
+        # before 상태를 못 읽었을 뿐 — 채널 해석이 됐으면 진행한다.
+        # 단 사유에는 남긴다.
+        channel_resolve_reason = (channel_resolve_reason or "") + f" get_product 오류: {_sanitize_error(exc)}"
+    else:
+        ok_get = isinstance(get_sc, int) and 200 <= get_sc < 300
+        if ok_get and isinstance(get_body, dict):
+            op = (
+                get_body.get("originProduct")
+                if isinstance(get_body.get("originProduct"), dict)
+                else get_body
+            )
+            if isinstance(op, dict):
+                before_status = str(op.get("statusType") or "").strip()
+            # smartstoreChannelProduct.channelProductDisplayStatusType 폴백
+            # (get_product 실측 모양 — 채널번호는 없지만 상태는 있다).
+            if not before_status:
+                scp = get_body.get("smartstoreChannelProduct")
+                if isinstance(scp, dict):
+                    before_status = str(
+                        scp.get("channelProductDisplayStatusType") or ""
+                    ).strip()
+        elif not ok_get:
+            channel_resolve_reason = (channel_resolve_reason or "") + (
+                f" get_product 실패: HTTP {get_sc}"
+            )
+
+    if not channel_no:
+        # 채널 번호를 못 찾음 — 조용한 실패 금지. 사유에 상세를 담는다.
+        detail = (
+            "channel_product_no 를 search_products 에서 찾지 못했다. "
+            f"훑은 페이지 {pages_scanned}장, listing {listings_scanned}건. "
+            f"사유: {channel_resolve_reason or 'originProductNo 일치 항목 없음'}. "
+            "suspend/resume 은 channel 번호가 필요하다."
+        )
+        return {
+            "ok": False,
+            "action": normalized_action,
+            "origin_product_no": normalized_no,
+            "channel_product_no": "",
+            "before": {"statusType": before_status} if before_status else None,
+            "after": None,
+            "dry_run": False,
+            "error": detail,
+        }
+
+    payload = _MANAGE_SUSPEND_PAYLOAD if normalized_action == "suspend" else _MANAGE_RESUME_PAYLOAD
+    try:
+        sc, body = naver_client.update_product(channel_no, payload)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "action": normalized_action,
+            "origin_product_no": normalized_no,
+            "channel_product_no": channel_no,
+            "before": {"statusType": before_status},
+            "after": None,
+            "dry_run": False,
+            "error": f"{normalized_action} 중 오류: {_sanitize_error(exc)}",
+        }
+
+    ok = isinstance(sc, int) and 200 <= sc < 300
+    if not ok:
+        return {
+            "ok": False,
+            "action": normalized_action,
+            "origin_product_no": normalized_no,
+            "channel_product_no": channel_no,
+            "before": {"statusType": before_status},
+            "after": None,
+            "dry_run": False,
+            "status_code": sc,
+            "error": _sanitize_text(f"{normalized_action} 실패: HTTP {sc}: {body}"),
+        }
+
+    after_status = "SUSPENSION" if normalized_action == "suspend" else "SALE"
+    return {
+        "ok": True,
+        "action": normalized_action,
+        "origin_product_no": normalized_no,
+        "channel_product_no": channel_no,
+        "before": {"statusType": before_status},
+        "after": {"statusType": after_status},
+        "dry_run": False,
+        "status_code": sc,
         "error": None,
     }
 

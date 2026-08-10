@@ -148,9 +148,9 @@ AS 전화번호·KC 신고값 등 고시 관련 실값도 등록 단계의 컴�
 `check_config` 는 **값 자체를 출력하지 않는다** — 존재 여부만 알려 준다. 이것은
 가시성 도구가 아니라 게이트다. 값이 새어나가는 일을 막기 위한 의도된 동작이다.
 
-연결이 잡혔다면 클라이언트가 일곱 도구를 인식해야 한다: `check_config`,
+연결이 잡혔다면 클라이언트가 여덟 도구를 인식해야 한다: `check_config`,
 `upload_images`, `register_product`, `get_product`, `delete_product`,
-`prepare_listing`, `submit_reviews`. 이 이름들이 보이지 않으면 서버가 뜌 경로가
+`prepare_listing`, `submit_reviews`, `manage_products`. 이 이름들이 보이지 않으면 서버가 뜌 경로가
 잘못된 것이다.
 
 ## 5. 첫 등록으로 넘어가기

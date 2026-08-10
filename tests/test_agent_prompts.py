@@ -17,7 +17,7 @@ and asserts:
       a ``[[WIKI_LINK]]`` whose target file exists in the repository.
   (b) Every backtick-wrapped ``function_name(`` pattern in a prompt refers to a
       function that actually exists in ``src/clossify`` (parsed from source).
-  (c) The registration-flow prompts mention all seven MCP tool names.
+  (c) The registration-flow prompts mention all eight MCP tool names.
   (d) Abandoned sourcing-lane terms (원가/마진/수수료 기반 가격계산,
       ``naver_categories.json``) do not appear in any prompt.
   (e) The set of MCP tool names mentioned in the prompts matches the runtime
@@ -42,13 +42,14 @@ _ROOT = Path(__file__).resolve().parent.parent
 _AGENTS_DIR = _ROOT / "src" / "clossify" / "agents"
 _SRC_DIR = _ROOT / "src" / "clossify"
 
-# The seven MCP tools the server exposes.  These are verified dynamically by
+# The eight MCP tools the server exposes.  These are verified dynamically by
 # test (e) against the runtime tool set, but the constant is used by test (c)
 # to check the registration-flow prompts mention all of them.
 _MCP_TOOLS = {
     "check_config",
     "delete_product",
     "get_product",
+    "manage_products",
     "prepare_listing",
     "register_product",
     "submit_reviews",
@@ -56,7 +57,7 @@ _MCP_TOOLS = {
 }
 
 # Prompts that describe the registration flow and therefore must mention all
-# seven MCP tools.  This set is derived from the work-order scope and is stable:
+# eight MCP tools.  This set is derived from the work-order scope and is stable:
 # any new registration-flow prompt should be added here.
 _REGISTRATION_FLOW_PROMPTS = {
     "registration_agent.md",
@@ -182,7 +183,7 @@ def test_backtick_call_patterns_exist_in_source() -> None:
     src_names = _src_function_names()
     # Sanity: the source set is non-empty.
     assert src_names, "src/clossify yielded no function defs — parse is broken."
-    # Sanity: the seven MCP tools are all present in source (guard against a
+    # Sanity: the eight MCP tools are all present in source (guard against a
     # broken parse that would make this test vacuously pass).
     missing_tools = _MCP_TOOLS - src_names
     assert not missing_tools, f"MCP tools missing from src parse (parse is broken): {missing_tools}"
@@ -200,11 +201,11 @@ def test_backtick_call_patterns_exist_in_source() -> None:
 
 
 # ---------------------------------------------------------------------------
-# (c) Registration-flow prompts must mention all seven MCP tools (collectively).
+# (c) Registration-flow prompts must mention all eight MCP tools (collectively).
 # ---------------------------------------------------------------------------
 def test_registration_flow_mentions_all_six_tools() -> None:
     """The **union** of registration-flow prompt texts must mention every one
-    of the seven MCP tool names (as a bare word, with or without backticks).
+    of the eight MCP tool names (as a bare word, with or without backticks).
 
     Individual prompts specialise (e.g. ``COMPLIANCE_LOOP`` is a process doc,
     ``registration_agent`` is the tool catalog) so the check is collective —
@@ -223,7 +224,7 @@ def test_registration_flow_mentions_all_six_tools() -> None:
     assert not missing, (
         "Registration-flow prompt set is missing MCP tool mention(s): "
         f"{missing}. The union of registration_agent.md, COMPLIANCE_LOOP.md "
-        "and QA_AGENTS.md must mention all seven tools."
+        "and QA_AGENTS.md must mention all eight tools."
     )
 
 

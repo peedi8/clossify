@@ -582,8 +582,8 @@ class TestToolRegistrationPreserved:
             except RuntimeError:
                 tools = asyncio.get_event_loop().run_until_complete(tools)
         # check_config, upload_images, register_product, get_product,
-        # delete_product, prepare_listing, submit_reviews
-        assert len(tools) == 7, f"도구가 7개여야 함: {len(tools)}"
+        # delete_product, prepare_listing, submit_reviews, manage_products
+        assert len(tools) == 8, f"도구가 8개여야 함: {len(tools)}"
 
     def test_register_product_signature_unchanged(self):
         """register_product 파라미터가 유지되는가.

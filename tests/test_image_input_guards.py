@@ -642,11 +642,11 @@ class TestToolRegistrationPreserved:
                 tools = asyncio.run(tools)
             except RuntimeError:
                 tools = asyncio.get_event_loop().run_until_complete(tools)
-        # 7개 도구: check_config, upload_images, register_product, get_product,
-        # prepare_listing, submit_reviews, delete_product.
+        # 8개 도구: check_config, upload_images, register_product, get_product,
+        # prepare_listing, submit_reviews, delete_product, manage_products.
         # delete_product 는 파괴적 능력이므로 별도 도구로 노출한다 (다른 도구에
         # 접으면 의도가 숨겨진다).
-        assert len(tools) == 7
+        assert len(tools) == 8
 
 
 # --------------------------------------------------------------------------- #

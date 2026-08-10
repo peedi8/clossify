@@ -463,9 +463,9 @@ class TestToolRegistration:
             name = getattr(t, "name", None) or getattr(t, "name", None)
             if name:
                 names.append(name)
-        # 7개 도구: check_config, upload_images, register_product, get_product,
-        # delete_product, prepare_listing, submit_reviews
-        assert len(tools) == 7, f"Expected 7 tools, got {len(tools)}: {names}"
+        # 8개 도구: check_config, upload_images, register_product, get_product,
+        # delete_product, prepare_listing, submit_reviews, manage_products
+        assert len(tools) == 8, f"Expected 8 tools, got {len(tools)}: {names}"
 
 
 # ============================================================================ #

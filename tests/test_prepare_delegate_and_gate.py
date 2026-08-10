@@ -534,10 +534,9 @@ class TestSixTools:
                 tools = asyncio.run(tools)
             except RuntimeError:
                 tools = asyncio.get_event_loop().run_until_complete(tools)
-        # 7개 도구: check_config, upload_images, register_product, get_product,
-        # prepare_listing, submit_reviews, delete_product. delete_product 는
-        # 파괴적 능력이라 별도 도구로 분리했다.
-        assert len(tools) == 7, f"도구가 7개여야 함: {len(tools)}"
+        # 8개 도구: check_config, upload_images, register_product, get_product,
+        # prepare_listing, submit_reviews, delete_product, manage_products.
+        assert len(tools) == 8, f"도구가 8개여야 함: {len(tools)}"
 
     def test_tool_names(self):
         import asyncio
@@ -557,6 +556,7 @@ class TestSixTools:
             "delete_product",
             "prepare_listing",
             "submit_reviews",
+            "manage_products",
         }
         assert names == expected, f"도구 이름 불일치: {names}"
 

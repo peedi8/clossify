@@ -1545,6 +1545,56 @@ def search_products(page: int = 1, size: int = 10, tk=None):
     return r.status_code, _json_or_text_response(r)
 
 
+def fetch_product_inspections(page: int = 1, size: int = 100, tk=None):
+    """GET /external/v1/product-inspections/channel-products — 검수(수정요청) 목록.
+
+    네이버가 스토어 상품에 대해 발령한 **수정요청/제재 지적** 목록을 조회한다.
+    판매자는 이 목록을 모르면 스토어가 제재 상태로 빠지는 것을 알 수 없다.
+
+    2026-08-10 실측 계약:
+      - GET 엔드포인트. 파라미터: ``page`` (1-base), ``size``.
+      - 200 응답 본문 형태 (0건):
+        ``{"page":1,"size":100,"totalElements":0,"totalPages":0,
+           "first":true,"last":true}``
+      - ``totalElements>0`` 일 때 항목 배열 키가 본문에 추가로 나타난다.
+        ★ 항목 배열 키 이름은 ``totalElements>0`` 일 때만 알 수 있다 —
+        응답에서 **방어적으로** 찾는다(``contents``/``content`` 폴백).
+        없는 키 이름을 단정하지 마라.
+      - 본 함수는 항목 배열 키를 해석하지 않는다. 호출자가 방어적으로 찾는다.
+
+    본 함수는 순수 API 래퍼다 — 이웃 호출(``search_products``/``get_product``)
+    규약을 그대로 따른다: ``(status_code, body)`` 반환, ``tk=None`` 이면
+    ``get_token()``, 타임아웃·헤더는 ``_h(tk, False)`` (GET). 응답을
+    해석·필터·가공하지 않는다.
+
+    Args:
+        page: 1-base 페이지 번호. 기본 1.
+        size: 페이지당 항목 수. 기본 100(수정요청은 보통 적으니 한 페이지면 충분).
+        tk:  이미 발급받은 액세스 토큰. None 이면 새로 발급한다.
+
+    Returns:
+        ``(status_code, body)`` — 기존 호출자 규약과 동일. 성공 시 body 는
+        ``{"page":..,"size":..,"totalElements":..,"totalPages":..,"first":..,"last":..}``
+        (``totalElements>0`` 이면 항목 배열 키 추가). 실패 시 body 는 응답 본문.
+    """
+    tk = tk or get_token()
+    params: dict = {}
+    try:
+        p_int = int(page)
+        s_int = int(size)
+    except (TypeError, ValueError):
+        p_int, s_int = 1, 100
+    params["page"] = p_int
+    params["size"] = s_int
+    r = requests.get(
+        BASE + "/external/v1/product-inspections/channel-products",
+        headers=_h(tk, False),
+        params=params,
+        timeout=20,
+    )
+    return r.status_code, _json_or_text_response(r)
+
+
 def recommend_tags(keyword, tk=None):
     """GET /external/v2/tags/recommend-tags?keyword=... — 네이버 공식 추천 태그.
 
