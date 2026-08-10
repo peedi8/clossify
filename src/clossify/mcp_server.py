@@ -545,12 +545,26 @@ def _notice_field_answer_shape(field: str) -> str:
 
     라벨을 새로 창작하지 않는다 — 데이터에 기록된 타입에서 기계적으로 산출한다.
     미기재 필드(문자열)는 빈 문자열을 반환해 기존 동작을 보존한다.
+
+    boolean/date 타입 필드는 "미루기 불가" 안내를 포함한다 — 네이버 API 가
+    문자열 placeholder 를 Boolean/date 타입으로 받지 않으므로, 실제 값을
+    입력해야 함을 명시한다.
     """
     ftype = qa_agents._notice_field_type(field)
     if ftype == "boolean":
-        return "예/아니오 질문입니다. true 또는 false(Python bool) 로 답해주세요."
+        return (
+            "이 필드는 예/아니오(boolean) 항목입니다. "
+            "미루기('상세페이지 참조')가 불가능합니다 — "
+            "네이버 API 가 문자열을 Boolean 으로 받지 않습니다. "
+            "true 또는 false(Python bool) 로 답해주세요."
+        )
     if ftype == "date":
-        return "날짜 항목입니다. 정확한 형식은 네이버 고시 스펙을 확인해주세요."
+        return (
+            "이 필드는 날짜 항목입니다. "
+            "미루기('상세페이지 참조')가 불가능합니다 — "
+            "네이버 API 가 문자열을 날짜 타입으로 받지 않습니다. "
+            "정확한 형식은 네이버 고시 스펙을 확인해주세요."
+        )
     # string/미기재 — 기존 동작(자유 텍스트). 빈 문자열로 둬 기존 필드와 회귀 없이.
     return ""
 
@@ -1870,6 +1884,23 @@ def _validate_deferred_notice_fields(
         return False, _empty_clean, _err
     allowed_keys, off_list_keys = qa_agents._partition_deferred_by_allowlist(rejected)
     if off_list_keys:
+        # 거부된 키 중 boolean/date 타입인 것과 allowlist 밖인 것을 구분한다.
+        non_deferrable_type_keys = [
+            k for k in off_list_keys if not qa_agents._is_field_deferrable(k)
+        ]
+        truly_off_list_keys = [k for k in off_list_keys if qa_agents._is_field_deferrable(k)]
+        parts = []
+        if non_deferrable_type_keys:
+            parts.append(
+                "boolean/date 타입 필드는 미루기 불가 "
+                "(네이버 API 가 문자열 placeholder 를 Boolean/date 로 받지 않음): "
+                + ", ".join(non_deferrable_type_keys)
+            )
+        if truly_off_list_keys:
+            parts.append(
+                "고시 필드 정의에 없는 키 "
+                "(대소문자 변형·별칭·오타 포함): " + ", ".join(truly_off_list_keys)
+            )
         _err = {
             "ok": False,
             "status_code": None,
@@ -1885,11 +1916,7 @@ def _validate_deferred_notice_fields(
             "notice_filled_from_config": [],
             "deferred_notice_fields": [],
             "dry_run": dry_run,
-            "message": (
-                "deferred_notice_fields 중 고시 필드 정의에 없는 키가 있다 "
-                "(대소문자 변형·별칭·오타 포함 — 네이버에 임의 키로 "
-                "'상세페이지 참조' 가 전송되는 것을 막는다): " + ", ".join(off_list_keys)
-            ),
+            "message": " | ".join(parts),
             "error": None,
         }
         return False, _empty_clean, _err

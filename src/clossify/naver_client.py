@@ -1641,6 +1641,11 @@ def _fill_deferred_notice_fields(notice, deferred_notice_fields):
     if not isinstance(body, dict):
         return notice
     for field in deferred:
+        # boolean/date 타입 필드는 미루기 불가 — 방어적으로 건너뛴다.
+        # _partition_deferred_by_allowlist 에서 이미 걸러졌지만, build_payload 를
+        # 직접 호출하는 경로까지 보호하기 위해 여기서도 한 번 더 확인한다.
+        if not qa_agents._is_field_deferrable(field):
+            continue
         raw = body.get(field)
         # 빈 값/placeholder 인 자리만 채운다. 실값이 있으면 건드리지 않는다.
         # 필드별 값 분기: 고시 35종 공통 5필드는 "1", 그 외는 "상세페이지 참조".

@@ -394,6 +394,31 @@ def _notice_field_type(field: str) -> str:
     return "string"
 
 
+# 미루기(deferred) 불가능한 필드 타입 집합.
+# boolean 필드는 "상세페이지 참조" 같은 문자열을 네이버 API 가 거부한다
+# (live API: Cannot deserialize value of type `java.lang.Boolean` from String).
+# date 필드도 마찬가지로 문자열 placeholder 를 거부한다
+# (live API: date parse error). 따라서 이 타입의 필드는 미루기 대상에서
+# 제외하고, 사용자에게 실제 값을 요구한다 (needs_user 로 안내).
+_NON_DEFERRABLE_FIELD_TYPES = frozenset({"boolean", "date"})
+
+
+def _is_field_deferrable(field: str) -> bool:
+    """필드가 미루기(deferred) 대상으로 허용되는 타입인지 판정.
+
+    ``data/notice_field_types.json`` 에서 해당 필드의 타입을 읽어:
+      - ``"boolean"`` 또는 ``"date"`` → 미루기 불가 (``False``).
+        네이버 API 가 문자열 placeholder 를 Boolean/date 타입으로
+        deserialize 하지 못해 400 거절.
+      - ``"string"`` 또는 미기재 → 미루기 가능 (``True``).
+        기존 동작(문자열 placeholder = "상세페이지 참조")을 유지한다.
+
+    판단 기준은 코드에 박힌 필드명 목록이 아니라 데이터 파일이다 —
+    새 타입이 추가되면 자동으로 반영된다.
+    """
+    return _notice_field_type(field) not in _NON_DEFERRABLE_FIELD_TYPES
+
+
 # ---------------------------------------------------------------------------
 # notice_field_relations.json 로더 (고시 필드 관계 — XOR 상호배제).
 #
@@ -872,16 +897,29 @@ def _deferred_value_for_field(field: str) -> str:
     그 외 필드는 ``"상세페이지 참조"`` 였다 (섞임 0건). ``"1"`` 의 의미는
     공식 문서에서 확인된 바 없다 (가설: 법정 표준 문구 선택 코드).
 
+    **타입 가드 (defense in depth)**: boolean/date 타입 필드에는 placeholder
+    문자열을 주지 않는다. ``_partition_deferred_by_allowlist`` 와
+    ``_field_missing_with_deferred`` 에서 이미 미루기 대상에서 제외되므로
+    본 함수에 boolean/date 필드가 들어오는 것은 정상 경로가 아니다 —
+    그러나 호출자가 방어를 우회하는 직접 호출 경로까지 막기 위해,
+    boolean/date 필드에는 빈 문자열을 반환한다 (문자열 placeholder 를 넣으면
+    네이버 API 가 400 거절).
+
     Args:
         field: 고시 필드명(camelCase).
 
     Returns:
         해당 필드를 미루기로 선택했을 때 naver_client 가 전송값으로 채울 문자열.
         원산지 필드는 본 함수에 들어오지 않는다(호출자가 ``_reject_origin_deferred``
-        로 이미 걸렀다).
+        로 이미 걸렀다). boolean/date 필드는 빈 문자열(미루기 불가).
     """
     target = str(field or "").strip()
-    if target and target in _common_notice_deferred_fields():
+    if not target:
+        return DEFERRED_NOTICE_PLACEHOLDER
+    # 타입 가드: boolean/date 필드는 문자열 placeholder 를 주면 안 된다.
+    if not _is_field_deferrable(target):
+        return ""
+    if target in _common_notice_deferred_fields():
         return DEFERRED_COMMON_NOTICE_VALUE
     return DEFERRED_NOTICE_PLACEHOLDER
 
@@ -920,14 +958,20 @@ def _partition_deferred_by_allowlist(
     원산지 필드는 allowlist 안에 있더라도 ``ORIGIN_FIELDS_NOT_DEFERRABLE`` 로
     별도 거른다 — 원산지는 어떤 표기로도 미루기 대상이 될 수 없다(기존 의도).
 
+    **타입 기반 미루기 불가 (boolean/date)**: ``_is_field_deferrable`` 이
+    ``False`` 인 필드(boolean/date)도 rejected 로 보낸다. 네이버 API 가 문자열
+    placeholder 를 Boolean/date 타입으로 받지 않기 때문이다. 이 필드들은
+    미루기 대상에서 제외되고, 사용자에게 실제 값을 요구한다 (needs_user 로 안내).
+
     Args:
         deferred: 판매자가 넘긴 미루기 후보 필드명 컬렉션.
 
     Returns:
         ``(allowed, rejected)`` —
-        - ``allowed``: allowlist 안에 있고 원산지가 아닌 필드명 리스트(순서 보존).
-        - ``rejected``: allowlist 밖이거나 원산지인 필드명 리스트(순서 보존).
-          호출자가 거부 사유에 그대로 쓴다.
+        - ``allowed``: allowlist 안에 있고 원산지가 아니며 타입이 미루기
+          가능(string/미기재)한 필드명 리스트(순서 보존).
+        - ``rejected``: allowlist 밖이거나 원산지이거나 boolean/date 타입인
+          필드명 리스트(순서 보존). 호출자가 거부 사유에 그대로 쓴다.
     """
     if not deferred:
         return [], []
@@ -947,7 +991,7 @@ def _partition_deferred_by_allowlist(
         seen.add(text)
         if text in ORIGIN_FIELDS_NOT_DEFERRABLE:
             rejected.append(text)
-        elif text in allowlist:
+        elif text in allowlist and _is_field_deferrable(text):
             allowed.append(text)
         else:
             rejected.append(text)
@@ -1000,6 +1044,12 @@ def _field_missing_with_deferred(
     (``_field_is_deferred`` 가 ORIGIN 필드를 인지하지만, ``_reject_origin_deferred``
     가 mcp_server 단에서 미리 걸러낸다 — 본 함수에서도 방어적으로 한 번 더 거른다).
 
+    **타입 기반 미루기 불가 (boolean/date)**: ``_is_field_deferable`` 이
+    ``False`` 인 필드(boolean/date)는 판매자가 미루기로 선택했더라도 "누락"
+    에서 제외하지 않는다. 네이버 API 가 문자열 placeholder 를 Boolean/date
+    타입으로 deserialize 하지 못해 400 거절하기 때문이다. 이 필드들은 missing
+    에 남아 needs_user 로 사용자에게 실제 값을 요구한다.
+
     ``notice_type`` 이 주어지면 XOR 그룹을 함께 고려한다(XOR 그룹의 멤버 중
     하나가 미루기 대상이거나 채워져 있으면 그룹 전체를 충족으로 본다).
     """
@@ -1014,7 +1064,7 @@ def _field_missing_with_deferred(
         if not isinstance(notice_body, dict):
             return list(fields)
         for field in fields:
-            if _field_is_deferred(field, deferred_set):
+            if _field_is_deferred(field, deferred_set) and _is_field_deferrable(field):
                 continue
             raw = notice_body.get(field)
             ftype = _notice_field_type(field)
@@ -1046,8 +1096,10 @@ def _field_missing_with_deferred(
             continue
         if group is not None:
             # 그룹 멤버 중 하나라도 채워져 있거나 deferred 멤버면 충족.
+            # 단, boolean/date 타입의 멤버는 미루기 불가 → deferred 로 인정하지 않는다.
             if any(
-                _notice_field_filled(notice_body, m) or _field_is_deferred(m, deferred_set)
+                _notice_field_filled(notice_body, m)
+                or (_field_is_deferred(m, deferred_set) and _is_field_deferrable(m))
                 for m in group
             ):
                 satisfied.add(group)
@@ -1055,7 +1107,7 @@ def _field_missing_with_deferred(
             if field == group[0]:
                 missing_x.append(field)
             continue
-        if _field_is_deferred(field, deferred_set):
+        if _field_is_deferred(field, deferred_set) and _is_field_deferrable(field):
             continue
         raw = notice_body.get(field)
         ftype = _notice_field_type(field)
@@ -1800,6 +1852,7 @@ __all__ = [
     "_field_missing_with_deferred",
     "_infer_notice_type",
     "_is_deferred_sentinel_value",
+    "_is_field_deferrable",
     "_is_placeholder_value",
     "_load_notice_field_relations",
     "_load_notice_field_types",
