@@ -3992,7 +3992,12 @@ def _resolve_channel_no_via_search(
         try:
             sc, body = naver_client.search_products(page=page, size=_MANAGE_RESOLVE_PAGE_SIZE)
         except Exception as exc:
-            return "", f"검색 {page}페이지 오류: {_sanitize_error(exc)}", pages_scanned, listings_scanned
+            return (
+                "",
+                f"검색 {page}페이지 오류: {_sanitize_error(exc)}",
+                pages_scanned,
+                listings_scanned,
+            )
         pages_scanned = page
         if not (isinstance(sc, int) and sc == 200) or not isinstance(body, dict):
             return (
@@ -4685,7 +4690,9 @@ def manage_products(
     except Exception as exc:
         # before 상태를 못 읽었을 뿐 — 채널 해석이 됐으면 진행한다.
         # 단 사유에는 남긴다.
-        channel_resolve_reason = (channel_resolve_reason or "") + f" get_product 오류: {_sanitize_error(exc)}"
+        channel_resolve_reason = (
+            channel_resolve_reason or ""
+        ) + f" get_product 오류: {_sanitize_error(exc)}"
     else:
         ok_get = isinstance(get_sc, int) and 200 <= get_sc < 300
         if ok_get and isinstance(get_body, dict):
@@ -4701,9 +4708,7 @@ def manage_products(
             if not before_status:
                 scp = get_body.get("smartstoreChannelProduct")
                 if isinstance(scp, dict):
-                    before_status = str(
-                        scp.get("channelProductDisplayStatusType") or ""
-                    ).strip()
+                    before_status = str(scp.get("channelProductDisplayStatusType") or "").strip()
         elif not ok_get:
             channel_resolve_reason = (channel_resolve_reason or "") + (
                 f" get_product 실패: HTTP {get_sc}"
