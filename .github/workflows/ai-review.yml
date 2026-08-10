@@ -128,8 +128,10 @@ jobs:
             - 지적이 없으면 "지적 사항 없음" 을 한 줄로 게시하라(침묵 금지).
 
       # 리뷰가 안 붙었을 때 원인을 **추측하지 않기 위한** 스텝.
-      # 거부된 도구 이름만 뽑는다 — 대화 본문은 찍지 않는다(길고, 저장소 내용이 로그에 남는다).
-      - name: 거부된 도구 확인
+      # 평소에는 지표만 찍는다 — 대화 본문은 길고 저장소 내용이 로그에 남는다.
+      # 다만 **일찍 죽은 경우(2턴 이하)** 는 본문에 저장소 내용이 있을 수 없으므로
+      # 기록 원문을 잘라서 보여준다. 조기 실패는 원인이 그 안에만 적혀 있다.
+      - name: 리뷰 실행 진단
         if: always() && steps.ai.outputs.execution_file != ''
         env:
           EXEC_FILE: ${{ steps.ai.outputs.execution_file }}
@@ -137,14 +139,20 @@ jobs:
           [ -f "$EXEC_FILE" ] || { echo "실행 기록 파일 없음"; exit 0; }
           python3 - "$EXEC_FILE" <<'PY'
           import json, sys, collections
+          path = sys.argv[1]
+          raw = open(path, encoding="utf-8", errors="replace").read()
           try:
-              data = json.load(open(sys.argv[1], encoding="utf-8"))
+              data = json.loads(raw)
           except Exception as exc:
-              print(f"실행 기록을 읽지 못함: {exc}")
+              print(f"실행 기록을 JSON 으로 읽지 못함: {exc}")
+              print(raw[:3000])
               raise SystemExit(0)
-          denials = []
+
+          results, denials = [], []
           def walk(node):
               if isinstance(node, dict):
+                  if node.get("type") == "result":
+                      results.append(node)
                   found = node.get("permission_denials")
                   if isinstance(found, list):
                       denials.extend(found)
@@ -154,9 +162,20 @@ jobs:
                   for value in node:
                       walk(value)
           walk(data)
-          if not denials:
-              print("거부된 도구 없음")
-          else:
+
+          turns = 0
+          failed = False
+          for r in results:
+              turns = max(turns, r.get("num_turns") or 0)
+              failed = failed or bool(r.get("is_error"))
+              print(
+                  "결과: subtype={} is_error={} turns={} cost=${}".format(
+                      r.get("subtype"), r.get("is_error"),
+                      r.get("num_turns"), r.get("total_cost_usd"),
+                  )
+              )
+
+          if denials:
               counted = collections.Counter(
                   d.get("tool_name", "?") if isinstance(d, dict) else str(d)
                   for d in denials
@@ -164,6 +183,13 @@ jobs:
               print("거부된 도구 (이름: 횟수)")
               for name, n in counted.most_common():
                   print(f"  {name}: {n}")
+          else:
+              print("거부된 도구 없음")
+
+          # 조기 실패 = 모델이 일을 시작도 못 했다는 뜻. 원문에 저장소 내용이 없다.
+          if failed and turns <= 2:
+              print("--- 조기 실패라 기록 원문을 싣는다 (앞 3000자) ---")
+              print(raw[:3000])
           PY
 
       # ⚠️ 이 스텝의 존재 이유: 액션의 outcome 을 완료 신호로 쓰면 **거짓 완료**가 난다.
