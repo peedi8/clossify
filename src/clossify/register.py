@@ -1305,6 +1305,39 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None):
         # version 불일치 등 — 기존 것을 무시하고 새로 쓴다(스키마 변경 시).
         overwrite_warning = "기존 prepared payload 의 version 이 불일치한다. 덮어쓴다(스키마 변경)."
 
+    # deferred_notice_fields 를 한 번 정제해 컴플라이언스 검사와
+    # payload 저장 양쪽에 같은 값을 쓴다. 등록 단계(mcp_server._validate
+    # _deferred_notice_fields) 와 같은 원산지/allowlist/boolean-date 검증을
+    # 준비 단계도 적용한다 — 준비 통과 → 등록 통과, 준비 거부 → 등록 거부.
+    #
+    # **게이트를 느슨하게 만들지 않는다**: 원산지 계열 미루기 금지
+    # (qa_agents._reject_origin_deferred), allowlist 밖 필드 거부
+    # (qa_agents._partition_deferred_by_allowlist), boolean/date 필드 미루기
+    # 불가(qa_agents._is_field_deferrable). 이 세 검증을 준비 단계에서 먼저
+    # 적용하여, 판매자가 잘못된 미루기를 선언하면 준비 단계에서 needs_user 로
+    # 알리고 등록 단계에서도 거부한다(두 단계 합의).
+    #
+    # 검증에서 거부된 필드는 sane_deferred 에 들어가지 않는다. 그 사실을
+    # needs_user 에 실어 판매자에게 알린다(조용한 누락 금지).
+    deferred_raw = d.get("deferred_notice_fields")
+    sane_deferred: list[str] = []
+    deferred_rejected: list[str] = []
+    if isinstance(deferred_raw, list):
+        for item in deferred_raw:
+            if isinstance(item, str) and item.strip():
+                sane_deferred.append(item.strip())
+    if sane_deferred:
+        origin_kept = qa_agents._reject_origin_deferred(sane_deferred)
+        origin_hits = [f for f in sane_deferred if f not in origin_kept]
+        if origin_hits:
+            deferred_rejected.extend(origin_hits)
+        allowed_keys, off_list_keys = qa_agents._partition_deferred_by_allowlist(origin_kept)
+        sane_deferred = allowed_keys
+        if off_list_keys:
+            deferred_rejected.extend(off_list_keys)
+        if not sane_deferred:
+            sane_deferred = []
+
     # --- 4. JPEG 비의존 QA 실행 ---
     # QA 규칙:
     #   - 이미지 QA 는 래스터 이미지를 요구하므로 실행하지 않고 PENDING 등록.
@@ -1391,7 +1424,10 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None):
         }
         compliance_result = qa_agents._normalize_agent_result(
             qa_agents._compliance_code_check(
-                name, compliance_context, api_payload=tentative_payload
+                name,
+                compliance_context,
+                api_payload=tentative_payload,
+                deferred_notice_fields=sane_deferred or None,
             ),
             "compliance",
         )
@@ -1451,6 +1487,21 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None):
     # (조용한 실패 금지 — 생성을 요청했는데 못 한 사실을 사용자가 알아야 한다).
     if generation_user_hint is not None:
         needs_user.append(generation_user_hint)
+    # deferred_notice_fields 검증에서 거부된 필드를 needs_user 에 알린다
+    # (조용한 누락 금지). 판매자가 미루기로 선언했지만 원산지/allowlist 규칙에
+    # 의해 거부된 필드는 미루기가 불가능하므로 값을 직접 채워야 한다.
+    if deferred_rejected:
+        needs_user.append(
+            {
+                "field": "deferred_notice_fields_rejected",
+                "label": "미루기 불가 고시 필드",
+                "why": (
+                    "다음 필드는 '상세페이지 참조' 로 미룰 수 없습니다 "
+                    f"(원산지 계열 또는 allowlist 밖): {', '.join(deferred_rejected)}. "
+                    "해당 필드의 실제 값을 입력해야 합니다."
+                ),
+            }
+        )
 
     # --- 6. prepared payload 저장 ---
     payload = {
@@ -1493,18 +1544,11 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None):
     # 명시적으로 선택한 고시 필드명 리스트. 등록 단계(register_product) 가 이 값을
     # 받아 컴플라이언스 게이트의 "고시 필수필드 누락" 위반에서 제외한다.
     #
-    # 준비 단계에서는 **저장만** 한다. 원산지 필터·allowlist 검증은 등록 단계가
-    # 한다(그 단계의 검증을 우회하지 않는다 — 본 값은 그대로 다시 검증기를 통과한다).
-    # 여기서 임의로 정제하면 "판매자가 미뤘다" 고 믿은 값이 등록 게이트에서 차단되는
-    # 조용한 실패가 된다. 비문자열·빈 문자열 항목은 저장하지 않되, 사용자가 준
-    # 형태를 보존한다.
-    deferred = d.get("deferred_notice_fields")
-    if isinstance(deferred, list):
-        sane_deferred = [
-            str(item).strip() for item in deferred if isinstance(item, str) and item.strip()
-        ]
-        if sane_deferred:
-            payload["deferred_notice_fields"] = sane_deferred
+    # 위에서 이미 원산지/allowlist 검증을 거친 ``sane_deferred`` 를 그대로 저장한다.
+    # 컴플라이언스 검사에 넘긴 값과 저장하는 값이 같아야 준비 통과 → 등록 통과
+    # 일관성이 성립한다. 여기서 다시 정제하면 검사에 쓴 값과 저장값이 어긋난다.
+    if sane_deferred:
+        payload["deferred_notice_fields"] = list(sane_deferred)
     if image_generation_meta is not None:
         payload["image_generation"] = image_generation_meta
     if overwrite_warning is not None:
