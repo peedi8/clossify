@@ -26,7 +26,6 @@ from __future__ import annotations
 import http.client
 import os
 import re
-import socket
 import sys
 import threading
 import time
@@ -44,6 +43,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from clossify import approval_server, template_migration_form
+from tests._netwait import wait_for_port
 
 # 테스트 전역: 대표이미지 조달이 네이버 실업로드를 시도하지 않도록 캐시를
 # monkeypatch 한다. 개별 테스트에서 upload_fn/main_image_url 로 덮을 수 있다.
@@ -745,7 +745,7 @@ class TestFormServerDefense:
         )
         port = srv.start()
         try:
-            assert _wait_for_port(port)
+            assert wait_for_port(port)
 
             def _submit():
                 time.sleep(0.1)
@@ -1281,17 +1281,6 @@ def _send_form(
     return status, resp_body, resp_headers
 
 
-def _wait_for_port(port: int, timeout: float = 3.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                return True
-        except OSError:
-            time.sleep(0.05)
-    return False
-
-
 # --------------------------------------------------------------------------- #
 # 예외 방벽 — 슬라이스 1 폼 핸들러의 예외 방벽 검증 (티켓 f).
 #
@@ -1316,7 +1305,7 @@ def _start_template_server(
         ttl_seconds=ttl_seconds,
     )
     port = srv.start()
-    assert _wait_for_port(port), f"포트 {port} 가 열리지 않음"
+    assert wait_for_port(port), f"포트 {port} 가 열리지 않음"
     return srv, port, token
 
 
