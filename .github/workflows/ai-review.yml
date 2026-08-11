@@ -18,14 +18,15 @@
 
 name: AI 보조 리뷰
 
-# ⚠️ synchronize(새 커밋 푸시)를 **일부러 뺐다.**
+# ⚠️ 이 리뷰는 **자동으로 돌지 않는다. 부를 때만 돈다.**
 # 인증이 구독 토큰이라 예산이 돈이 아니라 **주간 한도**다 — 리뷰가 도는 만큼 대화형 작업 몫이 줄어든다.
-# 고치고 푸시할 때마다 리뷰가 다시 도는 게 기본이면 PR 하나에 리뷰가 대여섯 번 돈다
-# (2026-08-11 에 실제로 한 PR 에서 5회 돌았다). 자동은 **PR 이 열릴 때 한 번**으로 충분하다.
-# 고친 뒤 다시 보고 싶으면 PR 에 `ai-review` 라벨을 붙인다(뗐다 다시 붙이면 또 돈다).
+# 실측: 정상 완주 1회 = **27턴**(2026-08-11 run 31459256950). 싼 값이 아니다.
+# 그래서 PR 이 열릴 때조차 자동으로 돌리지 않는다. 보고 싶은 PR 에만
+# **`ai-review` 라벨을 붙인다**(뗐다 다시 붙이면 또 돈다).
+# 자동으로 되돌리려면 아래 types 에 `opened` 를 넣으면 된다.
 on:
   pull_request:
-    types: [opened, ready_for_review, labeled]
+    types: [labeled]
     # 문서·설정만 바뀐 PR 은 리뷰할 코드가 없다. 한도를 쓰지 않는다.
     # (이 잡은 required check 가 아니므로 아예 안 돌아도 PR 이 막히지 않는다)
     paths-ignore:
@@ -47,11 +48,11 @@ permissions:
 jobs:
   review:
     # 초안 PR 제외. fork PR 제외(시크릿 노출 차단).
-    # 라벨로 들어온 경우는 `ai-review` 라벨일 때만 — 아무 라벨에나 리뷰가 돌면 한도가 샌다.
+    # `ai-review` 라벨일 때만 — 아무 라벨에나 리뷰가 돌면 한도가 샌다.
     if: >-
       github.event.pull_request.draft == false &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      (github.event.action != 'labeled' || github.event.label.name == 'ai-review')
+      github.event.label.name == 'ai-review'
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -202,6 +203,18 @@ jobs:
                       r.get("num_turns"), r.get("total_cost_usd"),
                   )
               )
+              # cost 는 토큰 수를 정가로 환산한 값일 뿐이다. 구독 토큰으로 돌면
+              # 실제로 청구되는 돈은 없고 **주간 한도**가 깎인다. 그러니 한도를 가늠하려면
+              # 환산 금액이 아니라 **토큰 수**를 봐야 한다 — 그래서 함께 찍는다.
+              use = r.get("usage")
+              if isinstance(use, dict):
+                  print(
+                      "  토큰: 입력 {} · 출력 {} · 캐시읽기 {} · 캐시생성 {}".format(
+                          use.get("input_tokens"), use.get("output_tokens"),
+                          use.get("cache_read_input_tokens"),
+                          use.get("cache_creation_input_tokens"),
+                      )
+                  )
 
           if denials:
               counted = collections.Counter(
