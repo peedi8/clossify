@@ -3783,6 +3783,10 @@ def prepare_listing(
         "template_applied": template_applied,
         "template_saved": template_saved,
         "error": None,
+        # F6: 독스트링이 "requirements 는 거부됐을 때만 채워진다(성공 시 None)" 이라
+        # 약속했으므로, 성공 경로에도 키를 항상 포함한다. 과거에는 이 키가 없어
+        # result["requirements"] 가 KeyError 였다.
+        "requirements": None,
     }
     _auto_open.maybe_open_screen(
         _result.get("preview_path"),
