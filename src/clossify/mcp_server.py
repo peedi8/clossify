@@ -3591,56 +3591,99 @@ def _build_config_flags() -> dict[str, Any] | None:
 
     **config 값을 반환하지 않는다** — 존재 여부(bool)만.
 
+    R2 — 원산지 플래그를 code 와 content 로 분리한다. 조립기(naver_client)가
+    config 에서 읽는 키가 다르기 때문이다:
+
+      - 원산지 코드: ``origin_area_code`` (naver_client.py:189 ``_resolve_origin_area_code``)
+      - 원산지 표기: ``origin_content`` (naver_client.py:264~265 ``_notice_defaults`` made_in)
+      - A/S 전화: ``as_tel``·``seller_tel``·``customerServicePhoneNumber``
+        (naver_client.py:247~253 ``_notice_defaults`` as_tel)
+
+    반환 플래그 3종(정확히)::
+
+        {
+          "origin_code_configured":    bool | None,  # origin_area_code 존재
+          "origin_content_configured": bool | None,  # origin_content 존재
+          "as_configured":             bool | None,  # as_tel|seller_tel|customerServicePhoneNumber 존재
+        }
+
     F6 — 플래그 3값을 정확히:
       - 파일이 **확실히 없음**(신규 설치) → 각 플래그 **False** (미설정 확정).
       - 읽기 **오류**(파손·권한) → ``None`` (모름).
       - 있음 → 키 존재 여부로 True/False.
 
-    F7 — config 섹션 별칭 3종을 naver_client 와 **같은 우선순위**로 훑는다:
-      ``smartstore_notice_defaults`` → ``notice_defaults`` → ``product_notice_defaults``.
-      naver_client._notice_config 의 섹션 해석을 재사용한다(중복 구현 금지).
-      단 **값을 반환에 싣지 마라** — 존재 bool 만.
+    R3 — 섹션 해석을 naver_client._notice_config() **호출**로 공유한다.
+    독스트링이 "재사용"이라 말하면서 3키 루프를 재구현하던 왕복을 없앤다.
+    naver_client 동작은 불변(본 함수가 naver_client 를 고치지 않는다).
+
+    R4 — config 루트가 dict 가 아니면(예: ``[]``) 읽기 오류와 동일하게
+    플래그 전부 **None** 으로 처리한다. ``cfg.get`` 의 AttributeError 가
+    ``_safe_diagnose`` 통째로 None 으로 떨어지는 것(진단 사망)을 막는다.
+    진단은 살아 있어야 한다.
 
     Returns:
-        ``{"origin_configured": bool|None, "as_configured": bool|None}``.
-        config 읽기 자체가 실패하면 ``None`` (거부 응답을 죽이지 않는다).
+        R2 플래그 dict (위 3키). config 읽기 자체가 실패하면 ``None``
+        (거부 응답을 죽이지 않는다).
     """
     try:
         cfg_path = naver_client.config_path()
         if not os.path.isfile(cfg_path):
             # F6: 파일이 확실히 없음 — 미설정 확정 (False).
-            return {"origin_configured": False, "as_configured": False}
+            return {
+                "origin_code_configured": False,
+                "origin_content_configured": False,
+                "as_configured": False,
+            }
         with open(cfg_path, encoding="utf-8-sig") as f:
             cfg = json.load(f)
     except Exception:
         # F6: 읽기 오류(파손·권한) — 모름.
         return None
 
-    # F7: naver_client 와 같은 우선순위로 3섹션을 훑는다.
-    notice_defaults = None
-    for key in ("smartstore_notice_defaults", "notice_defaults", "product_notice_defaults"):
-        section = cfg.get(key)
-        if isinstance(section, dict):
-            notice_defaults = section
-            break
+    # R4 — config 루트가 dict 가 아니면(예: ``[]``) 플래그 전부 None.
+    # cfg.get 에서 AttributeError 가 나는 것을 막고 진단을 살린다.
+    if not isinstance(cfg, dict):
+        return {
+            "origin_code_configured": None,
+            "origin_content_configured": None,
+            "as_configured": None,
+        }
 
-    if notice_defaults is None:
+    # R3 — naver_client._notice_config() 와 **같은 섹션 해석**을 쓴다.
+    # naver_client._notice_config() 가 load_config() 을 호출하고 3섹션 별칭을
+    # 훑어 dict(섹션) 또는 {}(없음)를 반환한다. 본 함수가 그것을 **호출**해서
+    # 섹션 해석 중복을 없앤다(왕복 금지). 값은 반환에 싣지 않는다 — 존재 bool 만.
+    notice_defaults = naver_client._notice_config()
+
+    if not notice_defaults:
         # 섹션 자체가 없음 — 미설정 확정 (False).
-        return {"origin_configured": False, "as_configured": False}
+        return {
+            "origin_code_configured": False,
+            "origin_content_configured": False,
+            "as_configured": False,
+        }
 
-    # 원산지 — origin_area_code 와 origin_content 모두 있어야 설정됨.
+    # R2 — 원산지 code (origin_area_code) 와 content (origin_content) 를 별도로.
     origin_area_code = notice_defaults.get("origin_area_code")
+    origin_code_set = bool(origin_area_code) and not _is_placeholder(origin_area_code)
     origin_content = notice_defaults.get("origin_content")
-    origin_set = (
-        bool(origin_area_code)
-        and not _is_placeholder(origin_area_code)
-        and bool(origin_content)
-        and not _is_placeholder(origin_content)
-    )
-    # A/S — as_tel 정본.
-    as_tel_value = notice_defaults.get("as_tel")
-    as_tel_set = bool(as_tel_value) and not _is_placeholder(as_tel_value)
-    return {"origin_configured": origin_set, "as_configured": as_tel_set}
+    origin_content_set = bool(origin_content) and not _is_placeholder(origin_content)
+
+    # R2 — A/S 는 as_tel | seller_tel | customerServicePhoneNumber 셋 중 하나.
+    # 조립기(naver_client.py:247~253) 가 config 에서 읽는 키와 동일하게.
+    as_tel_value = ""
+    for _as_key in ("as_tel", "seller_tel", "customerServicePhoneNumber"):
+        _v = notice_defaults.get(_as_key)
+        if _v and not _is_placeholder(_v):
+            as_tel_value = _v
+            break
+    as_tel_set = bool(as_tel_value)
+
+    return {
+        "origin_code_configured": origin_code_set,
+        "origin_content_configured": origin_content_set,
+        "as_configured": as_tel_set,
+    }
 
 
 def _safe_diagnose(product: dict[str, Any] | None) -> dict[str, Any] | None:
