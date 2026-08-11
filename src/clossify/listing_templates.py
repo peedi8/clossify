@@ -744,6 +744,14 @@ def transform_product_to_template_input(
             if _has_text(claim.get("exchangeDeliveryFee")):
                 our_product["exchange_delivery_fee"] = claim.get("exchangeDeliveryFee")
 
+    # 상품속성(productAttributes) 편승 — 응답에 있으면 그대로 보존(N58 슬라이스1).
+    # 응답에 없으면 조용히 통과(지어내지 않음). 상품군 고정 성격의 속성을
+    # 템플릿에 저장하는 것은 원장 판단이나, 그 선별은 이 티켓 밖이다 —
+    # 본 티켓은 **읽어서 그대로 보존**까지만.
+    raw_attrs = detail.get("productAttributes")
+    if isinstance(raw_attrs, list) and raw_attrs:
+        our_product["attributes"] = list(raw_attrs)
+
     # 정본 대비 완전성 — 응답에서 읽은 고시 본문 필드 집합 vs 정본의 해당
     # 타입 필드 집합. 조용한 누락 금지(티켓 4항).
     type_fields = _notice_type_fields_for(raw_type)
