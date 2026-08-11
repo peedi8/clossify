@@ -3652,8 +3652,13 @@ def prepare_listing(
           **공통 안전 부분집합**이다. ``is_complete=false`` 면 전체 요구목록이
           아니므로 완료로 취급하지 말고 ``completion_blocked_by`` 를 해결한 뒤
           ``candidate_groups`` 의 타입별 추가 요구까지 적용해야 한다.
-        - ``requirements.notice_required_fields.likely_extra`` 는 **추정**이다.
-          ``likely_type`` 이 맞을 때만 필요하다 — 물을 때 추정임을 밝혀라.
+        - ``requirements.notice_required_fields`` 의 키는 정확히 7개:
+          ``scope`` · ``is_complete`` · ``completion_blocked_by`` · ``certain`` ·
+          ``certain_one_of`` · ``candidate_groups`` · ``unresolved_notice_types``.
+        - ``requirements.notice_required_fields.candidate_groups`` 의 각 그룹에서
+          ``additional`` / ``additional_one_of`` 은 해당 고시타입으로 확정됐을 때
+          추가로 필요한 항목이다. 추정 타입은 ``category.likely_notice_type``
+          을 참고용으로만 쓰라.
         - ``requirements.category.needs_category_choice`` 가 참이면 status가
           ``likely`` 여도 **카테고리를 임의로 정하지 말고** 후보를 사용자에게
           보여 고르게 하라. 카테고리 확정이 먼저다.
