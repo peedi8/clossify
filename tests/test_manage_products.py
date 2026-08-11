@@ -93,9 +93,9 @@ _INSPECTION_BODY_3 = {
     "first": True,
     "last": True,
     "contents": [
-        {"channelProductNo": "200001", "inspectionType": "MODIFY_REQUEST"},
-        {"channelProductNo": "200002", "inspectionType": "MODIFY_REQUEST"},
-        {"channelProductNo": "200003", "inspectionType": "MODIFY_REQUEST"},
+        {"channelProductNo": "200001"},
+        {"channelProductNo": "200002"},
+        {"channelProductNo": "200003"},
     ],
 }
 

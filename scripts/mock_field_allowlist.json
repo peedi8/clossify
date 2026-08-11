@@ -6,5 +6,14 @@
   "someOtherKey": "시험 내부 픽스처 이름. 외부 API 필드가 아니다",
   "internalDebugInfo": "시험 내부 픽스처 이름. 외부 API 필드가 아니다",
   "requestId": "시험 내부 픽스처 이름. 외부 API 필드가 아니다",
-  "inlineData": "이미지 생성 제공자(네이버 아님)의 응답 필드다. 커머스 문서에 없는 게 정상"
+  "inlineData": "이미지 생성 제공자(네이버 아님)의 응답 필드다. 커머스 문서에 없는 게 정상",
+  "sellerManagementProductCode": "제품 코드가 폴백으로 읽는 키(template_migration_harvest.py:240-254). 문서 953개 전수 0건이나 과거 버전 호환 폴백",
+  "invalidInputs": "제품 코드가 읽는 키(mcp_server.py:79 _SAFE_BODY_KEYS 화이트리스트). naver_client._collect_invalid_inputs 도 재귀 방문",
+  "smartstoreChannelProductNo": "제품 코드가 읽는 키(register.py:302 실등록 관측 응답 최상위 키). template_migration_harvest.py:288,294 도 후보로 읽음",
+  "channelProduct": "제품 코드가 순회하는 중첩 키(register.py:308 channelProduct.channelProductNo 폴백 경로)",
+  "totalElements": "검수 응답 페이지네이션 키 — mcp_server.py:4360-4363(_extract_inspection_total)이 읽는다. 실측 확인(D67, 2026-08-10, naver_client.py:1557)",
+  "totalPages": "검수 응답 페이지네이션 키 — totalElements 와 함께 오는 실측 응답 형태(naver_client.py:1557,1577 docstring 계약). 제품 코드가 직접 읽지는 않으나 동일 응답 봉투의 일부",
+  "generatedAt": "scene.json 내부 키. 외부 API 가 아니다 — 본 프로젝트가 정의하는 장면 기술 포맷",
+  "widthPx": "scene.json 내부 키. 외부 API 가 아니다 — 본 프로젝트가 정의하는 장면 기술 포맷",
+  "countryOfOrigin": "제품 코드가 생성하는 notice payload 키(naver_client.py:776 _base_etc_notice). 외부 문서 스크랩에 미수록이나 송신 본문에 들어간다"
 }
