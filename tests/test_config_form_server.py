@@ -54,6 +54,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from clossify import approval_server, config_form_server
+from tests._netwait import port_is_closed, wait_for_port
 
 
 # --------------------------------------------------------------------------- #
@@ -129,29 +130,6 @@ def _send_raw_form(
     return status, rest.decode("utf-8", errors="replace")
 
 
-def _wait_for_port(port: int, timeout: float = 3.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                return True
-        except OSError:
-            time.sleep(0.05)
-    return False
-
-
-def _port_is_closed(port: int, timeout: float = 5.0) -> bool:
-    """포트가 닫혔는지 확인(연결 실패 = 닫힘)."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                time.sleep(0.1)  # 아직 열려 있음.
-        except OSError:
-            return True  # 닫힘.
-    return False
-
-
 # --------------------------------------------------------------------------- #
 # (a) 폼 POST(커스텀 헤더 없음) + 유효 토큰 -> 설정 파일에 기록, HTML 반환.
 # --------------------------------------------------------------------------- #
@@ -167,7 +145,7 @@ class TestFormPostSaves:
         )
         port = srv.start()
         try:
-            assert _wait_for_port(port)
+            assert wait_for_port(port)
 
             def _save():
                 time.sleep(0.1)
@@ -416,7 +394,7 @@ class TestFormTokenRejectionPreservesConfig:
         )
         port = srv.start()
         try:
-            assert _wait_for_port(port)
+            assert wait_for_port(port)
 
             def _save():
                 time.sleep(0.1)
@@ -504,7 +482,7 @@ class TestFormOriginGuard:
         )
         port = srv.start()
         try:
-            assert _wait_for_port(port)
+            assert wait_for_port(port)
 
             def _save():
                 time.sleep(0.1)
@@ -779,7 +757,7 @@ class TestFormNoSecretOutput:
         )
         port = srv.start()
         try:
-            assert _wait_for_port(port)
+            assert wait_for_port(port)
 
             def _save():
                 time.sleep(0.1)
@@ -1208,7 +1186,7 @@ class TestFormPortClosesAfterHandling:
         )
         port = srv.start()
         try:
-            assert _wait_for_port(port)
+            assert wait_for_port(port)
 
             def _save():
                 time.sleep(0.1)
@@ -1224,7 +1202,7 @@ class TestFormPortClosesAfterHandling:
             srv.close()
 
         # 서버가 종료되면 포트가 닫혀야 한다.
-        assert _port_is_closed(port), "포트가 처리 후에도 닫히지 않음 (좀비 포트)"
+        assert port_is_closed(port, timeout=5.0), "포트가 처리 후에도 닫히지 않음 (좀비 포트)"
 
     def test_port_closes_after_expiry(self, tmp_path):
         config_file = tmp_path / "config.json"
@@ -1236,13 +1214,13 @@ class TestFormPortClosesAfterHandling:
         )
         port = srv.start()
         try:
-            assert _wait_for_port(port)
+            assert wait_for_port(port)
             # 만료될 때까지 대기.
             srv.wait(timeout=3)
         finally:
             srv.close()
 
-        assert _port_is_closed(port), "만료 후 포트가 닫히지 않음"
+        assert port_is_closed(port, timeout=5.0), "만료 후 포트가 닫히지 않음"
 
     def test_bound_host_is_localhost(self, tmp_path):
         """서버가 127.0.0.1 에만 바인드됐는지 확인 (방어 1)."""

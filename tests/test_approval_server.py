@@ -31,6 +31,7 @@ import time
 import pytest
 
 from clossify import approval_server, mcp_server
+from tests._netwait import port_is_closed, wait_for_port
 
 
 # ---------------------------------------------------------------------------
@@ -56,7 +57,7 @@ def _send_request(
     mode=wait1 150/150 통과). 본 함수는 포트가 실제로 연결을 받는지 먼저 확인하고,
     짧은 재시도로 accept 준비를 기다린다.
     """
-    assert _wait_for_port(port), f"승인 서버 포트 {port} 가 준비되지 않음"
+    assert wait_for_port(port), f"승인 서버 포트 {port} 가 준비되지 않음"
     headers: dict[str, str] = {}
     payload_bytes = b""
     if body is not None:
@@ -93,30 +94,6 @@ def _send_request(
             if time.monotonic() >= deadline:
                 raise
             time.sleep(0.02)
-
-
-def _wait_for_port(port: int, timeout: float = 3.0) -> bool:
-    """포트가 실제로 열려있는지 소켓으로 확인."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                return True
-        except OSError:
-            time.sleep(0.05)
-    return False
-
-
-def _port_is_closed(port: int, timeout: float = 3.0) -> bool:
-    """포트가 닫혔는지 확인(연결 실패 = 닫힘)."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                time.sleep(0.1)  # 아직 열려 있음.
-        except OSError:
-            return True  # 닫힘.
-    return False
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +138,7 @@ class TestCorrectTokenApproves:
         )
         port = srv.start()
         try:
-            assert _wait_for_port(port), "포트가 열려야 함"
+            assert wait_for_port(port), "포트가 열려야 함"
 
             # 백그라운드에서 승인 요청을 보낸다.
             def _approve():
@@ -251,7 +228,7 @@ class TestTokenSingleUse:
         )
         port = srv.start()
         try:
-            assert _wait_for_port(port)
+            assert wait_for_port(port)
 
             def _approve():
                 time.sleep(0.1)
@@ -307,7 +284,7 @@ class TestExpiry:
         )
         port = srv.start()
         try:
-            assert _wait_for_port(port)
+            assert wait_for_port(port)
             # TTL 만큼 대기.
             time.sleep(1.5)
             # 만료 후 요청.
@@ -544,7 +521,7 @@ class TestPortClosesAfterHandling:
             token=token,
         )
         port = srv.start()
-        assert _wait_for_port(port)
+        assert wait_for_port(port)
 
         def _approve():
             time.sleep(0.1)
@@ -554,7 +531,7 @@ class TestPortClosesAfterHandling:
         t.start()
         srv.wait(timeout=5)
         # wait() 이 반환되면 서버가 종료되어야 한다.
-        assert _port_is_closed(port), "처리 후 포트가 닫혀야 함"
+        assert port_is_closed(port), "처리 후 포트가 닫혀야 함"
 
     def test_port_closes_after_close(self):
         """close() 호출 후 포트가 닫힌다."""
@@ -565,9 +542,9 @@ class TestPortClosesAfterHandling:
             ttl_seconds=60,
         )
         port = srv.start()
-        assert _wait_for_port(port)
+        assert wait_for_port(port)
         srv.close()
-        assert _port_is_closed(port), "close() 후 포트가 닫혀야 함"
+        assert port_is_closed(port), "close() 후 포트가 닫혀야 함"
 
 
 # ---------------------------------------------------------------------------
@@ -738,7 +715,7 @@ def _send_raw_request(
     ``_send_request`` 와 같은 이유로 포트 준비를 먼저 확인한다 — ``start()`` 직후
     accept 가 준비되지 않은 창에 연결이 가면 중복 Origin 헤더 테스트도 플래키해진다.
     """
-    assert _wait_for_port(port), f"승인 서버 포트 {port} 가 준비되지 않음"
+    assert wait_for_port(port), f"승인 서버 포트 {port} 가 준비되지 않음"
     payload = b""
     if body is not None:
         payload = json.dumps(body).encode("utf-8")
