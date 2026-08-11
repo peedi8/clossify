@@ -48,6 +48,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from clossify import approval_server, naver_client, preview
+from tests._netwait import wait_for_port
 
 
 # --------------------------------------------------------------------------- #
@@ -75,7 +76,7 @@ def _send_form(
     ``_repro_flaky.py`` mode=raw 2/150 실패, mode=wait1 150/150 통과). 본 함수는
     포트가 실제로 연결을 받는지 먼저 확인하고, 짧은 재시도로 accept 준비를 기다린다.
     """
-    assert _wait_for_port(port), f"승인 서버 포트 {port} 가 준비되지 않음"
+    assert wait_for_port(port), f"승인 서버 포트 {port} 가 준비되지 않음"
     pairs = list(fields.items()) if isinstance(fields, dict) else list(fields)
     body = urllib.parse.urlencode(pairs).encode("utf-8")
     headers: list[tuple[str, str]] = [
@@ -121,7 +122,7 @@ def _send_raw_form(
     ``_send_form`` 과 같은 이유로 포트 준비를 먼저 확인한다 — ``start()`` 직후
     accept 가 준비되지 않은 창에 연결이 가면 중복 Origin 헤더 테스트도 플래키해진다.
     """
-    assert _wait_for_port(port), f"승인 서버 포트 {port} 가 준비되지 않음"
+    assert wait_for_port(port), f"승인 서버 포트 {port} 가 준비되지 않음"
     payload = urllib.parse.urlencode(list(fields.items())).encode("utf-8")
     lines = [
         b"POST / HTTP/1.1",
@@ -148,17 +149,6 @@ def _send_raw_form(
     return status, rest.decode("utf-8", errors="replace")
 
 
-def _wait_for_port(port: int, timeout: float = 3.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                return True
-        except OSError:
-            time.sleep(0.05)
-    return False
-
-
 # --------------------------------------------------------------------------- #
 # (a) 폼 POST + 유효 토큰 + product_key -> 승인 처리, HTML 반환.
 # --------------------------------------------------------------------------- #
@@ -170,7 +160,7 @@ class TestFormPostApproves:
         srv = approval_server.ApprovalServer(product_key="form0abc01", token=token)
         port = srv.start()
         try:
-            assert _wait_for_port(port)
+            assert wait_for_port(port)
 
             def _approve():
                 time.sleep(0.1)
@@ -339,7 +329,7 @@ class TestFormSingleUseToken:
         srv = approval_server.ApprovalServer(product_key="sng0abc001", token=token)
         port = srv.start()
         try:
-            assert _wait_for_port(port)
+            assert wait_for_port(port)
 
             def _approve():
                 time.sleep(0.1)
@@ -488,7 +478,7 @@ class TestJsonPathNoRegression:
         srv = approval_server.ApprovalServer(product_key="jsn0abc001", token=token, ttl_seconds=60)
         port = srv.start()
         try:
-            assert _wait_for_port(port), "승인 서버 포트가 준비되지 않음"
+            assert wait_for_port(port), "승인 서버 포트가 준비되지 않음"
             conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
             body = _json.dumps({"token": token, "product_key": "jsn0abc001"}).encode()
             conn.request(
@@ -515,7 +505,7 @@ class TestJsonPathNoRegression:
         srv = approval_server.ApprovalServer(product_key="jsnr0ab01a", token=token, ttl_seconds=60)
         port = srv.start()
         try:
-            assert _wait_for_port(port), "승인 서버 포트가 준비되지 않음"
+            assert wait_for_port(port), "승인 서버 포트가 준비되지 않음"
             conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
             body = _json.dumps({"token": "wrong", "product_key": "jsnr0ab01a"}).encode()
             conn.request(
@@ -540,7 +530,7 @@ class TestJsonPathNoRegression:
         srv = approval_server.ApprovalServer(product_key="uct0abc001a", token=token, ttl_seconds=60)
         port = srv.start()
         try:
-            assert _wait_for_port(port), "승인 서버 포트가 준비되지 않음"
+            assert wait_for_port(port), "승인 서버 포트가 준비되지 않음"
             conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
             body = b"raw bytes"
             conn.request(

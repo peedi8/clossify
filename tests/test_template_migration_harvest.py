@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import http.client
 import os
-import socket
 import sys
 import threading
 import time
@@ -47,6 +46,7 @@ if str(_SRC) not in sys.path:
 from clossify import common
 from clossify import template_migration_form as tmf
 from clossify import template_migration_harvest as hv
+from tests._netwait import wait_for_port
 
 # 테스트 전역: 대표이미지 조달이 네이버 실업로드를 시도하지 않도록 캐시를
 # monkeypatch 한다. (test_template_migration_form.py 와 동일 패턴)
@@ -1660,17 +1660,6 @@ def _send_harvest_form(
     return status, resp_body, resp_headers
 
 
-def _wait_for_port(port: int, timeout: float = 3.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                return True
-        except OSError:
-            time.sleep(0.05)
-    return False
-
-
 # --------------------------------------------------------------------------- #
 # 수확 폼 HTML 구조.
 # --------------------------------------------------------------------------- #
@@ -1729,7 +1718,7 @@ def _start_harvest_server(ttl_seconds: int = 60) -> tuple[hv.HarvestFormServer, 
     token = approval_server.new_token()
     srv = hv.HarvestFormServer(token=token, ttl_seconds=ttl_seconds)
     port = srv.start()
-    assert _wait_for_port(port), f"포트 {port} 가 열리지 않음"
+    assert wait_for_port(port), f"포트 {port} 가 열리지 않음"
     return srv, port, token
 
 
