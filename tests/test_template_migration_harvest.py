@@ -240,7 +240,9 @@ def _make_search_fn(listings: list[dict], page_size: int = 100):
         start = (page - 1) * page_size
         end = start + page_size
         chunk = listings[start:end]
-        return 200, {"contents": chunk, "totalCount": len(listings)}
+        # totalCount 는 네이버 검색 응답에 존재하지 않는 키 — src 어디서도
+        # 읽지 않는다. check_mock_fields 가 허용 목록 밖 키로 지적했다.
+        return 200, {"contents": chunk}
 
     return _search, calls
 

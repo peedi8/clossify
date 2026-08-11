@@ -81,7 +81,7 @@ def _api_body_etc(
             "name": name,
             "salePrice": sale_price,
             "stockQuantity": stock,
-            "representativeImages": [{"url": image_url}],
+            "representativeImage": {"url": image_url},
             "deliveryInfo": {
                 "claimDeliveryInfo": {
                     "returnDeliveryFee": return_delivery_fee,
