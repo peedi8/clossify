@@ -655,16 +655,35 @@ def _category_id_known(cid: str) -> bool:
     return bool(path)
 
 
-_ORIGIN_CODE_KEYS = ("origin_code", "origin_area_code", "originAreaCode")
-_ORIGIN_CONTENT_KEYS = ("made_in", "origin_content", "originContent")
-_AS_TEL_KEYS = ("as_tel", "seller_tel", "customerServicePhoneNumber")
+# R1 — 조립기(naver_client)가 상품 입력에서 실제로 읽는 키, **정확히 그것만**.
+# 넓혀도 좁혀도 왕복이 재발한다(wo-n76-round3.md 표 참조).
+#   - 원산지 코드: ``_resolve_origin_area_code`` (naver_client.py:278 부근) 는
+#     ``p.origin_code`` 만 읽는다. ``origin_area_code``/``originAreaCode`` 는
+#     **config 측 키** 이므로 상품측 후보에서 제거.
+#   - 원산지 표기: ``_notice_defaults`` made_in (naver_client.py:353 부근) 은
+#     ``p.made_in``·``p.origin_content`` 만 읽는다. ``originContent`` 는 config
+#     측 camelCase 별칭이므로 상품측 후보에서 제거.
+#   - A/S 전화: ``_notice_defaults`` as_tel (naver_client.py:336~342) 은
+#     ``p.as_tel``·``p.seller_tel`` 만 읽는다. ``customerServicePhoneNumber`` 는
+#     **config 측** 키 이므로 상품측 후보에서 제거.
+_ORIGIN_CODE_KEYS = ("origin_code",)
+_ORIGIN_CONTENT_KEYS = ("made_in", "origin_content")
+_AS_TEL_KEYS = ("as_tel", "seller_tel")
 
 
 def _has_text_in(product: dict[str, Any], keys: tuple[str, ...]) -> bool:
-    """``product`` 의 후보 키 중 하나라도 비어있지 않은 문자열 값을 가지면 True."""
+    """``product`` 의 후보 키 중 하나라도 **placeholder 가 아닌** 실질 값을 가지면 True.
+
+    R5 — ``qa_agents._is_placeholder_value`` 의 단일 진실 공급원을 재사용한다.
+    "상세페이지 참조" 같은 placeholder 를 "제공됨" 으로 세면 QA 가 나중에 거부한다.
+    의존 방향: ``qa_agents`` → 본 모듈 (허용됨).
+    """
     for key in keys:
         v = product.get(key)
-        if isinstance(v, str) and v.strip():
+        if isinstance(v, str) and v.strip() and not _qa_agents._is_placeholder_value(v):
+            return True
+        # 비-문자열 값(숫자 등)은 placeholder 판정을 건너뛰고 "값 있음" 으로 본다.
+        if v is not None and not isinstance(v, str) and v != "":
             return True
     return False
 
@@ -683,8 +702,19 @@ def _build_compliance_block(
     Args:
         product: 상품 입력 dict. ``origin_code``/``as_tel`` 등의 키를 본다.
         category_block: ``diagnose`` 가 이미 만든 category 블록.
-        config_flags: ``{"origin_configured": bool|None, "as_configured": bool|None}``.
-            ``None`` (키 자체가 없거나 값이 None) 이면 "모름"으로 다룬다.
+        config_flags: R2 — 성분별 플래그.
+
+            ::
+
+                {
+                  "origin_code_configured":    bool | None,  # origin_area_code 존재
+                  "origin_content_configured": bool | None,  # origin_content 존재
+                  "as_configured":             bool | None,  # as_tel|seller_tel|customerServicePhoneNumber 존재
+                }
+
+            어느 키가 없거나 None 이면 "모름"으로 다룬다.
+            (이전 ``origin_configured`` 단일 키는 폐기됐다 — 원산지는 code 와
+            content 가 별도로 흐르기 때문에 한 플래그로 묶으면 왕복이 재발한다.)
         all_candidates: 상품명 분류의 전체 후보 (KC 후보 집계용). 없으면 사용 안 함.
 
     Returns:
@@ -701,6 +731,8 @@ def _build_compliance_block(
     - **F4**: 원산지를 code_provided + content_provided 두 부분으로 분해.
     - **F5**: A/S 판정에 ``as_tel`` **또는 ``seller_tel``**. 원산지도 payload 가
       받는 키 후보 전부(``origin_code`` 계열·``made_in``·``origin_content``)와 맞춘다.
+
+    R1/R2 — 조립기 실측 기반 키 좁히기 + config 플래그 성분별 분리(wo-n76-round3.md).
     """
     flags = config_flags if isinstance(config_flags, dict) else {}
 
@@ -755,6 +787,12 @@ def _build_compliance_block(
             c_id = str(c.get("category_id") or "")
             if not c_id:
                 continue
+            # R6 — 후보는 category_meta 유래라 로컬 메타에 "있는" ID 이다
+            # (category.classify_category 가 메타에 없는 ID 는 내놓지 않는다).
+            # 그래서 requires_kc 가 모르는 ID 에 대해 False 를 주는 함정이
+            # 실제로는 발생하지 않는다. 만약을 위해 try/except 로 None 처리하고
+            # None 은 unresolved 카운트로 흘린다(F2). 새 가드를 만들지 않고
+            # 이유를 주석으로 남긴다(리뷰어 제안 그대로).
             try:
                 kc_needed = _category_meta.requires_kc(
                     c_id, raise_if_unknown=False, raise_if_incomplete=False
@@ -817,14 +855,24 @@ def _build_compliance_block(
     elif kc_status == "unknown":
         kc_note = "KC 인증 대상 여부를 알 수 없다. 카테고리를 확인하라. " + do_not_fabricate
 
-    # --- origin (F4: 두 부분으로 분해, F5: payload 키 후보와 맞춤) ---
+    # --- origin (F4: 두 부분으로 분해, R1: 상품측 키 좁힘, R2: 성분별 config 플래그) ---
     origin_code_provided = _has_text_in(product, _ORIGIN_CODE_KEYS)
     origin_content_provided = _has_text_in(product, _ORIGIN_CONTENT_KEYS)
-    origin_cfg_raw = flags.get("origin_configured")
-    origin_configured: bool | None = bool(origin_cfg_raw) if origin_cfg_raw is not None else None
+    # R2 — config 측 플래그도 code 와 content 를 별도로.
+    # 조립기가 config 에서 읽는 키: code 쪽은 origin_area_code,
+    # content 쪽은 origin_content. (이전 origin_configured 단일 키 폐기.)
+    origin_code_cfg_raw = flags.get("origin_code_configured")
+    origin_code_configured: bool | None = (
+        bool(origin_code_cfg_raw) if origin_code_cfg_raw is not None else None
+    )
+    origin_content_cfg_raw = flags.get("origin_content_configured")
+    origin_content_configured: bool | None = (
+        bool(origin_content_cfg_raw) if origin_content_cfg_raw is not None else None
+    )
 
-    # --- after_service (F5: as_tel 또는 seller_tel) ---
+    # --- after_service (F5: as_tel 또는 seller_tel, R1: 상품측 키 좁힘) ---
     as_in_product = _has_text_in(product, _AS_TEL_KEYS)
+    # R2 — config 측은 as_tel|seller_tel|customerServicePhoneNumber 셋 중 하나.
     as_cfg_raw = flags.get("as_configured")
     as_configured: bool | None = bool(as_cfg_raw) if as_cfg_raw is not None else None
 
@@ -839,7 +887,9 @@ def _build_compliance_block(
         "origin": {
             "code_provided": origin_code_provided,
             "content_provided": origin_content_provided,
-            "configured": origin_configured,
+            # R2 — 단일 configured 대신 성분별 플래그.
+            "code_configured": origin_code_configured,
+            "content_configured": origin_content_configured,
         },
         "after_service": {
             "provided_in_product": as_in_product,
@@ -851,10 +901,10 @@ def _build_compliance_block(
 def _compliance_missing_items(compliance: dict[str, Any]) -> list[dict[str, str]]:
     """컴플라이언스 블록에서 missing 에 넣을 항목을 만든다 (N76 보수 규칙).
 
-    원산지(F4): ``code_provided`` 와 ``content_provided`` 를 **별도로** 판정한다.
-    ``configured`` 가 **명시적 False** 일 때, 빠진 부분(code/content)별로 missing
-    에 추가한다 (둘 다 없으면 두 항목 다). ``configured=None``(모름) 이면
-    missing 에 추가하지 않는다.
+    원산지(R2): ``code_provided`` 와 ``content_provided`` 를 **별도로** 판정한다.
+    각 성분에 대해 (상품에 없음) **and** (해당 성분 configured==False, 명시적) 일
+    때만 missing 에 넣는다. 어느 쪽이든 ``configured=None``(모름) 이면 해당
+    성분은 missing 에 추가하지 않는다.
     A/S(F5): ``provided_in_product=False`` **이고** ``configured=False``
     (명시적 False) 일 때만 missing 에 추가.
     KC: missing 에 넣지 않는다 — 값 요구가 아니라 정보 제공이다.
@@ -862,32 +912,31 @@ def _compliance_missing_items(compliance: dict[str, Any]) -> list[dict[str, str]
     items: list[dict[str, str]] = []
 
     origin = compliance.get("origin") or {}
-    if origin.get("configured") is False:
-        # F4: code 쪽과 content 쪽을 별도로 본다.
-        if not origin.get("code_provided"):
-            items.append(
-                {
-                    "field": "origin_code",
-                    "label": "원산지 코드",
-                    "why": (
-                        "원산지 코드(origin_code)가 상품 입력에 없고 설정에도 없습니다. "
-                        "둘 중 하나에 실제 원산지 코드를 입력해야 합니다."
-                    ),
-                    "answer_shape": "text",
-                }
-            )
-        if not origin.get("content_provided"):
-            items.append(
-                {
-                    "field": "origin_content",
-                    "label": "원산지 표시문구",
-                    "why": (
-                        "원산지 표시문구(made_in)가 상품 입력에 없고 설정에도 없습니다. "
-                        "둘 중 하나에 실제 원산지 표시문구를 입력해야 합니다."
-                    ),
-                    "answer_shape": "text",
-                }
-            )
+    # R2 — 성분별 configured 를 본다 (이전 단일 configured 폐기).
+    if origin.get("code_configured") is False and not origin.get("code_provided"):
+        items.append(
+            {
+                "field": "origin_code",
+                "label": "원산지 코드",
+                "why": (
+                    "원산지 코드(origin_code)가 상품 입력에 없고 설정에도 없습니다. "
+                    "둘 중 하나에 실제 원산지 코드를 입력해야 합니다."
+                ),
+                "answer_shape": "text",
+            }
+        )
+    if origin.get("content_configured") is False and not origin.get("content_provided"):
+        items.append(
+            {
+                "field": "origin_content",
+                "label": "원산지 표시문구",
+                "why": (
+                    "원산지 표시문구(made_in)가 상품 입력에 없고 설정에도 없습니다. "
+                    "둘 중 하나에 실제 원산지 표시문구를 입력해야 합니다."
+                ),
+                "answer_shape": "text",
+            }
+        )
 
     after_service = compliance.get("after_service") or {}
     if (
@@ -920,11 +969,18 @@ def diagnose(
     Args:
         product: 상품 입력 dict. ``name``/``title_ko``/``salePrice``/
             ``image_sources``/``origin_code``/``as_tel`` 등의 키를 읽는다.
-        config_flags: ``{"origin_configured": bool|None, "as_configured": bool|None}``.
-            원산지·A/S 의 설정 존재 여부(값이 아님). ``None`` 이면 "모름" —
-            모름을 미설정(False)으로 단정하지 마라. ``diagnose`` 자체는 config
-            파일을 읽지 않으므로 호출자(mcp_server)가 이 플래그를 만들어 넘겨야
-            한다.
+        config_flags: R2 — 성분별 플래그::
+
+            {
+              "origin_code_configured":    bool | None,  # origin_area_code 존재
+              "origin_content_configured": bool | None,  # origin_content 존재
+              "as_configured":             bool | None,  # as_tel|seller_tel|customerServicePhoneNumber 존재
+            }
+
+            원산지·A/S 의 설정 존재 여부(값이 아님). 어느 키가 ``None`` 이면
+            "모름" — 모름을 미설정(False)으로 단정하지 마라. ``diagnose`` 자체는
+            config 파일을 읽지 않으므로 호출자(mcp_server)가 이 플래그를 만들어
+            넘겨야 한다.
 
     Returns:
         진단 결과 dict::
@@ -960,12 +1016,13 @@ def diagnose(
                       "note": str,  # 카운트에서 만든 문구 (F3). 값을 지어내지 말라는 안내 포함
                   },
                   "origin": {
-                      "code_provided": bool,      # product 의 origin_code 계열 (F4)
-                      "content_provided": bool,   # product 의 made_in / origin_content (F4)
-                      "configured": bool | None,  # 플래그. None = 모름
+                      "code_provided": bool,       # product 의 origin_code (F4, R1)
+                      "content_provided": bool,    # product 의 made_in / origin_content (F4, R1)
+                      "code_configured": bool | None,    # config origin_area_code 존재 (R2)
+                      "content_configured": bool | None, # config origin_content 존재 (R2)
                   },
                   "after_service": {
-                      "provided_in_product": bool,  # product.as_tel 또는 seller_tel (F5)
+                      "provided_in_product": bool,  # product.as_tel 또는 seller_tel (F5, R1)
                       "configured": bool | None,
                   },
               },
@@ -987,8 +1044,9 @@ def diagnose(
         ``category.likely_notice_type`` 이 추정 타입이므로 참고용으로만 쓰라.
       - ``compliance.kc`` 는 KC 인증 대상 여부를 알려준다. ``status="required"``
         면 인증정보가 필요하다 — **KC 인증번호를 지어내지 마라.**
-      - ``compliance.origin.configured`` 및 ``compliance.after_service.configured``
-        가 ``None`` 이면 "모름"이다. 모름을 미설정으로 단정하지 마라.
+      - ``compliance.origin.code_configured``/``content_configured`` 및
+        ``compliance.after_service.configured`` 가 ``None`` 이면 "모름"이다.
+        모름을 미설정으로 단정하지 마라.
     """
     if not isinstance(product, dict):
         product = {}

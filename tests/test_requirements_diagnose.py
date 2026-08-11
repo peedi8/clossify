@@ -1041,28 +1041,44 @@ class TestN76OriginQuadrants:
         """상품에 code+content 모두 있으면 missing 에 없다."""
         assert not self._origin_fields_in_missing(
             {"name": "x", "salePrice": 1, "origin_code": "KR", "made_in": "한국"},
-            {"origin_configured": True, "as_configured": True},
+            {
+                "origin_code_configured": True,
+                "origin_content_configured": True,
+                "as_configured": True,
+            },
         )
 
     def test_provided_t_configured_f(self):
         """상품에 code+content 모두 있으면 config 미설정이어도 missing 에 없다."""
         assert not self._origin_fields_in_missing(
             {"name": "x", "salePrice": 1, "origin_code": "KR", "made_in": "한국"},
-            {"origin_configured": False, "as_configured": True},
+            {
+                "origin_code_configured": False,
+                "origin_content_configured": False,
+                "as_configured": True,
+            },
         )
 
     def test_provided_f_configured_t(self):
         """상품에 없고 config 에 있으면 missing 에 없다."""
         assert not self._origin_fields_in_missing(
             {"name": "x", "salePrice": 1},
-            {"origin_configured": True, "as_configured": True},
+            {
+                "origin_code_configured": True,
+                "origin_content_configured": True,
+                "as_configured": True,
+            },
         )
 
     def test_provided_f_configured_f(self):
         """상품에 없고 config 에도 없으면 missing 에 **둘 다** 있다 (명시적 False)."""
         fields = self._origin_fields_in_missing(
             {"name": "x", "salePrice": 1},
-            {"origin_configured": False, "as_configured": True},
+            {
+                "origin_code_configured": False,
+                "origin_content_configured": False,
+                "as_configured": True,
+            },
         )
         assert "origin_code" in fields, f"origin_code 가 missing 에 없음: {fields}"
         assert "origin_content" in fields, f"origin_content 가 missing 에 없음: {fields}"
@@ -1071,7 +1087,11 @@ class TestN76OriginQuadrants:
         """상품에 없고 configured=None(모름)이면 missing 에 없다."""
         assert not self._origin_fields_in_missing(
             {"name": "x", "salePrice": 1},
-            {"origin_configured": None, "as_configured": True},
+            {
+                "origin_code_configured": None,
+                "origin_content_configured": None,
+                "as_configured": True,
+            },
         )
 
     def test_provided_f_config_flags_none(self):
@@ -1082,11 +1102,15 @@ class TestN76OriginQuadrants:
         )
 
     def test_code_only_configured_f_leaves_content_missing(self):
-        """F4 acceptance: ``origin_code`` 만 준 입력 + configured=False →
+        """F4/R2 acceptance: ``origin_code`` 만 준 입력 + content_configured=False →
         missing 에 **content 쪽**이 남는다."""
         fields = self._origin_fields_in_missing(
             {"name": "x", "salePrice": 1, "origin_code": "KR"},
-            {"origin_configured": False, "as_configured": True},
+            {
+                "origin_code_configured": False,
+                "origin_content_configured": False,
+                "as_configured": True,
+            },
         )
         assert (
             "origin_content" in fields
@@ -1099,9 +1123,44 @@ class TestN76OriginQuadrants:
         """F4 acceptance: ``made_in`` 까지 주면 missing 에서 사라진다."""
         fields = self._origin_fields_in_missing(
             {"name": "x", "salePrice": 1, "origin_code": "KR", "made_in": "한국"},
-            {"origin_configured": False, "as_configured": True},
+            {
+                "origin_code_configured": False,
+                "origin_content_configured": False,
+                "as_configured": True,
+            },
         )
         assert not fields, f"code+made_in 를 줘도 missing 에 원산지가 있음: {fields}"
+
+    # R2 acceptance: (config 에 content 만, 상품에 code 만) → missing 없음.
+    def test_r2_content_configured_product_code_only_no_missing(self):
+        """R2: config 에 content 만 있고 상품에 code 만 있으면 missing 이 없다."""
+        fields = self._origin_fields_in_missing(
+            {"name": "x", "salePrice": 1, "origin_code": "KR"},
+            {
+                "origin_code_configured": False,
+                "origin_content_configured": True,
+                "as_configured": True,
+            },
+        )
+        assert not fields, f"R2: config content + product code 조합인데 missing 에 남음: {fields}"
+
+    # R2 acceptance: (config 에 code 만, 상품 아무것도 없음) → content 쪽만 missing.
+    def test_r2_code_configured_only_product_empty_content_missing(self):
+        """R2: config 에 code 만 있고 상품에 아무것도 없으면 content 쪽만 missing."""
+        fields = self._origin_fields_in_missing(
+            {"name": "x", "salePrice": 1},
+            {
+                "origin_code_configured": True,
+                "origin_content_configured": False,
+                "as_configured": True,
+            },
+        )
+        assert (
+            "origin_content" in fields
+        ), f"R2: code_configured + product empty → content 가 missing 에 있어야 함: {fields}"
+        assert (
+            "origin_code" not in fields
+        ), f"R2: code_configured 인데 code 가 missing 에 있음: {fields}"
 
 
 class TestN76AfterServiceQuadrants:
@@ -1114,39 +1173,63 @@ class TestN76AfterServiceQuadrants:
     def test_provided_t_configured_t(self):
         assert not self._as_in_missing(
             {"name": "x", "salePrice": 1, "as_tel": "02-123-4567"},
-            {"origin_configured": True, "as_configured": True},
+            {
+                "origin_code_configured": True,
+                "origin_content_configured": True,
+                "as_configured": True,
+            },
         )
 
     def test_provided_t_configured_f(self):
         assert not self._as_in_missing(
             {"name": "x", "salePrice": 1, "as_tel": "02-123-4567"},
-            {"origin_configured": True, "as_configured": False},
+            {
+                "origin_code_configured": True,
+                "origin_content_configured": True,
+                "as_configured": False,
+            },
         )
 
     def test_provided_f_configured_t(self):
         assert not self._as_in_missing(
             {"name": "x", "salePrice": 1},
-            {"origin_configured": True, "as_configured": True},
+            {
+                "origin_code_configured": True,
+                "origin_content_configured": True,
+                "as_configured": True,
+            },
         )
 
     def test_provided_f_configured_f(self):
         assert self._as_in_missing(
             {"name": "x", "salePrice": 1},
-            {"origin_configured": True, "as_configured": False},
+            {
+                "origin_code_configured": True,
+                "origin_content_configured": True,
+                "as_configured": False,
+            },
         )
 
     def test_provided_f_configured_none(self):
         """configured=None(모름)이면 missing 에 없다."""
         assert not self._as_in_missing(
             {"name": "x", "salePrice": 1},
-            {"origin_configured": True, "as_configured": None},
+            {
+                "origin_code_configured": True,
+                "origin_content_configured": True,
+                "as_configured": None,
+            },
         )
 
     def test_seller_tel_only_is_provided(self):
         """F5: ``seller_tel`` 만 준 입력 → ``provided_in_product=True``, missing 에 없음."""
         r = requirements.diagnose(
             {"name": "x", "salePrice": 1, "seller_tel": "02-987-6543"},
-            config_flags={"origin_configured": True, "as_configured": False},
+            config_flags={
+                "origin_code_configured": True,
+                "origin_content_configured": True,
+                "as_configured": False,
+            },
         )
         assert (
             r["compliance"]["after_service"]["provided_in_product"] is True
@@ -1163,7 +1246,9 @@ class TestN76Purity:
     def test_works_without_config_flags(self):
         r = requirements.diagnose({"name": "x", "salePrice": 1})
         assert "compliance" in r
-        assert r["compliance"]["origin"]["configured"] is None
+        # R2 — origin 은 code_configured 와 content_configured 로 분리됨.
+        assert r["compliance"]["origin"]["code_configured"] is None
+        assert r["compliance"]["origin"]["content_configured"] is None
         assert r["compliance"]["after_service"]["configured"] is None
 
     def test_compliance_block_structure(self):
@@ -1177,10 +1262,12 @@ class TestN76Purity:
             "kc_unresolved_candidates",
             "note",
         }
+        # R2 — origin 은 code_configured/content_configured (단일 configured 폐기).
         assert set(compliance["origin"].keys()) == {
             "code_provided",
             "content_provided",
-            "configured",
+            "code_configured",
+            "content_configured",
         }
         assert set(compliance["after_service"].keys()) == {
             "provided_in_product",
@@ -1214,7 +1301,7 @@ class TestN76F6ConfigAbsentIsFalse:
     """F6: config 파일이 확실히 없으면 플래그가 False (None 이 아니다)."""
 
     def test_absent_config_returns_false_not_none(self):
-        """``_build_config_flags`` — 파일 부재 → ``{"origin_configured": False, ...}``."""
+        """``_build_config_flags`` — 파일 부재 → 성분별 False."""
         from clossify import naver_client
 
         fake_path = str(Path(_PROJECT_ROOT) / "nonexistent_test_config_zzz.json")
@@ -1222,7 +1309,8 @@ class TestN76F6ConfigAbsentIsFalse:
             flags = mcp_server._build_config_flags()
         assert flags is not None, "F6: 파일 부재인데 None (모름) 반환"
         assert flags == {
-            "origin_configured": False,
+            "origin_code_configured": False,
+            "origin_content_configured": False,
             "as_configured": False,
         }, f"F6: 파일 부재 시 예상값과 다름: {flags}"
         print(f"\n=== F6: config absent → {flags} ===")
@@ -1232,7 +1320,11 @@ class TestN76F7ConfigSectionAliases:
     """F7: config 섹션 별칭 3종을 naver_client 와 같은 우선순위로 인식한다."""
 
     def test_notice_defaults_only_section_is_configured(self):
-        """``notice_defaults`` 섹션만 있어도 configured=True (별칭 인식)."""
+        """``notice_defaults`` 섹션만 있어도 configured=True (별칭 인식).
+
+        R3 — 섹션 해석을 naver_client._notice_config() 호출로 공유한다.
+        이 픽스처(notice_defaults 만 있음) 가 여전히 True 를 주는지 확인한다.
+        """
         import tempfile
 
         from clossify import naver_client
@@ -1255,9 +1347,13 @@ class TestN76F7ConfigSectionAliases:
             with mock.patch.object(naver_client, "config_path", return_value=tmp_path):
                 flags = mcp_server._build_config_flags()
             assert flags is not None, "F7: config 있는데 None 반환"
+            # R2 — 성분별 플래그 확인.
             assert (
-                flags["origin_configured"] is True
-            ), f"F7: notice_defaults 별칭인데 origin_configured=False: {flags}"
+                flags["origin_code_configured"] is True
+            ), f"F7: notice_defaults 별칭인데 origin_code_configured=False: {flags}"
+            assert (
+                flags["origin_content_configured"] is True
+            ), f"F7: notice_defaults 별칭인데 origin_content_configured=False: {flags}"
             assert (
                 flags["as_configured"] is True
             ), f"F7: notice_defaults 별칭인데 as_configured=False: {flags}"
@@ -1289,8 +1385,172 @@ class TestN76F7ConfigSectionAliases:
                 flags = mcp_server._build_config_flags()
             assert flags is not None, "F7: config 있는데 None 반환"
             assert (
-                flags["origin_configured"] is True
+                flags["origin_code_configured"] is True
             ), f"F7: product_notice_defaults 별칭 인식 실패: {flags}"
+            assert (
+                flags["origin_content_configured"] is True
+            ), f"F7: product_notice_defaults content 별칭 인식 실패: {flags}"
             print(f"\n=== F7: product_notice_defaults alias → {flags} ===")
         finally:
             Path(tmp_path).unlink(missing_ok=True)
+
+    # R4 — config 루트가 dict 가 아니면 플래그 전부 None, 진단은 살아있어야 한다.
+    def test_r4_non_dict_root_config_returns_none_flags(self):
+        """R4: config 루트가 ``[]`` (비-dict) → 플래그 전부 None."""
+        import tempfile
+
+        from clossify import naver_client
+
+        cfg_content = []  # list — not a dict
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as tmp:
+            json.dump(cfg_content, tmp, ensure_ascii=False)
+            tmp_path = tmp.name
+
+        try:
+            with mock.patch.object(naver_client, "config_path", return_value=tmp_path):
+                flags = mcp_server._build_config_flags()
+            assert flags is not None, "R4: 비-dict 루트인데 None 반환(진단 사망)"
+            assert (
+                flags["origin_code_configured"] is None
+            ), f"R4: 비-dict 루트인데 origin_code_configured 가 None 이 아님: {flags}"
+            assert (
+                flags["origin_content_configured"] is None
+            ), f"R4: 비-dict 루트인데 origin_content_configured 가 None 이 아님: {flags}"
+            assert (
+                flags["as_configured"] is None
+            ), f"R4: 비-dict 루트인데 as_configured 가 None 이 아님: {flags}"
+            print(f"\n=== R4: non-dict root → {flags} ===")
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    def test_r4_non_dict_root_diagnosis_stays_alive(self):
+        """R4: 비-dict 루트 config 에서 _safe_diagnose 가 살아있어야 한다."""
+        import tempfile
+
+        from clossify import naver_client
+
+        cfg_content = []
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as tmp:
+            json.dump(cfg_content, tmp, ensure_ascii=False)
+            tmp_path = tmp.name
+
+        try:
+            with mock.patch.object(naver_client, "config_path", return_value=tmp_path):
+                result = mcp_server._safe_diagnose({"name": "x", "salePrice": 1})
+            assert result is not None, "R4: 비-dict 루트에서 진단이 사망 (_safe_diagnose=None)"
+            assert "missing" in result, f"R4: 진단에 missing 키가 없음: {result}"
+            assert "compliance" in result, f"R4: 진단에 compliance 키가 없음: {result}"
+            print(
+                f"\n=== R4: non-dict root diagnosis alive: compliance keys={list(result['compliance'].keys())} ==="
+            )
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    # R3 — 섹션 해석이 naver_client._notice_config() 호출을 사용하는지 확인.
+    def test_r3_uses_naver_client_notice_config(self):
+        """R3: _build_config_flags 가 naver_client._notice_config() 를 호출한다."""
+        import tempfile
+
+        from clossify import naver_client
+
+        cfg_content = {
+            "notice_defaults": {
+                "origin_area_code": "82",
+                "origin_content": "한국",
+                "as_tel": "02-123-4567",
+            }
+        }
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as tmp:
+            json.dump(cfg_content, tmp, ensure_ascii=False)
+            tmp_path = tmp.name
+
+        try:
+            with mock.patch.object(naver_client, "config_path", return_value=tmp_path):
+                with mock.patch.object(
+                    naver_client,
+                    "_notice_config",
+                    wraps=naver_client._notice_config,
+                    return_value={
+                        "origin_area_code": "82",
+                        "origin_content": "한국",
+                        "as_tel": "02-123-4567",
+                    },
+                ) as spy:
+                    flags = mcp_server._build_config_flags()
+                    assert (
+                        spy.called
+                    ), "R3: _build_config_flags 가 naver_client._notice_config() 를 호출하지 않음"
+                assert flags["origin_code_configured"] is True
+                print(f"\n=== R3: _notice_config() called, flags={flags} ===")
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    # R5 — 플레이스홀더 값을 "제공됨"으로 세지 않는다.
+    def test_r5_placeholder_origin_content_stays_missing(self):
+        """R5: ``origin_content="상세페이지 참조"`` → content_provided=False, missing 에 남음."""
+        r = requirements.diagnose(
+            {"name": "x", "salePrice": 1, "origin_content": "상세페이지 참조"},
+            config_flags={
+                "origin_code_configured": False,
+                "origin_content_configured": False,
+                "as_configured": True,
+            },
+        )
+        assert (
+            r["compliance"]["origin"]["content_provided"] is False
+        ), f"R5: placeholder content 가 content_provided=True 로 취급됨: {r['compliance']['origin']}"
+        missing_fields = {m.get("field") for m in r.get("missing") or []}
+        assert (
+            "origin_content" in missing_fields
+        ), f"R5: placeholder content 가 missing 에 없음: {missing_fields}"
+
+    def test_r5_normal_origin_content_is_provided(self):
+        """R5: ``origin_content="중국 OEM"`` → content_provided=True (정상 값)."""
+        r = requirements.diagnose(
+            {"name": "x", "salePrice": 1, "origin_content": "중국 OEM"},
+            config_flags={
+                "origin_code_configured": False,
+                "origin_content_configured": False,
+                "as_configured": True,
+            },
+        )
+        assert (
+            r["compliance"]["origin"]["content_provided"] is True
+        ), f"R5: 정상 content 가 content_provided=False 로 취급됨: {r['compliance']['origin']}"
+        missing_fields = {m.get("field") for m in r.get("missing") or []}
+        assert "origin_content" not in missing_fields
+
+    # R1 — 조립기가 읽지 않는 키를 "제공됨"으로 세지 않는다.
+    def test_r1_origin_area_code_only_in_product_not_provided(self):
+        """R1: 상품에 ``origin_area_code`` 만 있으면 code_provided=False (조립기가 안 읽음)."""
+        r = requirements.diagnose(
+            {"name": "x", "salePrice": 1, "origin_area_code": "KR"},
+            config_flags={
+                "origin_code_configured": False,
+                "origin_content_configured": False,
+                "as_configured": True,
+            },
+        )
+        assert (
+            r["compliance"]["origin"]["code_provided"] is False
+        ), f"R1: origin_area_code (config 측 키) 가 code_provided=True 로 취급됨: {r['compliance']['origin']}"
+
+    def test_r1_customer_service_phone_number_only_in_product_not_provided(self):
+        """R1: 상품에 ``customerServicePhoneNumber`` 만 있으면 as provided=False."""
+        r = requirements.diagnose(
+            {"name": "x", "salePrice": 1, "customerServicePhoneNumber": "02-111-2222"},
+            config_flags={
+                "origin_code_configured": True,
+                "origin_content_configured": True,
+                "as_configured": False,
+            },
+        )
+        assert (
+            r["compliance"]["after_service"]["provided_in_product"] is False
+        ), f"R1: customerServicePhoneNumber (config 측 키) 가 provided=True 로 취급됨: {r['compliance']['after_service']}"
