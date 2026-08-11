@@ -33,7 +33,7 @@ _SRC = _PROJECT_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from clossify import mcp_server, naver_client
+from clossify import mcp_server, naver_client, notice_labels
 
 # --------------------------------------------------------------------------- #
 # 공통 픽스처.
@@ -137,20 +137,21 @@ class TestLabeledFieldReturnsKorean:
     def test_labeled_field_returns_korean_label(self):
         """material 필드 → ('소재', ...) 처럼 한국어 라벨 반환."""
         # 캐시를 초기화해 새 로딩을 보장.
-        mcp_server._notice_labels_cache = None
+        # N77 — 캐시 상태는 notice_labels 모듈에 있다(단일 진실).
+        notice_labels._notice_labels_cache = None
         label, hint = mcp_server._notice_field_label("material")
         assert label == "소재", f"material 라벨이 '소재'가 아님: {label!r}"
         assert hint and isinstance(hint, str)
 
     def test_common_field_returns_korean_label(self):
         """returnCostReason → ('반품/교환 배송비', ...) 한국어 반환."""
-        mcp_server._notice_labels_cache = None
+        notice_labels._notice_labels_cache = None
         label, hint = mcp_server._notice_field_label("returnCostReason")
         assert label == "반품/교환 배송비", f"returnCostReason 라벨 불일치: {label!r}"
 
     def test_every_labeled_field_returns_korean_not_fieldname(self):
         """라벨 파일의 모든 키에 대해 반환된 라벨이 필드명과 다르다."""
-        mcp_server._notice_labels_cache = None
+        notice_labels._notice_labels_cache = None
         labels_doc = _load_labels_doc()
         mismatches = []
         for field in labels_doc["labels"]:
@@ -169,7 +170,7 @@ class TestUnlabeledFieldFallback:
 
     def test_unlabeled_field_returns_fieldname(self):
         """존재하지 않는 필드명 → (필드명 그대로, 기본 힌트)."""
-        mcp_server._notice_labels_cache = None
+        notice_labels._notice_labels_cache = None
         label, hint = mcp_server._notice_field_label("nonexistentFieldName_xyz")
         assert (
             label == "nonexistentFieldName_xyz"
@@ -183,7 +184,7 @@ class TestUnlabeledFieldFallback:
         떨어지는 것이 기존 동작이다. 이 동작이 깨지면 라벨 파일 오류로
         등록 흐름이 막힐 수 있다.
         """
-        mcp_server._notice_labels_cache = None
+        notice_labels._notice_labels_cache = None
         labels_doc = _load_labels_doc()
         labeled = set(labels_doc["labels"])
         real_fields = _all_notice_fields()
@@ -219,17 +220,17 @@ class TestLoadingCached:
 
     def test_second_call_does_not_read_disk(self):
         """두 번째 호출에서 open() 이 호출되지 않는다."""
-        # 캐시 초기화.
-        mcp_server._notice_labels_cache = None
+        # 캐시 초기화. N77 — 캐시 상태는 notice_labels 모듈에 있다.
+        notice_labels._notice_labels_cache = None
         # 첫 호출 — 정상 로딩.
-        mcp_server._load_notice_field_labels()
+        notice_labels._load_notice_field_labels()
         # 두 번째 호출에서 내부 open() 이 호출되지 않아야 한다.
         with mock.patch("builtins.open", mock.mock_open()) as m:
-            mcp_server._load_notice_field_labels()
+            notice_labels._load_notice_field_labels()
             m.assert_not_called()
 
     def test_cache_is_populated_after_load(self):
         """로딩 후 _notice_labels_cache 가 None 이 아니다."""
-        mcp_server._notice_labels_cache = None
-        mcp_server._load_notice_field_labels()
-        assert mcp_server._notice_labels_cache is not None
+        notice_labels._notice_labels_cache = None
+        notice_labels._load_notice_field_labels()
+        assert notice_labels._notice_labels_cache is not None

@@ -21,6 +21,17 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+# Windows 리다이렉트(> file) 환경에서 stdout/stderr 이 cp949 로 고정되어
+# 한글이 깨지는 것을 방지한다. UTF-8 로 재구성하되, 구형 환경에서
+# reconfigure 가 없거나 실패하면 조용히 무시한다(원래 동작 보존).
+for _stream in (sys.stdout, sys.stderr):
+    _reconfigure = getattr(_stream, "reconfigure", None)
+    if _reconfigure is not None:
+        try:
+            _reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
 CAMEL_RE = re.compile(r"^[a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*$")
 WORD_SPLIT_RE = re.compile(r"[A-Z]+(?![a-z])|[A-Z][a-z0-9]*|[a-z0-9]+")
 
