@@ -15,5 +15,7 @@
   "totalPages": "검수 응답 페이지네이션 키 — totalElements 와 함께 오는 실측 응답 형태(naver_client.py:1557,1577 docstring 계약). 제품 코드가 직접 읽지는 않으나 동일 응답 봉투의 일부",
   "generatedAt": "scene.json 내부 키. 외부 API 가 아니다 — 본 프로젝트가 정의하는 장면 기술 포맷",
   "widthPx": "scene.json 내부 키. 외부 API 가 아니다 — 본 프로젝트가 정의하는 장면 기술 포맷",
-  "countryOfOrigin": "제품 코드가 생성하는 notice payload 키(naver_client.py:776 _base_etc_notice). 외부 문서 스크랩에 미수록이나 송신 본문에 들어간다"
+  "countryOfOrigin": "제품 코드가 생성하는 notice payload 키(naver_client.py:776 _base_etc_notice). 외부 문서 스크랩에 미수록이나 송신 본문에 들어간다",
+  "attributeName": "get_category_attributes mock 응답의 가상 필드명(N58). 응답 스키마가 [미실측] 이라 실제 필드명 확인 전 — 시험 픽스처 용도",
+  "unknownKey": "형태 위반 거부 시험의 의도적 가짜 키(N58). 외부 API 필드가 아니다 — _validate_product_attributes 가 거부하는지 확인하는 픽스처"
 }

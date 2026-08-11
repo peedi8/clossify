@@ -1629,6 +1629,42 @@ def recommend_tags(keyword, tk=None):
     return r.status_code, _json_or_text_response(r)
 
 
+def get_category_attributes(category_id, tk=None):
+    """GET /v1/product-attributes/attributes — 카테고리별 상품속성 조회.
+
+    [미실측] 실응답 1콜 확인 전. 확정 문서(A5) 경로와 쿼리 파라미터명은 문서
+    스크랩에 있으나 응답 스키마 상세는 확인되지 않았다. 따라서:
+
+    - 쿼리 파라미터명 ``categoryId`` 는 [가정] (문서에 명시된 것이 아니라
+      커머스 API 관례에서 유추). 실측 시 수정 필요.
+    - 응답 본문은 그대로 반환한다(해석·필터·가공하지 않는다).
+    - 카테고리별 속성값 조회 경로는 문서에서 확인 안 되어 **만들지 않는다**
+      (정지·보고 — 있는 것만 배선한다).
+
+    본 함수는 순수 API 래퍼다 — 이웃 호출(``get_product``/``search_products``)
+    규약을 그대로 따른다: ``(status_code, body)`` 반환, ``tk=None`` 이면
+    ``get_token()``, 타임아웃·헤더는 ``_h(tk, False)`` (GET).
+
+    Args:
+        category_id: 카테고리 ID (네이버 커머스 API leaf category ID).
+        tk: 이미 발급받은 액세스 토큰. None 이면 새로 발급한다.
+
+    Returns:
+        ``(status_code, body)`` — 기존 호출자 규약과 동일. 성공 시 body 는
+        카테고리에 해당하는 상품속성 목록(응답 스키마 미실측). 실패 시 body 는
+        응답 본문.
+    """
+    tk = tk or get_token()
+    # [가정] 쿼리 파라미터명 categoryId — 문서 실측 전 관례 추정.
+    r = requests.get(
+        BASE + "/v1/product-attributes/attributes",
+        headers=_h(tk, False),
+        params={"categoryId": str(category_id or "")},
+        timeout=20,
+    )
+    return r.status_code, _json_or_text_response(r)
+
+
 def restricted_tags(tags, tk=None):
     """GET /external/v2/tags/restricted-tags?tags=... — 태그 제한 여부 조회.
 
@@ -1859,6 +1895,96 @@ def _fill_deferred_notice_fields(notice, deferred_notice_fields):
     return notice
 
 
+# 상품속성(productAttributes) 허용 키 — A5 문서 확정.
+# 이 4개 키 외의 입력은 ValueError 로 거부한다(조용한 무시 금지).
+_ATTRIBUTE_ALLOWED_KEYS = frozenset(
+    {
+        "attributeSeq",
+        "attributeValueSeq",
+        "attributeRealValue",
+        "attributeRealValueUnitCode",
+    }
+)
+
+
+def _validate_product_attributes(raw):
+    """명시적 상품속성 입력의 **형태만** 검증한다 (값 창작·추론 금지).
+
+    A5 문서 확정 계약:
+      - ``attributeSeq``(속성ID) · ``attributeValueSeq``(속성값ID) — 정수.
+      - ``attributeRealValue``(범위형 실값) · ``attributeRealValueUnitCode``(단위) —
+        문자열, **선택** (범위형 속성에만 해당).
+      - 허용 키 4종 외의 키가 있으면 ValueError.
+      - ``attributeSeq``/``attributeValueSeq`` 이 정수가 아니면(또는 누락되면)
+        ValueError. 정수로 변환 가능한 문자열도 거부한다 — ID 는 처음부터
+        정수로 와야 한다(조용한 변환 금지).
+      - 빈 리스트 → None 을 반환하여 호출자가 키 자체를 넣지 않게 한다.
+      - ``None``/누락 → None 반환 (키 부재 = 미전송).
+
+    본 함수는 **값을 만들거나 추론하지 않는다.** 입력이 있으면 그 형태가
+    올바른지만 확인하고, 올바르면 그대로 돌려준다. 입력이 없으면 None 을
+    반환하여 호출자가 ``detailAttribute.productAttributes`` 키를 아예 넣지
+    않게 한다(빈 배열 전송 금지 — 미실측 거동).
+
+    Returns:
+        검증을 통과한 속성 리스트(그대로), 또는 ``None`` (입력 없음/빈 리스트).
+
+    Raises:
+        ValueError: 형태 위반(문자 ID·모르는 키·필수 키 누락·리스트 아님).
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise ValueError(
+            "attributes 입력은 리스트여야 합니다. "
+            f"받은 타입: {type(raw).__name__} (형태 위반 — 조용한 무시 없이 거부)."
+        )
+    if not raw:
+        # 빈 리스트 → 키 자체를 넣지 않는다(빈 배열 전송 금지).
+        return None
+    validated: list[dict] = []
+    for idx, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ValueError(
+                f"attributes[{idx}] 가 dict 가 아닙니다 (got {type(item).__name__}). "
+                "각 속성은 {attributeSeq, attributeValueSeq, ...} dict 여야 합니다."
+            )
+        # 허용 키 외의 키가 있는지 검사.
+        unknown = set(item.keys()) - _ATTRIBUTE_ALLOWED_KEYS
+        if unknown:
+            raise ValueError(
+                f"attributes[{idx}] 에 허용되지 않은 키가 있습니다: "
+                f"{sorted(unknown)}. 허용 키: {sorted(_ATTRIBUTE_ALLOWED_KEYS)}. "
+                "형태 위반 — 조용한 무시 없이 거부."
+            )
+        # 필수 키: attributeSeq, attributeValueSeq (정수).
+        for required in ("attributeSeq", "attributeValueSeq"):
+            if required not in item:
+                raise ValueError(
+                    f"attributes[{idx}] 에 필수 키 '{required}' 가 없습니다. "
+                    "attributeSeq(속성ID) 와 attributeValueSeq(속성값ID) 모두 필요."
+                )
+            val = item[required]
+            # bool 은 int 의 서브클래스이므로 명시적으로 거부.
+            if isinstance(val, bool) or not isinstance(val, int):
+                raise ValueError(
+                    f"attributes[{idx}].{required} 가 정수가 아닙니다 "
+                    f"(got {val!r}, 타입 {type(val).__name__}). "
+                    "속성 ID 는 정수여야 한다 — 문자열 ID 를 조용히 변환하지 않는다."
+                )
+        entry: dict = {
+            "attributeSeq": item["attributeSeq"],
+            "attributeValueSeq": item["attributeValueSeq"],
+        }
+        # 선택 키: 범위형 속성에만 해당.
+        if "attributeRealValue" in item:
+            entry["attributeRealValue"] = item["attributeRealValue"]
+        if "attributeRealValueUnitCode" in item:
+            entry["attributeRealValueUnitCode"] = item["attributeRealValueUnitCode"]
+        validated.append(entry)
+    return validated
+
+
 def build_payload(p, detail_html, images, status="SALE", deferred_notice_fields=None):
     """상품 dict(p) + 상세HTML + 이미지URL들 → 등록 payload.
     p keys: name, categoryId, salePrice, options[{name,stock}], tags[], notice{...}, as_tel, as_guide, origin_code, display
@@ -1867,6 +1993,14 @@ def build_payload(p, detail_html, images, status="SALE", deferred_notice_fields=
     선택한 고시 필드명 리스트다. 빈 자리에 한해 표준 문구(``DEFERRED_NOTICE_PLACEHOLDER``)
     를 채워 전송한다 — 실값이 있는 필드는 덮어쓰지 않는다. 원산지 필드는 미루기에서
     제외된다. ``None``/빈 리스트면 아무 것도 채우지 않는다(기존 동작).
+
+    ``p.attributes`` (선택): 명시적 상품속성 ID 리스트. 형태는
+    ``[{"attributeSeq": int, "attributeValueSeq": int,
+       "attributeRealValue"?: str, "attributeRealValueUnitCode"?: str}, ...]``.
+    있으면 ``originProduct.detailAttribute.productAttributes`` 로 싣는다(키 4종만).
+    형태 위반(문자 ID·모르는 키)은 ValueError 로 거부한다(fail-closed).
+    없거나 빈 리스트면 키 자체를 넣지 않는다(빈 배열 전송 금지).
+    값을 만들거나 추론하지 않는다 — ID 참조 원칙.
     """
     if status not in {"SALE", "SUSPENSION"}:
         raise ValueError("status must be one of {'SALE', 'SUSPENSION'}")
@@ -1922,6 +2056,12 @@ def build_payload(p, detail_html, images, status="SALE", deferred_notice_fields=
     }
     if kc_block:
         detail_attribute["certificationTargetExcludeContent"] = kc_block
+    # 상품속성: 명시적 ID 입력이 있을 때만 productAttributes 로 싣는다.
+    # 형태 위반은 _validate_product_attributes 가 ValueError 로 거부(fail-closed).
+    # 입력이 없거나 빈 리스트면 키 자체를 넣지 않는다(빈 배열 전송 금지).
+    validated_attributes = _validate_product_attributes(p.get("attributes"))
+    if validated_attributes is not None:
+        detail_attribute["productAttributes"] = validated_attributes
 
     payload = {
         "originProduct": {
