@@ -371,18 +371,14 @@ def _build_notice_required_fields_block(
 ) -> dict[str, Any]:
     """``notice_required_fields`` dict 를 만든다.
 
-    새로운 구조(F4 — XOR 그룹 분리 + scope 추적)::
+    구조(F4 — XOR 그룹 분리 + scope 추적)::
 
         {
-            "certain": [ {"field","label"}, ... ],          # 모든 타입 교집합(XOR 제외)
-            "certain_one_of": [ [ {"field","label"}, ... ], ... ], # 공통 XOR 그룹
-            "likely_type": str | None,
-            "likely_extra": [ {"field","label"}, ... ],      # likely_type - (certain + XOR)
-            "likely_extra_one_of": [ [ ... ], ... ],
-            # ── 신규 키 ──
-            "scope": "confirmed_category" | "top_tied_candidates" | "unknown",
+            "scope": "confirmed_category" | "top_tied_candidates" | "universal_only",
             "is_complete": bool,                  # true → 모든 것 알음
             "completion_blocked_by": [str, ...],  # incomplete 일 때 미해결 reason
+            "certain": [ {"field","label"}, ... ],          # 모든 타입 교집합(XOR 제외)
+            "certain_one_of": [ [ {"field","label"}, ... ], ... ], # 공통 XOR 그룹
             "candidate_groups": [                 # notice_type별 candidate 분류 (리스트)
                 {
                     "notice_type": str,
@@ -398,21 +394,25 @@ def _build_notice_required_fields_block(
         ``is_explicit_confirmed``: 사용자가 명시한 고시타입 / categoryId 가
         존재하면 ``True`` (diagnose 에서 계산).
 
-    key 설명:
+    key 설명 (정확히 7개):
       - **scope**: 카테고리 확정 상태. 세 값 중 하나:
         * ``confirmed_category`` — ``is_explicit_confirmed=True``, 사용자가
           고시타입이나 categoryId 로 명확히 지정함.
         * ``top_tied_candidates`` — 상품명 기반 분류로 후보가 나왔으나 아직
           선택되지 않음.
-        * ``unknown`` — 입력이 비거나 모든 타입이 불분명(unresolved).
+        * ``universal_only`` — 입력이 비거나 모든 타입이 불분명(unresolved).
       - **is_complete**: true 면 확실히 모든 것을 안다(정식 카테고리 선택 전
-       이라도 ``confirmed_category`` 는 완전). false 면 ``completion_blocked_by``
-        를 참고.
+        이라도 ``confirmed_category`` 는 완전). false 면 ``completion_blocked_by``
+        를 참고. 카테고리 미확정이면 절대 True 가 아니다.
       - **completion_blocked_by**: incomplete 원인 목록. ``category_choice``,
-        ``unknown_notice_type`` 등.
-      - **candidate_groups**: ``notice_types_for_fields`` 의 첫 등장 순서대로
-        정리된 notice_type 별 candidate 그룹 리스트. 각 그룹의 ``additional`` 은
-        해당 타입 regular fields - common certain,
+        ``unknown_notice_type`` 등. 완료가능하면 빈 리스트.
+      - **certain**: 범위 안에서 안전한 필드 ``[{"field","label"}]``.
+        모든 타입 교집합(XOR 제외).
+      - **certain_one_of**: 그중 XOR 그룹 ``[[{"field","label"}, ...], ...]``.
+        공통 XOR 그룹.
+      - **candidate_groups**: 타입별 추가 요구
+        ``{타입: {"extra":[...], "one_of":[[...]]}}`` 형태로, 각 그룹의
+        ``additional`` 은 해당 타입 regular fields - common certain,
         ``additional_one_of`` 은 해당 타입 XOR groups - commonCertainOneOf.
         title 유추 candidate 군은 사용자 선택을 필요로 함.
         명시 확인된 경우만 confirmed_category/complete.
@@ -420,11 +420,13 @@ def _build_notice_required_fields_block(
         ``notice_type``, ``candidates``, ``additional``, ``additional_one_of``.
         (per-group ``scope``, ``is_complete``, ``completion_blocked_by``,
         ``label`` 은 쓰지 않음.)
-      - **unresolved_notice_types**: full fields 로드 실패 또는 빈 결과인
-        고시타입 목록. 이 목록이 비어 있으면 최소 하나의 타입은 성공했음을 뜻함.
+      - **unresolved_notice_types**: 필드를 못 구한 고시타입 목록.
+        full fields 로드 실패 또는 빈 결과인 타입. first-seen order.
+        이 목록이 비어 있으면 최소 하나의 타입은 성공했음을 뜻함.
 
     동작 요약:
-      1. empty input → unknown scope, is_complete=False, blockers/groups/unresolved=[]
+      1. empty input → universal_only scope, is_complete=False,
+         blockers/groups/unresolved=[].
       2. per type: full fields 와 해당 type 의 XOR 그룹 로드.
          regular fields = full - 해당 type 만의 XOR 멤버.
       3. any unresolved type → uncertain/certain_one_of 공백, is_complete=False,
@@ -435,9 +437,8 @@ def _build_notice_required_fields_block(
       6. candidate_groups = first-seen distinct notice type order. actual first index 사용.
       7. explicit confirmed → candidates=[], title-derived → matching top-tied dicts.
       8. known type 에 대해 combined(regular+XOR) ⊆ type full fields 검증(문자열 비교).
-      9. likely_extra/mirroring = 매칭 candidate group 의 additions (estimate).
-      10. scope/completion = confirmed_category→true/top_tied_candidates→false/
-          unknown→false.
+      9. scope/completion = confirmed_category→true/top_tied_candidates→false/
+          universal_only→false.
 
     F7 — 해석 실패/빈 결과는 빈 집합으로 취급: ``_notice_type_fields_for(nt)``
     가 실패하거나 빈 결과를 주면 그 타입은 **불분명(unresolved)** 처리된다
@@ -446,17 +447,12 @@ def _build_notice_required_fields_block(
     # --- Empty / universal_only scope → M2 ---
     if not candidates or not notice_types:
         return {
+            "scope": "universal_only",
+            "is_complete": False,
+            "completion_blocked_by": [],
             "certain": [],
             "certain_one_of": [],
-            "likely_type": None,
-            "likely_extra": [],
-            "likely_extra_one_of": [],
-            "scope": "universal_only",
-            "complete": False,
-            "is_complete": False,  # backward compat
-            "completion_blocked_by": [],
             "candidate_groups": [],
-            "by_notice_type": {},  # M3
             "unresolved_notice_types": [],
         }
 
@@ -515,17 +511,12 @@ def _build_notice_required_fields_block(
         unresolved_blockers = [] if is_explicit_confirmed else ["category_choice"]
         unresolved_blockers.append("unknown_notice_type")
         return {
+            "scope": unresolved_scope,
+            "is_complete": False,
+            "completion_blocked_by": unresolved_blockers,
             "certain": [],
             "certain_one_of": [],
-            "likely_type": likely_notice_type,
-            "likely_extra": [],
-            "likely_extra_one_of": [],
-            "scope": unresolved_scope,
-            "complete": False,
-            "is_complete": False,  # backward compat
-            "completion_blocked_by": unresolved_blockers,
             "candidate_groups": groups,
-            "by_notice_type": {},  # M3 — unresolved types
             "unresolved_notice_types": unresolved_list,
         }
 
@@ -630,25 +621,6 @@ def _build_notice_required_fields_block(
         overall_complete = False
         overall_blocked = ["category_choice"]
 
-    # === M3: by_notice_type — 타입별 추가 요구 (extra / one_of) ===
-    # 각 타입의 additional(= extra) 과 additional_one_of(= one_of) 를 dict 로 옮긴다.
-    # 이것이 likely_type/likely_extra 를 대체한다 (M3).
-    by_notice_type: dict[str, dict[str, Any]] = {}
-    for group in groups:
-        nt = group["notice_type"]
-        by_notice_type[nt] = {
-            "extra": list(group["additional"]),
-            "one_of": [list(clause) for clause in group["additional_one_of"]],
-        }
-
-    likely_extra: list[dict[str, str]] = []
-    likely_extra_one_of: list[list[dict[str, str]]] = []
-    for group in groups:
-        if group["notice_type"] == likely_notice_type:
-            likely_extra = list(group["additional"])
-            likely_extra_one_of = [list(clause) for clause in group["additional_one_of"]]
-            break
-
     # === Build final result ===
     label_type = (
         notice_type
@@ -658,17 +630,12 @@ def _build_notice_required_fields_block(
         else (first_seen_order[0] if first_seen_order else None)
     )
     return {
+        "scope": overall_scope,
+        "is_complete": overall_complete,
+        "completion_blocked_by": overall_blocked,
         "certain": _fields_with_labels(intersection_fields, label_type),
         "certain_one_of": [_fields_with_labels(tuple(g), label_type) for g in common_xor_groups],
-        "likely_type": likely_notice_type,
-        "likely_extra": likely_extra,
-        "likely_extra_one_of": likely_extra_one_of,
-        "scope": overall_scope,
-        "complete": overall_complete,
-        "is_complete": overall_complete,  # backward compat
-        "completion_blocked_by": overall_blocked,
         "candidate_groups": groups,
-        "by_notice_type": by_notice_type,  # M3
         "unresolved_notice_types": unresolved_list,
     }
 
@@ -698,11 +665,14 @@ def diagnose(product: dict[str, Any]) -> dict[str, Any]:
                   "notice_types_seen": [str, ...],  # 최고점 동점자에서 나온 전부
               },
               "notice_required_fields": {
+                  "scope": "confirmed_category"|"top_tied_candidates"|"universal_only",
+                  "is_complete": bool,                  # 카테고리 미확정이면 절대 True 아님
+                  "completion_blocked_by": [str, ...],  # 완료를 막고 있는 사유
                   "certain": [ {"field": str, "label": str}, ... ],  # 교집합(XOR 제외)
                   "certain_one_of": [ [ {"field","label"}, ... ], ... ], # XOR 그룹
-                  "likely_type": str | None,
-                  "likely_extra": [ {"field": str, "label": str}, ... ],
-                  "likely_extra_one_of": [ [ {"field","label"}, ... ], ... ],
+                  "candidate_groups": [ {"notice_type": str, "candidates": [...],
+                                         "additional": [...], "additional_one_of": [[...]]}, ... ],
+                  "unresolved_notice_types": [str, ...],  # 필드를 못 구한 고시타입
               },
               "images": {"min_required": 1, "provided": int, "note": str},
             }
@@ -717,8 +687,9 @@ def diagnose(product: dict[str, Any]) -> dict[str, Any]:
         고시 항목이다(후보 고시타입들의 교집합).
       - ``notice_required_fields.certain_one_of`` 의 각 그룹에서 **정확히 하나만**
         채워야 한다(F4 — 상호배제). 둘 다 채우면 네이버가 거절한다.
-      - ``notice_required_fields.likely_*`` 은 추정이다. ``likely_type`` 이 맞을 때만
-        필요하다 — 물을 때 추정임을 밝혀라.
+      - ``notice_required_fields.candidate_groups`` 의 타입별 ``additional`` /
+        ``additional_one_of`` 는 해당 타입으로 확정됐을 때 추가로 필요한 항목이다.
+        ``category.likely_notice_type`` 이 추정 타입이므로 참고용으로만 쓰라.
     """
     if not isinstance(product, dict):
         product = {}

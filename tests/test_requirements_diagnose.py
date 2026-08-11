@@ -194,7 +194,8 @@ class TestEmptyProduct:
     def test_notice_required_fields_empty_dict(self):
         """이름이 없으면 notice_required_fields 는 빈 dict 구조여야 한다.
 
-        N19-v2: ``certain``·``likely_extra`` 빈 리스트, ``likely_type`` None.
+        T2: ``certain``·``certain_one_of`` 빈 리스트, ``scope`` 는 ``universal_only``,
+        ``candidate_groups`` 는 빈 리스트, ``unresolved_notice_types`` 도 빈 리스트.
         """
         result = mcp_server.prepare_listing({})
         req = result.get("requirements") or {}
@@ -202,11 +203,17 @@ class TestEmptyProduct:
         assert isinstance(nrf, dict), f"notice_required_fields 가 dict 가 아님: {type(nrf)}"
         assert nrf.get("certain") == [], f"certain 이 빈 리스트가 아님: {nrf.get('certain')}"
         assert (
-            nrf.get("likely_type") is None
-        ), f"likely_type 이 None 이 아님: {nrf.get('likely_type')}"
+            nrf.get("certain_one_of") == []
+        ), f"certain_one_of 가 빈 리스트가 아님: {nrf.get('certain_one_of')}"
         assert (
-            nrf.get("likely_extra") == []
-        ), f"likely_extra 가 빈 리스트가 아님: {nrf.get('likely_extra')}"
+            nrf.get("scope") == "universal_only"
+        ), f"scope 가 universal_only 가 아님: {nrf.get('scope')}"
+        assert (
+            nrf.get("is_complete") is False
+        ), f"is_complete 가 False 가 아님: {nrf.get('is_complete')}"
+        assert (
+            nrf.get("candidate_groups") == []
+        ), f"candidate_groups 가 빈 리스트가 아님: {nrf.get('candidate_groups')}"
 
     def test_full_response_json(self):
         result = mcp_server.prepare_listing({})
@@ -556,14 +563,17 @@ class TestN82CandidateRequirementContract:
             assert required["unresolved_notice_types"] == ["NO_SUCH_NOTICE_TYPE"]
 
     def test_legacy_keys_and_docstring_remain(self):
+        """T2: 삭제된 키는 없고, 남은 7키와 독스트링 안내가 살아있어야 한다."""
         required = requirements.diagnose({})["notice_required_fields"]
-        assert {
-            "certain",
-            "certain_one_of",
+        # 삭제된 키가 더 이상 없어야 한다.
+        removed = {
             "likely_type",
             "likely_extra",
             "likely_extra_one_of",
-        } <= set(required)
+            "complete",
+            "by_notice_type",
+        }
+        assert not (removed & set(required)), f"삭제돼야 할 키가 남음: {removed & set(required)}"
         doc = requirements.diagnose.__doc__ or ""
         assert "사용자에게" in doc and "고르게" in doc
         assert "is_complete=false" in doc and "완전한 요구목록이 아니" in doc
@@ -780,4 +790,89 @@ class TestF7UnknownNoticeType:
         assert len(certain) == 0, (
             f"UNKNOWN 타입이 섞여도 certain 이 비지 않음: {len(certain)} — "
             f"{json.dumps([f['field'] for f in certain], ensure_ascii=False)}"
+        )
+
+
+# =========================================================================== #
+# T2 — 진단 계약의 중복 키를 하나로 정리한다 (wo-contract-keys.md)
+# =========================================================================== #
+
+
+class TestT2ContractKeysFixed:
+    """``notice_required_fields`` 키가 정확히 7개임을 고정한다.
+
+    하나 늘어도, 줄어도 실패한다. 다음에 또 두 벌이 되는 걸 막는 시험이다.
+    """
+
+    EXPECTED_KEYS: ClassVar[set[str]] = {
+        "scope",
+        "is_complete",
+        "completion_blocked_by",
+        "certain",
+        "certain_one_of",
+        "candidate_groups",
+        "unresolved_notice_types",
+    }
+
+    def _nrf_keys(self, product):
+        return set(requirements.diagnose(product)["notice_required_fields"].keys())
+
+    def test_empty_product_keys_exactly_seven(self):
+        keys = self._nrf_keys({})
+        assert keys == self.EXPECTED_KEYS, (
+            f"빈 입력 키가 7개가 아님: {sorted(keys)}\n"
+            f"extra={sorted(keys - self.EXPECTED_KEYS)} "
+            f"missing={sorted(self.EXPECTED_KEYS - keys)}"
+        )
+
+    def test_watch_product_keys_exactly_seven(self):
+        keys = self._nrf_keys({"name": "시계", "salePrice": 1})
+        assert keys == self.EXPECTED_KEYS, (
+            f"시계 입력 키가 7개가 아님: {sorted(keys)}\n"
+            f"extra={sorted(keys - self.EXPECTED_KEYS)} "
+            f"missing={sorted(self.EXPECTED_KEYS - keys)}"
+        )
+
+    def test_explicit_category_id_keys_exactly_seven(self):
+        keys = self._nrf_keys({"name": "x", "salePrice": 1, "categoryId": "50000803"})
+        assert keys == self.EXPECTED_KEYS, (
+            f"categoryId 입력 키가 7개가 아님: {sorted(keys)}\n"
+            f"extra={sorted(keys - self.EXPECTED_KEYS)} "
+            f"missing={sorted(self.EXPECTED_KEYS - keys)}"
+        )
+
+    def test_key_count_is_exactly_seven(self):
+        """키 개수 자체가 7 이어야 한다 (하나 늘어도 줄어도 실패)."""
+        keys = self._nrf_keys({"name": "시계", "salePrice": 1})
+        assert len(keys) == 7, f"키 개수가 7이 아님: {len(keys)} ({sorted(keys)})"
+
+
+class TestT2DocstringMatchesActualKeys:
+    """``mcp_server.prepare_listing.__doc__`` 에서 언급된
+    ``notice_required_fields.<키>`` 이름이 실제 반환 키 집합의 부분집합임을 단언.
+
+    독스트링이 존재하지 않는 키를 설명하면 실패한다.
+    """
+
+    def _doc_mentioned_keys(self):
+        """``prepare_listing`` 독스트링에서
+        ``notice_required_fields.<키>`` 형태로 언급된 이름을 추출한다.
+        """
+        import re
+
+        doc = mcp_server.prepare_listing.__doc__ or ""
+        # ``notice_required_fields.scope`` 형태 매칭.
+        pattern = re.compile(r"notice_required_fields\.([a-zA-Z_][a-zA-Z0-9_]*)")
+        return set(pattern.findall(doc))
+
+    def test_doc_keys_subset_of_actual(self):
+        actual = set(
+            requirements.diagnose({"name": "시계", "salePrice": 1})["notice_required_fields"].keys()
+        )
+        doc_keys = self._doc_mentioned_keys()
+        # 독스트링이 최소 한 개 키를 언급해야 한다 (아예 없으면 시험 의미 없음).
+        assert doc_keys, "prepare_listing 독스트링에 notice_required_fields.<키> 언급이 없음"
+        extra = doc_keys - actual
+        assert not extra, (
+            f"독스트링이 실제 없는 키를 언급함: {sorted(extra)}\n" f"actual={sorted(actual)}"
         )
