@@ -29,6 +29,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import category as _category
+from . import category_meta as _category_meta
 from . import listing_templates as _listing_templates
 from . import qa_agents as _qa_agents
 
@@ -640,14 +641,199 @@ def _build_notice_required_fields_block(
     }
 
 
-def diagnose(product: dict[str, Any]) -> dict[str, Any]:
+def _build_compliance_block(
+    product: dict[str, Any],
+    category_block: dict[str, Any],
+    config_flags: dict[str, Any] | None,
+    all_candidates: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """KC·원산지·A/S 컴플라이언스 정보를 만든다 (N76).
+
+    **순수 함수** — config 값을 읽지 않고 존재 여부(bool)만 받는다.
+    법적 신고값을 지어내지 않는다.
+
+    Args:
+        product: 상품 입력 dict. ``origin_code``/``as_tel`` 등의 키를 본다.
+        category_block: ``diagnose`` 가 이미 만든 category 블록.
+        config_flags: ``{"origin_configured": bool|None, "as_configured": bool|None}``.
+            ``None`` (키 자체가 없거나 값이 None) 이면 "모름"으로 다룬다.
+        all_candidates: 상품명 분류의 전체 후보 (KC 후보 집계용). 없으면 사용 안 함.
+
+    Returns:
+        ``{"kc": {...}, "origin": {...}, "after_service": {...}}`` dict.
+    """
+    flags = config_flags if isinstance(config_flags, dict) else {}
+
+    # --- KC ---
+    # categoryId 가 확정됐으면 그 카테고리의 KC 필요 여부를 본다.
+    # 후보 기반이면 최고점 동점자 각각의 KC 여부를 집계한다.
+    # 둘 다 아니면 unknown.
+    kc_status: str
+    kc_required_candidates = 0
+    kc_free_candidates = 0
+    kc_note: str
+
+    # categoryId 직접 지정 여부 확인
+    cid = ""
+    for key in ("categoryId", "category_id"):
+        v = product.get(key)
+        if isinstance(v, str) and v.strip():
+            cid = v.strip()
+            break
+        if isinstance(v, int) and v:
+            cid = str(v)
+            break
+
+    if cid:
+        try:
+            kc_needed = _category_meta.requires_kc(
+                cid, raise_if_unknown=False, raise_if_incomplete=False
+            )
+        except Exception:
+            kc_needed = None
+        if kc_needed is True:
+            kc_status = "required"
+        elif kc_needed is False:
+            kc_status = "not_required"
+        else:
+            # 불명(incomplete/데이터 문제) — unknown 으로 다룬다.
+            kc_status = "unknown"
+    elif all_candidates:
+        max_score = max(c.get("score", 0) for c in all_candidates)
+        top_tied = [c for c in all_candidates if c.get("score", 0) == max_score]
+        kc_required_candidates = 0
+        kc_free_candidates = 0
+        for c in top_tied:
+            c_id = str(c.get("category_id") or "")
+            if not c_id:
+                continue
+            try:
+                kc_needed = _category_meta.requires_kc(
+                    c_id, raise_if_unknown=False, raise_if_incomplete=False
+                )
+            except Exception:
+                kc_needed = None
+            if kc_needed is True:
+                kc_required_candidates += 1
+            elif kc_needed is False:
+                kc_free_candidates += 1
+            # None(불명) 은 양쪽 모두에 넣지 않는다.
+        kc_status = "depends_on_category"
+    else:
+        kc_status = "unknown"
+
+    if kc_status == "required":
+        kc_note = (
+            "이 카테고리는 KC 인증 대상입니다. 대상이면 인증정보가 필요하며 "
+            "없으면 등록이 거절됩니다. 값을 지어내지 마라."
+        )
+    elif kc_status == "not_required":
+        kc_note = "이 카테고리는 KC 인증 대상이 아닙니다."
+    elif kc_status == "depends_on_category":
+        kc_note = (
+            "카테고리 후보에 KC 대상과 비대상이 섞여 있습니다. "
+            "카테고리 확정 후 판정됩니다. 대상이면 인증정보가 필요하며 "
+            "없으면 등록이 거절됩니다. 값을 지어내지 마라."
+        )
+    else:
+        kc_note = (
+            "KC 인증 대상 여부를 알 수 없습니다. 카테고리를 확인하라. "
+            "대상이면 인증정보가 필요하며 없으면 등록이 거절됩니다. "
+            "값을 지어내지 마라."
+        )
+
+    # --- origin ---
+    origin_in_product = bool(
+        isinstance(product.get("origin_code"), str) and str(product.get("origin_code")).strip()
+    )
+    origin_cfg_raw = flags.get("origin_configured")
+    origin_configured: bool | None = bool(origin_cfg_raw) if origin_cfg_raw is not None else None
+
+    # --- after_service ---
+    as_in_product = bool(
+        isinstance(product.get("as_tel"), str) and str(product.get("as_tel")).strip()
+    )
+    as_cfg_raw = flags.get("as_configured")
+    as_configured: bool | None = bool(as_cfg_raw) if as_cfg_raw is not None else None
+
+    return {
+        "kc": {
+            "status": kc_status,
+            "kc_required_candidates": kc_required_candidates,
+            "kc_free_candidates": kc_free_candidates,
+            "note": kc_note,
+        },
+        "origin": {
+            "provided_in_product": origin_in_product,
+            "configured": origin_configured,
+        },
+        "after_service": {
+            "provided_in_product": as_in_product,
+            "configured": as_configured,
+        },
+    }
+
+
+def _compliance_missing_items(compliance: dict[str, Any]) -> list[dict[str, str]]:
+    """컴플라이언스 블록에서 missing 에 넣을 항목을 만든다 (N76 보수 규칙).
+
+    원산지/AS: ``provided_in_product=False`` **이고** ``configured=False``
+    (명시적 False) 일 때만 missing 에 추가. ``configured=None``(모름) 이면
+    추가하지 않는다.
+    KC: missing 에 넣지 않는다 — 값 요구가 아니라 정보 제공이다.
+    """
+    items: list[dict[str, str]] = []
+
+    origin = compliance.get("origin") or {}
+    if origin.get("provided_in_product") is False and origin.get("configured") is False:
+        items.append(
+            {
+                "field": "origin_code",
+                "label": "원산지",
+                "why": (
+                    "원산지 정보가 상품 입력에 없고 설정에도 없습니다. "
+                    "둘 중 하나에 실제 원산지를 입력해야 합니다."
+                ),
+                "answer_shape": "text",
+            }
+        )
+
+    after_service = compliance.get("after_service") or {}
+    if (
+        after_service.get("provided_in_product") is False
+        and after_service.get("configured") is False
+    ):
+        items.append(
+            {
+                "field": "as_tel",
+                "label": "A/S 전화번호",
+                "why": (
+                    "A/S 안내 전화번호가 상품 입력에 없고 설정에도 없습니다. "
+                    "둘 중 하나에 실제 전화번호를 입력해야 합니다."
+                ),
+                "answer_shape": "text",
+            }
+        )
+
+    return items
+
+
+def diagnose(
+    product: dict[str, Any], *, config_flags: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """거부 시점에 알 수 있는 필요사항을 한 번에 진단한다.
 
     **순수 함수** — 네트워크·LLM·파일쓰기 0회. 읽기 전용 데이터만 쓴다.
+    config 값을 읽지 않는다 — 호출자가 존재 플래그만 넘긴다(``config_flags``).
 
     Args:
         product: 상품 입력 dict. ``name``/``title_ko``/``salePrice``/
-            ``image_sources`` 등의 키를 읽는다.
+            ``image_sources``/``origin_code``/``as_tel`` 등의 키를 읽는다.
+        config_flags: ``{"origin_configured": bool|None, "as_configured": bool|None}``.
+            원산지·A/S 의 설정 존재 여부(값이 아님). ``None`` 이면 "모름" —
+            모름을 미설정(False)으로 단정하지 마라. ``diagnose`` 자체는 config
+            파일을 읽지 않으므로 호출자(mcp_server)가 이 플래그를 만들어 넘겨야
+            한다.
 
     Returns:
         진단 결과 dict::
@@ -674,6 +860,22 @@ def diagnose(product: dict[str, Any]) -> dict[str, Any]:
                                          "additional": [...], "additional_one_of": [[...]]}, ... ],
                   "unresolved_notice_types": [str, ...],  # 필드를 못 구한 고시타입
               },
+              "compliance": {
+                  "kc": {
+                      "status": "required"|"not_required"|"depends_on_category"|"unknown",
+                      "kc_required_candidates": int,  # depends_on_category 일 때만 의미
+                      "kc_free_candidates": int,
+                      "note": str,  # 사람이 읽는 한 줄. 값을 지어내지 말라는 안내 포함
+                  },
+                  "origin": {
+                      "provided_in_product": bool,  # product.origin_code 존재
+                      "configured": bool | None,    # 플래그. None = 모름
+                  },
+                  "after_service": {
+                      "provided_in_product": bool,  # product.as_tel 존재
+                      "configured": bool | None,
+                  },
+              },
               "images": {"min_required": 1, "provided": int, "note": str},
             }
 
@@ -690,6 +892,10 @@ def diagnose(product: dict[str, Any]) -> dict[str, Any]:
       - ``notice_required_fields.candidate_groups`` 의 타입별 ``additional`` /
         ``additional_one_of`` 는 해당 타입으로 확정됐을 때 추가로 필요한 항목이다.
         ``category.likely_notice_type`` 이 추정 타입이므로 참고용으로만 쓰라.
+      - ``compliance.kc`` 는 KC 인증 대상 여부를 알려준다. ``status="required"``
+        면 인증정보가 필요하다 — **KC 인증번호를 지어내지 마라.**
+      - ``compliance.origin.configured`` 및 ``compliance.after_service.configured``
+        가 ``None`` 이면 "모름"이다. 모름을 미설정으로 단정하지 마라.
     """
     if not isinstance(product, dict):
         product = {}
@@ -705,6 +911,7 @@ def diagnose(product: dict[str, Any]) -> dict[str, Any]:
 
     # --- category 진단 ---
     name = str(product.get("name") or product.get("title_ko") or "").strip()
+    all_candidates: list[dict[str, Any]] | None = None
 
     # 기본값(후보 없음/이름 없음) — needs_category_choice 도 False 다.
     if not name:
@@ -811,6 +1018,10 @@ def diagnose(product: dict[str, Any]) -> dict[str, Any]:
         is_explicit_confirmed=(explicit_notice_type is not None or cid_notice_type is not None),
     )
 
+    # --- compliance (N76): KC · 원산지 · A/S ---
+    compliance = _build_compliance_block(product, category_block, config_flags, all_candidates)
+    missing.extend(_compliance_missing_items(compliance))
+
     # --- images (F5) ---
     # 유효한(공백 아닌 문자열) 이미지 수로 센다.
     image_sources = product.get("image_sources")
@@ -829,14 +1040,17 @@ def diagnose(product: dict[str, Any]) -> dict[str, Any]:
         "missing": missing,
         "category": category_block,
         "notice_required_fields": notice_required_fields,
+        "compliance": compliance,
         "images": images_block,
     }
 
 
 __all__ = [
     "_build_candidates_by_notice_type",
+    "_build_compliance_block",
     "_candidates_from_title",
     "_candidates_with_all_types",
+    "_compliance_missing_items",
     "_explicit_notice_type_from_category_id",
     "_explicit_notice_type_from_input",
     "_intersect_field_lists",

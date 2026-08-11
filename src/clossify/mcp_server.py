@@ -3586,15 +3586,57 @@ def _infer_template_notice_type(product: dict[str, Any]) -> str:
     return str(qa_agents._infer_notice_type(product) or "ETC").strip().upper()
 
 
+def _build_config_flags() -> dict[str, Any] | None:
+    """config 에서 원산지·A/S 존재 여부만 판정해 플래그를 만든다 (N76).
+
+    **config 값을 반환하지 않는다** — 존재 여부(bool)만.
+    이미 ``check_config`` 경로에 같은 판정 로직(``origin_configured``,
+    ``as_tel_configured``) 이 있으므로 그 조건을 재사용한다.
+
+    config 읽기 자체가 실패하면 ``None`` 을 반환한다 (거부 응답을 죽이지 않는다).
+    """
+    try:
+        cfg_path = naver_client.config_path()
+        if not os.path.isfile(cfg_path):
+            return None
+        with open(cfg_path, encoding="utf-8-sig") as f:
+            cfg = json.load(f)
+        notice_defaults = cfg.get("smartstore_notice_defaults")
+        if not isinstance(notice_defaults, dict):
+            return {"origin_configured": False, "as_configured": False}
+        # 원산지 — origin_area_code 와 origin_content 모두 있어야 설정됨.
+        origin_area_code = notice_defaults.get("origin_area_code")
+        origin_content = notice_defaults.get("origin_content")
+        origin_set = (
+            bool(origin_area_code)
+            and not _is_placeholder(origin_area_code)
+            and bool(origin_content)
+            and not _is_placeholder(origin_content)
+        )
+        # A/S — as_tel 정본.
+        as_tel_value = notice_defaults.get("as_tel")
+        as_tel_set = bool(as_tel_value) and not _is_placeholder(as_tel_value)
+        return {"origin_configured": origin_set, "as_configured": as_tel_set}
+    except Exception:
+        return None
+
+
 def _safe_diagnose(product: dict[str, Any] | None) -> dict[str, Any] | None:
     """``requirements.diagnose`` 를 안전하게 호출한다.
 
     진단 자체가 예외를 던져도 **원래 거부 응답이 사라지면 안 된다** —
     감싸서 실패하면 ``None`` 을 반환하고 원래 ``error`` 를 그대로 반환하게 둔다
     (진단이 본체를 죽이지 않는다).
+
+    config 에서 원산지·A/S 존재 플래그를 만들어 넘긴다(N76). config 읽기가
+    실패하면 플래그는 ``None`` 이고, diagnose 는 "모름"으로 다룬다.
     """
     try:
-        return _requirements_mod.diagnose(product if isinstance(product, dict) else {})
+        config_flags = _build_config_flags()
+        return _requirements_mod.diagnose(
+            product if isinstance(product, dict) else {},
+            config_flags=config_flags,
+        )
     except Exception:
         return None
 
@@ -3662,6 +3704,12 @@ def prepare_listing(
         - ``requirements.category.needs_category_choice`` 가 참이면 status가
           ``likely`` 여도 **카테고리를 임의로 정하지 말고** 후보를 사용자에게
           보여 고르게 하라. 카테고리 확정이 먼저다.
+        - ``requirements.compliance.kc.status`` 가 ``"required"`` 면 KC 인증정보가
+          필요하다 — **KC 인증번호를 지어내지 마라.** ``"depends_on_category"``
+          면 후보 중 KC 대상/비대상이 섞여 있으니 카테고리 확정 후 판정된다.
+        - ``requirements.compliance.origin.configured`` 및
+          ``requirements.compliance.after_service.configured`` 가 ``None`` 이면
+          "모름"이다. 모름을 미설정으로 단정하지 마라.
         - **값을 지어내지 마라.** ``requirements`` 는 무엇을 달라고 요구할 뿐
           값을 주지 않는다.
     """

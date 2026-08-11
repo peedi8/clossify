@@ -876,3 +876,185 @@ class TestT2DocstringMatchesActualKeys:
         assert not extra, (
             f"독스트링이 실제 없는 키를 언급함: {sorted(extra)}\n" f"actual={sorted(actual)}"
         )
+
+
+# =========================================================================== #
+# N76 — 거부 진단에 KC · 원산지 · A/S 를 포함한다 (wo-n76-compliance.md)
+# =========================================================================== #
+
+
+class TestN76KcStatus:
+    """``compliance.kc.status`` 가 카테고리 상황별로 올바른 값을 반환한다."""
+
+    def test_kc_required_for_laptop(self):
+        """acceptance 1: ``categoryId=50000151`` (노트북) → ``"required"``."""
+        r = requirements.diagnose({"name": "x", "salePrice": 1, "categoryId": "50000151"})
+        assert (
+            r["compliance"]["kc"]["status"] == "required"
+        ), f"kc.status: {r['compliance']['kc']['status']}"
+
+    def test_kc_not_required_for_tshirt(self):
+        """acceptance 2: ``categoryId=50000803`` (티셔츠) → ``"not_required"``."""
+        r = requirements.diagnose({"name": "x", "salePrice": 1, "categoryId": "50000803"})
+        assert (
+            r["compliance"]["kc"]["status"] == "not_required"
+        ), f"kc.status: {r['compliance']['kc']['status']}"
+
+    def test_kc_depends_on_category_for_watch(self):
+        """acceptance 3: ``시계`` → ``"depends_on_category"``, 후보 합 16."""
+        r = requirements.diagnose({"name": "시계", "salePrice": 1})
+        kc = r["compliance"]["kc"]
+        assert kc["status"] == "depends_on_category", f"kc.status: {kc['status']}"
+        total = kc["kc_required_candidates"] + kc["kc_free_candidates"]
+        assert total == 16, (
+            f"kc_required + kc_free = {total} (expected 16) — "
+            f"required={kc['kc_required_candidates']}, free={kc['kc_free_candidates']}"
+        )
+
+    def test_kc_unknown_for_empty(self):
+        """acceptance 4: ``{}`` → ``"unknown"``."""
+        r = requirements.diagnose({})
+        assert (
+            r["compliance"]["kc"]["status"] == "unknown"
+        ), f"kc.status: {r['compliance']['kc']['status']}"
+
+    def test_kc_note_has_do_not_fabricate_warning(self):
+        """KC note 에 "지어내지 마라" 안내가 포함되어야 한다."""
+        r = requirements.diagnose({"name": "x", "salePrice": 1, "categoryId": "50000151"})
+        note = r["compliance"]["kc"]["note"]
+        assert "지어내지 마라" in note, f"note 에 지어내지 마라 안내 없음: {note}"
+
+
+class TestN76OriginQuadrants:
+    """원산지 4분면 — (provided T/F x configured T/F/None) missing 포함 여부."""
+
+    def _origin_in_missing(self, product, flags):
+        r = requirements.diagnose(product, config_flags=flags)
+        return "origin_code" in {m.get("field") for m in r.get("missing") or []}
+
+    def test_provided_t_configured_t(self):
+        """상품에 있으면 missing 에 없다 (config 와 무관)."""
+        assert not self._origin_in_missing(
+            {"name": "x", "salePrice": 1, "origin_code": "KR"},
+            {"origin_configured": True, "as_configured": True},
+        )
+
+    def test_provided_t_configured_f(self):
+        """상품에 있으면 config 미설정이어도 missing 에 없다."""
+        assert not self._origin_in_missing(
+            {"name": "x", "salePrice": 1, "origin_code": "KR"},
+            {"origin_configured": False, "as_configured": True},
+        )
+
+    def test_provided_f_configured_t(self):
+        """상품에 없고 config 에 있으면 missing 에 없다."""
+        assert not self._origin_in_missing(
+            {"name": "x", "salePrice": 1},
+            {"origin_configured": True, "as_configured": True},
+        )
+
+    def test_provided_f_configured_f(self):
+        """상품에 없고 config 에도 없으면 missing 에 있다 (명시적 False)."""
+        assert self._origin_in_missing(
+            {"name": "x", "salePrice": 1},
+            {"origin_configured": False, "as_configured": True},
+        )
+
+    def test_provided_f_configured_none(self):
+        """상품에 없고 configured=None(모름)이면 missing 에 없다."""
+        assert not self._origin_in_missing(
+            {"name": "x", "salePrice": 1},
+            {"origin_configured": None, "as_configured": True},
+        )
+
+    def test_provided_f_config_flags_none(self):
+        """config_flags=None (전체 모름) 이면 missing 에 없다."""
+        assert not self._origin_in_missing(
+            {"name": "x", "salePrice": 1},
+            None,
+        )
+
+
+class TestN76AfterServiceQuadrants:
+    """A/S 4분면 — (provided T/F x configured T/F/None) missing 포함 여부."""
+
+    def _as_in_missing(self, product, flags):
+        r = requirements.diagnose(product, config_flags=flags)
+        return "as_tel" in {m.get("field") for m in r.get("missing") or []}
+
+    def test_provided_t_configured_t(self):
+        assert not self._as_in_missing(
+            {"name": "x", "salePrice": 1, "as_tel": "02-123-4567"},
+            {"origin_configured": True, "as_configured": True},
+        )
+
+    def test_provided_t_configured_f(self):
+        assert not self._as_in_missing(
+            {"name": "x", "salePrice": 1, "as_tel": "02-123-4567"},
+            {"origin_configured": True, "as_configured": False},
+        )
+
+    def test_provided_f_configured_t(self):
+        assert not self._as_in_missing(
+            {"name": "x", "salePrice": 1},
+            {"origin_configured": True, "as_configured": True},
+        )
+
+    def test_provided_f_configured_f(self):
+        assert self._as_in_missing(
+            {"name": "x", "salePrice": 1},
+            {"origin_configured": True, "as_configured": False},
+        )
+
+    def test_provided_f_configured_none(self):
+        """configured=None(모름)이면 missing 에 없다."""
+        assert not self._as_in_missing(
+            {"name": "x", "salePrice": 1},
+            {"origin_configured": True, "as_configured": None},
+        )
+
+
+class TestN76Purity:
+    """``diagnose`` 가 ``config_flags`` 없이 불러도 동작한다 (전부 None 취급)."""
+
+    def test_works_without_config_flags(self):
+        r = requirements.diagnose({"name": "x", "salePrice": 1})
+        assert "compliance" in r
+        assert r["compliance"]["origin"]["configured"] is None
+        assert r["compliance"]["after_service"]["configured"] is None
+
+    def test_compliance_block_structure(self):
+        r = requirements.diagnose({"name": "x", "salePrice": 1})
+        compliance = r["compliance"]
+        assert set(compliance.keys()) == {"kc", "origin", "after_service"}
+        assert set(compliance["kc"].keys()) == {
+            "status",
+            "kc_required_candidates",
+            "kc_free_candidates",
+            "note",
+        }
+        assert set(compliance["origin"].keys()) == {
+            "provided_in_product",
+            "configured",
+        }
+        assert set(compliance["after_service"].keys()) == {
+            "provided_in_product",
+            "configured",
+        }
+
+
+class TestN76McpIntegration:
+    """MCP 도구 실경로: ``prepare_listing`` 거부 응답에 ``compliance`` 가 실린다."""
+
+    def test_rejection_response_has_compliance(self):
+        """acceptance 7: 노트북 상품으로 거부 응답에 compliance 블록이 있어야 한다."""
+        result = mcp_server.prepare_listing(product={"name": "노트북 15인치", "salePrice": 1})
+        assert result["ok"] is False
+        req = result.get("requirements") or {}
+        compliance = req.get("compliance")
+        assert compliance is not None, "compliance 키가 없음"
+        assert "kc" in compliance
+        assert "origin" in compliance
+        assert "after_service" in compliance
+        print("\n=== Acceptance 7: prepare_listing compliance ===")
+        print(json.dumps(compliance, ensure_ascii=False, indent=2))
