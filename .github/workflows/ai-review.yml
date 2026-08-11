@@ -122,7 +122,7 @@ jobs:
           claude_args: >-
             --model sonnet
             --max-turns 25
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git status:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Read,Grep,Glob,Bash(git:*)"
           # 턴 상한 25: 한도를 쓰는 건 턴이 아니라 토큰이지만, 상한은 **폭주를 막는 뚜껑**이다.
           # 실측 22턴짜리 실행은 그중 11턴이 권한 거부로 날아간 것이었다(그건 위에서 고쳤다).
           # 아래 프롬프트가 "절반 넘게 썼으면 그 시점 결론을 게시하라"고 지시하므로,
@@ -131,11 +131,13 @@ jobs:
           # 저장소 기본 도구는 항상 포함되고, 여기 적은 것이 거기에 더해진다.
           #   - inline_comment: 게시 수단. 없으면 리뷰를 남길 방법이 없다.
           #   - Read/Grep/Glob: diff 밖 파일을 읽어야 교차 정합성 리뷰가 된다.
-          #   - Bash(git ...): 이 이벤트에서는 변경 내용이 프롬프트에 자동으로 들어오지
+          #   - Bash(git:*): 이 이벤트에서는 변경 내용이 프롬프트에 자동으로 들어오지
           #     않는다. 리뷰어가 스스로 diff 를 읽어야 하는데 Bash 는 기본 포함이 아니다.
-          #     범위를 읽기 전용 git 하위명령으로 좁혀 둔다(체크아웃은 fetch-depth 0).
-          # 실측 근거: 이 줄이 없던 판(run 31413683298)은 22턴 · 권한 거부 11회 후
-          # 아무것도 게시하지 못하고 끝났다.
+          # ★ 하위명령 4개(diff·log·show·status)로 좁혔더니 **9번 거부당하고 턴을 다 썼다**
+          #   (run 31458917877: 26턴 · Bash 거부 9 · 게시 0건). 리뷰어가 쓰는 조회 명령은
+          #   그 넷보다 많다. git 전체로 넓힌다 — 토큰이 contents:read 라 쓰기는 어차피 막힌다.
+          #   좁히는 것 자체가 비용이었다: 막힐 때마다 턴을 쓰고, 턴을 다 쓰면 리뷰가 0건이 된다.
+          # 실측 근거: 아무 Bash 도 없던 판(run 31413683298)은 22턴 · 거부 11회 · 게시 0건.
           prompt: |
             이 PR 을 아래 지침에 따라 리뷰하고, **반드시 인라인 코멘트로 게시**하라.
             게시하지 않은 리뷰는 존재하지 않는 것과 같다.
@@ -143,8 +145,11 @@ jobs:
             ${{ steps.guide.outputs.text }}
 
             ## 진행 규칙
-            - 탐색에 턴을 절반 넘게 썼다면 **그 시점의 결론을 게시**하라.
+            - **12번째 턴을 넘겼으면 더 보지 말고 그 시점의 결론을 게시하라.** 턴 상한은 25다.
               확인하지 못한 항목은 "확인 못 함"으로 명시한다. 불완전한 리뷰가 게시 안 된 리뷰보다 낫다.
+            - **도구가 거부되면 같은 것을 다시 시도하지 마라.** 다른 수단으로 우회하고,
+              그래도 안 되면 그 항목을 "확인 못 함"으로 적고 **게시까지 반드시 마쳐라.**
+              거부와 씨름하다 턴을 다 쓰면 아무것도 남지 않는다 — 실제로 그렇게 끝난 적이 있다.
             - 확신이 없는 지적에는 **`추정`** 라벨을 붙여라.
             - 수정 코드는 **한 파일·몇 줄·판단이 개입하지 않을 때만** 제시하고,
               `로컬에서 확인함` 또는 `미검증` 을 함께 적어라.
@@ -206,6 +211,21 @@ jobs:
               print("거부된 도구 (이름: 횟수)")
               for name, n in counted.most_common():
                   print(f"  {name}: {n}")
+              # 이름만으로는 허용 목록을 어떻게 고쳐야 할지 알 수 없다.
+              # "Bash: 9" 를 보고 어떤 명령이 막혔는지 추측하게 두면 또 헛돈다.
+              print("거부된 호출 (무엇을 하려다 막혔나)")
+              for d in denials:
+                  if not isinstance(d, dict):
+                      print(f"  {str(d)[:160]}")
+                      continue
+                  arg = d.get("tool_input") or d.get("input") or {}
+                  if isinstance(arg, dict):
+                      detail = arg.get("command") or arg.get("file_path") or arg.get("pattern")
+                      if detail is None:
+                          detail = json.dumps(arg, ensure_ascii=False)[:160]
+                  else:
+                      detail = str(arg)
+                  print(f"  {d.get('tool_name', '?')}: {str(detail)[:160]}")
           else:
               print("거부된 도구 없음")
 
