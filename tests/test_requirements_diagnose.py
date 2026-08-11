@@ -231,15 +231,12 @@ class TestAmbiguousCategory:
             category.get("status") == "likely"
         ), f"status 가 likely 가 아님: {category.get('status')}"
 
-    def test_notice_types_seen_has_food_and_fashion(self):
+    def test_notice_types_seen_contains_only_top_tied_food(self):
         result = mcp_server.prepare_listing({"name": "유기농 아몬드 500g", "salePrice": 12000})
         req = result.get("requirements") or {}
         category = req.get("category") or {}
         types_seen = category.get("notice_types_seen") or []
-        assert "FOOD" in types_seen, f"FOOD 이 notice_types_seen 에 없음: {types_seen}"
-        assert (
-            "FASHION_ITEMS" in types_seen
-        ), f"FASHION_ITEMS 가 notice_types_seen 에 없음: {types_seen}"
+        assert types_seen == ["FOOD"], f"최고점 동점자 외 타입이 섞임: {types_seen}"
 
     def test_notice_type_is_none(self):
         """likely 상태이므로 notice_type 은 None 이다."""
@@ -372,7 +369,7 @@ class TestF1TopTieAll:
         ("유기농 아몬드 500g", {"likely"}, 19),
         ("남성 캐주얼 셔츠", {"ambiguous", "likely"}, 11),
         ("수분 크림 50ml", {"likely"}, 19),
-        ("스테인리스 텀블러 500ml", {"confident"}, 17),
+        ("스테인리스 텀블러 500ml", {"likely"}, 17),
         ("무선 블루투스 이어폰", {"likely"}, 18),
         ("시계", {"ambiguous"}, 11),
     ]
@@ -441,6 +438,140 @@ class TestF1TopTieAll:
                 f"missing={intersection - actual_set}, "
                 f"extra={actual_set - intersection}"
             )
+
+
+class TestN82CandidateRequirementContract:
+    """카테고리 후보군과 고시 요구필드가 같은 우주를 쓰는지 고정한다."""
+
+    CASES: ClassVar[list[str]] = [case[0] for case in TestF1TopTieAll.CASES]
+
+    def test_returned_candidates_equal_all_max_score_ties(self):
+        for name in self.CASES:
+            raw, _ = requirements._candidates_from_title(name)
+            max_score = max(c["score"] for c in raw)
+            expected = [c for c in raw if c["score"] == max_score]
+            result = requirements.diagnose({"name": name, "salePrice": 10000})
+            # M1: candidates 순서가 고시타입 대표 우선으로 바뀌었으므로
+            # 집합 비교로 전부 포함됨을 확인한다 (순서 무시).
+            actual = result["category"]["candidates"]
+            assert len(actual) == len(expected), name
+            # 다중집합 비교: 같은 원소가 같은 개수만큼.
+            expected_sorted = sorted(
+                expected, key=lambda c: (c["category_id"], c["path"], c["score"])
+            )
+            actual_sorted = sorted(actual, key=lambda c: (c["category_id"], c["path"], c["score"]))
+            assert actual_sorted == expected_sorted, name
+            assert all(c["score"] == max_score for c in actual), name
+
+    def test_watch_keeps_all_sixteen_ties_and_blocks_completion(self):
+        result = requirements.diagnose({"name": "시계", "salePrice": 10000})
+        category = result["category"]
+        required = result["notice_required_fields"]
+        assert category["status"] == "ambiguous"
+        assert len(category["candidates"]) == 16
+        assert category["notice_types_seen"] == ["FURNITURE", "JEWELLERY"]
+        assert required["scope"] == "top_tied_candidates"
+        assert required["is_complete"] is False
+        assert required["completion_blocked_by"] == ["category_choice"]
+
+    def test_tshirt_keeps_only_two_wear_ties(self):
+        result = requirements.diagnose({"name": "여성 반팔 티셔츠 면 100%", "salePrice": 10000})
+        category = result["category"]
+        assert len(category["candidates"]) == 2
+        assert category["notice_types_seen"] == ["WEAR"]
+        assert "ETC" not in category["notice_types_seen"]
+
+    def test_candidate_groups_reconstruct_every_notice_type(self):
+        from clossify import listing_templates
+
+        for name in self.CASES:
+            result = requirements.diagnose({"name": name, "salePrice": 10000})
+            required = result["notice_required_fields"]
+            common_regular = {item["field"] for item in required["certain"]}
+            common_xor = {item["field"] for clause in required["certain_one_of"] for item in clause}
+            seen_types = []
+            for group in required["candidate_groups"]:
+                assert set(group) == {
+                    "notice_type",
+                    "candidates",
+                    "additional",
+                    "additional_one_of",
+                }
+                notice_type = group["notice_type"]
+                seen_types.append(notice_type)
+                regular = common_regular | {item["field"] for item in group["additional"]}
+                xor = common_xor | {
+                    item["field"] for clause in group["additional_one_of"] for item in clause
+                }
+                expected = set(listing_templates._notice_type_fields_for(notice_type))
+                assert regular.isdisjoint(xor), (name, notice_type)
+                assert regular | xor == expected, (name, notice_type)
+            assert seen_types == list(dict.fromkeys(result["category"]["notice_types_seen"]))
+
+    def test_explicit_inputs_are_complete_and_have_no_group_candidates(self):
+        products = [
+            {
+                "name": "아무거나",
+                "salePrice": 1,
+                "notice": {"productInfoProvidedNoticeType": "JEWELLERY"},
+            },
+            {"name": "아무거나", "salePrice": 1, "categoryId": "50000803"},
+        ]
+        for product in products:
+            required = requirements.diagnose(product)["notice_required_fields"]
+            assert required["scope"] == "confirmed_category"
+            assert required["is_complete"] is True
+            assert required["completion_blocked_by"] == []
+            assert all(group["candidates"] == [] for group in required["candidate_groups"])
+
+    def test_strong_title_candidate_still_requires_user_choice(self):
+        result = requirements.diagnose({"name": "전신거울", "salePrice": 1})
+        category = result["category"]
+        required = result["notice_required_fields"]
+        assert category["status"] == "likely"
+        assert category["notice_type"] is None
+        assert category["needs_category_choice"] is True
+        assert required["scope"] == "top_tied_candidates"
+        assert required["is_complete"] is False
+        assert required["completion_blocked_by"] == ["category_choice"]
+
+    def test_unknown_notice_type_fails_closed_for_both_scopes(self):
+        candidate = {"category_id": "x", "path": "x", "score": 1}
+        for explicit, scope, blockers in [
+            (False, "top_tied_candidates", ["category_choice", "unknown_notice_type"]),
+            (True, "confirmed_category", ["unknown_notice_type"]),
+        ]:
+            required = requirements._build_notice_required_fields_block(
+                [candidate],
+                ["NO_SUCH_NOTICE_TYPE"],
+                None,
+                None,
+                is_explicit_confirmed=explicit,
+            )
+            assert required["certain"] == []
+            assert required["certain_one_of"] == []
+            assert required["scope"] == scope
+            assert required["is_complete"] is False
+            assert required["completion_blocked_by"] == blockers
+            assert required["unresolved_notice_types"] == ["NO_SUCH_NOTICE_TYPE"]
+
+    def test_legacy_keys_and_docstring_remain(self):
+        required = requirements.diagnose({})["notice_required_fields"]
+        assert {
+            "certain",
+            "certain_one_of",
+            "likely_type",
+            "likely_extra",
+            "likely_extra_one_of",
+        } <= set(required)
+        doc = requirements.diagnose.__doc__ or ""
+        assert "사용자에게" in doc and "고르게" in doc
+        assert "is_complete=false" in doc and "완전한 요구목록이 아니" in doc
+        mcp_doc = mcp_server.prepare_listing.__doc__ or ""
+        assert "공통 안전 부분집합" in mcp_doc
+        assert "is_complete=false" in mcp_doc
+        assert "completion_blocked_by" in mcp_doc
+        assert "카테고리 확정이 먼저" in mcp_doc
 
 
 # --------------------------------------------------------------------------- #

@@ -1,11 +1,13 @@
-"""검사기 — 시험 mock 의 dict 리터럴 키 중 정본에 없는 camelCase 필드명을 찾아 경고한다.
+"""검사기 — 시험 mock 의 dict 리터럴 키와 접근식 키 중 정본에 없는 camelCase 필드명을 찾아 경고한다.
 
 사용법:
     python scripts/check_mock_fields.py
 
 - tests/ 아래 test_*.py 를 ast 로 파싱한다.
-- dict 리터럴의 키인 문자열 중 camelCase 전체일치인 것만 수집한다.
+- dict 리터럴의 키인 문자열 중 camelCase 전체일치인 것만 수집한다 (생성 키).
+- ``obj.get("필드명")`` 의 첫 인자와 ``obj["필드명"]`` 의 문자열 첨자도 수집한다 (접근 키).
 - 어휘(script/api_field_vocab.json)에도 없고 허용목록(mock_field_allowlist.json)에도 없으면 발견으로 본다.
+- 발견 항목에 ``생성`` / ``접근`` 표기를 붙인다.
 - 종료 코드: 발견이 있어도 0 (경고 전용). 검사 자체가 성립하지 않으면 2.
 """
 
@@ -38,25 +40,49 @@ def _load_allowlist(allowlist_path: Path) -> dict[str, str]:
 
 
 class DictKeyCollector(ast.NodeVisitor):
-    """ast 에서 dict 리터럴의 문자열 키만 수집한다."""
+    """ast 에서 dict 리터럴 키(생성)와 접근식 키(접근)를 수집한다.
+
+    수집 결과는 ``found`` 에 ``(lineno, key_name, origin)`` 튜플로 담긴다.
+    ``origin`` 은 ``"생성"`` (dict 리터럴 키) 또는 ``"접근"`` (.get / 대괄호 접근).
+    """
 
     def __init__(self) -> None:
-        self.found: list[tuple[int, str]] = []
+        self.found: list[tuple[int, str, str]] = []
 
     def visit_Dict(self, node: ast.Dict) -> None:
         for key in node.keys:
             if isinstance(key, ast.Constant) and isinstance(key.value, str):
                 if CAMEL_RE.fullmatch(key.value):
-                    self.found.append((node.lineno, key.value))
+                    self.found.append((node.lineno, key.value, "생성"))
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        # obj.get("string") 패턴 감지
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "get":
+            if node.args and isinstance(node.args[0], ast.Constant):
+                val = node.args[0].value
+                if isinstance(val, str) and CAMEL_RE.fullmatch(val):
+                    self.found.append((node.lineno, val, "접근"))
+        self.generic_visit(node)
+
+    def visit_Subscript(self, node: ast.Subscript) -> None:
+        # obj["string"] 패턴 감지
+        sl = node.slice
+        if isinstance(sl, ast.Constant) and isinstance(sl.value, str):
+            if CAMEL_RE.fullmatch(sl.value):
+                self.found.append((node.lineno, sl.value, "접근"))
         self.generic_visit(node)
 
 
-def _collect_mock_fields(tests_dir: Path) -> dict[str, list[tuple[str, int]]]:
+def _collect_mock_fields(
+    tests_dir: Path,
+) -> dict[str, list[tuple[str, int, str]]]:
     """tests/ 아래 test_*.py 에서 dict 키 camelCase 토큰을 모은다.
 
-    반환: {필드명: [(파일경로, 줄), ...]}
+    반환: {필드명: [(파일경로, 줄, origin), ...]}
+    ``origin`` 은 ``"생성"`` (dict 리터럴 키) 또는 ``"접근"`` (.get / 대괄호 접근).
     """
-    fields: dict[str, list[tuple[str, int]]] = defaultdict(list)
+    fields: dict[str, list[tuple[str, int, str]]] = defaultdict(list)
 
     test_files = sorted(tests_dir.glob("test_*.py"))
     for test_file in test_files:
@@ -71,8 +97,8 @@ def _collect_mock_fields(tests_dir: Path) -> dict[str, list[tuple[str, int]]]:
             continue
         collector = DictKeyCollector()
         collector.visit(tree)
-        for lineno, key_name in collector.found:
-            fields[key_name].append((str(test_file), lineno))
+        for lineno, key_name, origin in collector.found:
+            fields[key_name].append((str(test_file), lineno, origin))
 
     return fields
 
@@ -123,10 +149,13 @@ def _find_candidates(name: str, vocab: set[str]) -> list[tuple[str, str]]:
 
 
 def _format_report(
-    discoveries: list[tuple[str, list[tuple[str, int]], list[tuple[str, str]]]],
+    discoveries: list[tuple[str, list[tuple[str, int, str]], list[tuple[str, str]]]],
     allowlist_errors: list[str],
 ) -> str:
-    """사람이 읽는 표를 만든다."""
+    """사람이 읽는 표를 만든다.
+
+    각 발견 위치에 ``생성`` / ``접근`` origin 표기를 붙인다.
+    """
     lines: list[str] = []
 
     if allowlist_errors:
@@ -147,9 +176,9 @@ def _format_report(
     for name, locations, candidates in discoveries:
         lines.append(f"  [{name}]")
         lines.append(f"    나온 곳: {len(locations)}곳")
-        for fpath, lineno in locations[:3]:
+        for fpath, lineno, origin in locations[:3]:
             short = fpath.replace("\\", "/")
-            lines.append(f"      - {short}:{lineno}")
+            lines.append(f"      - {short}:{lineno} ({origin})")
         if len(locations) > 3:
             lines.append(f"      - ... 외 {len(locations) - 3}곳")
         if candidates:
@@ -199,7 +228,7 @@ def main() -> int:
     mock_fields = _collect_mock_fields(tests_dir)
 
     # 발견 필터링: 어휘에도 없고 허용목록에도 없으면 발견
-    discoveries: list[tuple[str, list[tuple[str, int]], list[tuple[str, str]]]] = []
+    discoveries: list[tuple[str, list[tuple[str, int, str]], list[tuple[str, str]]]] = []
     for name, locations in sorted(mock_fields.items()):
         if name in vocab:
             continue
