@@ -48,7 +48,7 @@ jobs:
           # 자동 탐지되는 이름은 점 없는 `gitleaks.toml` 이라 우리 파일명과도 다르다.
           # 그래서 이 줄이 생기기 전까지 커스텀 룰은 **한 번도 적용된 적이 없다.**
           # 파일명을 바꾸거나 이 줄을 지우면 조용히 기본 룰로 돌아간다 — 건드리지 마라.
-          GITLEAKS_CONFIG: .gitleaks.toml.NOPE_COUNTEREXAMPLE
+          GITLEAKS_CONFIG: .gitleaks.toml
           # PR 코멘트 기능을 끈다. 켜두면 write 권한이 필요할 뿐 아니라,
           # 탐지된 값의 주변 맥락이 PR 코멘트로 남을 수 있다 — 공개 전환 시
           # 유출 경로가 된다. 발견은 잡 실패와 로그로 충분히 드러난다.
