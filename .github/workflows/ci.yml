@@ -1,9 +1,13 @@
 # CI 보안·품질 게이트
 #
-# ⚠️ 잡 이름(name:)은 브랜치 보호의 required status check 이름과 문자열 계약이다.
-# GitHub 는 status check 이름을 job 의 display name 으로 매칭하므로,
-# 잡 이름을 바꾸면 보호 규칙이 깨진다. 따라서 잡 이름은 안정적으로 유지하고
-# 변경이 필요하면 오케스트레이터 조율 하에 보호 규칙도 함께 바꾼다.
+# ⚠️ 잡 이름(name:)에 대한 사실 정정(2026-08-11 실측, N69·N72):
+# **지금 이 저장소에는 브랜치 보호 규칙이 없다 — 걸 수도 없다.**
+# 무료 플랜 + 비공개 저장소는 보호 API 가 403 을 반환한다
+# ("Upgrade to GitHub Pro or make this repository public").
+# 아래 "보호 규칙과 계약" 주석들은 **공개 전환 후 보호를 걸 때** 효력이 생기는
+# 예약 계약이다. 그때 잡 이름과 required status check 이름을 문자열로 맞춰야
+# 하므로, 잡 이름은 지금부터 안정적으로 유지한다. 공개 전환 절차에
+# "보호 규칙 실제 등록"이 포함되어 있다(RELEASE_CHECKLIST).
 #
 # pre-commit(.pre-commit-config.yaml) 이 커밋 직전 1차 방어선이라면,
 # 이 워크플로는 PR/push 단계의 2차 방어선이다. 특히 gitleaks 잡은
@@ -84,9 +88,29 @@ jobs:
       # 배포물 검증(wheel 빌드 후 내용 확인)은 로컬에서 빌드 도구 부재 시 skip 되도록
       # 되어 있다. CI 는 그 회피가 통하면 안 되는 자리다 — 설치본이 소스판과 다른
       # 물건이 되는 결함을 잡으라고 만든 가드이므로 여기서는 반드시 실행한다.
-      - run: pytest -q
+      # -rs: 스킵 사유를 출력에 남긴다. tee 로 받아 아래 단계가 요약에 올린다.
+      - run: pytest -q -rs 2>&1 | tee /tmp/pytest.out
         env:
           CLOSSIFY_RUN_WHEEL_TESTS: "1"
+
+      # 조용히 건너뛰는 시험을 보이게 한다 (커버리지 갭 가시화 — N68).
+      # 이 환경에는 CLOSSIFY_A1_TEMPLATE 이 없어 고시 템플릿 시험 4건이 매번
+      # 스킵된다. 실제 판매자가 제일 먼저 쓰는 경로라, 갭이 있다는 사실 자체가
+      # 매 런에 보여야 한다 — 안 보이는 스킵은 없는 스킵처럼 굳는다.
+      - name: 스킵 가시화
+        if: always()
+        run: |
+          [ -f /tmp/pytest.out ] || exit 0
+          n="$(grep -c '^SKIPPED' /tmp/pytest.out || true)"
+          if [ "${n:-0}" -gt 0 ]; then
+            {
+              echo "### 건너뛴 시험 ${n}건 (커버리지 갭)"
+              echo '```'
+              grep '^SKIPPED' /tmp/pytest.out
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::건너뛴 시험 ${n}건 — 잡 요약에 사유 목록이 있습니다."
+          fi
 
   # 잡 이름 "scan-repo" 는 보호 규칙과 계약 — 변경 금지.
   scan-repo:
