@@ -867,3 +867,227 @@ class TestBackupBeforeWrite:
         )
         backups = list(first_path.parent.glob("templates.json.bak.*"))
         assert len(backups) >= 1, "저장 전 백업 파일이 없다"
+
+
+# =========================================================================== #
+# (N61) 미루기 선언(deferred_notice_fields) 템플릿 저장·적용.
+#
+# 계약:
+#   1. 선언 포함 상품으로 저장 → 템플릿 JSON 에 목록 존재.
+#      선언 없이 저장 → 키 부재(빈 리스트 저장 금지).
+#   2. 적용: 입력에 선언 없음 → 템플릿 것 채움 + deferred_from_template 보고.
+#      입력에 선언 있음 → 입력 그대로(템플릿 무시).
+#   3. 템플릿에 미루기 불가 필드(예: 불리언 필드명)를 인위로 넣고 적용 →
+#      그 필드만 제외 + deferred_dropped_invalid 보고, 나머지는 적용.
+#   4. 실경로 1회: prepare_listing 을 apply_template 로 호출해 반환/저장 payload 에
+#      선언이 실려 있음(실호출 출력).
+# =========================================================================== #
+class TestDeferredNoticeFieldsTemplate:
+    """미루기 선언(deferred_notice_fields) 의 템플릿 저장·적용 왕복."""
+
+    def test_save_with_deferred_stores_list(self, isolated_state_dir):
+        """선언 포함 상품으로 저장 → 템플릿 JSON 에 목록이 있다."""
+        product = {
+            "return_cost_reason": "단순변심 반품비용 구매자부담",
+            # returnCostReason 은 string 타입 + allowlist 내 → 미루기 가능.
+            "deferred_notice_fields": ["returnCostReason"],
+        }
+        listing_templates.save_template(
+            name="defer-저장", notice_type="ETC", product=product
+        )
+        # 파일에서 직접 확인.
+        path = listing_templates.templates_path()
+        raw = path.read_text(encoding="utf-8")
+        doc = json.loads(raw)
+        entry = doc["templates"][0]
+        fields = entry["fields"]
+        assert "deferred_notice_fields" in fields
+        assert fields["deferred_notice_fields"] == ["returnCostReason"]
+
+    def test_save_without_deferred_has_no_key(self, isolated_state_dir):
+        """선언 없이 저장 → 템플릿 JSON 에 deferred_notice_fields 키가 없다.
+
+        빈 리스트로 저장하지 않는다 — 키 부재와 빈 리스트는 의미가 다르다.
+        """
+        product = {"return_cost_reason": "문구"}
+        listing_templates.save_template(
+            name="no-defer", notice_type="ETC", product=product
+        )
+        path = listing_templates.templates_path()
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        fields = doc["templates"][0]["fields"]
+        assert "deferred_notice_fields" not in fields
+
+    def test_save_deferred_filters_invalid_fields(self, isolated_state_dir):
+        """저장 시 미루기 불가 필드(boolean/date) 는 정제되어 빠진다.
+
+        저장 단계에서 정제하므로, 템플릿 JSON 에는 미루기 가능 필드만 남는다.
+        importDeclaration 은 allowlist 에 있지만 boolean 타입 → 미루기 불가.
+        """
+        product = {
+            "return_cost_reason": "문구",
+            "deferred_notice_fields": [
+                "returnCostReason",  # string → 가능.
+                "importDeclaration",  # boolean → 불가.
+            ],
+        }
+        result = listing_templates.save_template(
+            name="defer-정제", notice_type="ETC", product=product
+        )
+        assert result["ok"] is True
+        path = listing_templates.templates_path()
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        fields = doc["templates"][0]["fields"]
+        # returnCostReason 만 남고 importDeclaration 은 빠졌다.
+        assert fields.get("deferred_notice_fields") == ["returnCostReason"]
+
+    def test_apply_fills_deferred_from_template(self, isolated_state_dir):
+        """입력에 선언 없음 → 템플릿에서 채움 + deferred_from_template 보고."""
+        # 템플릿에 선언을 저장.
+        listing_templates.save_template(
+            name="defer-적용",
+            notice_type="ETC",
+            product={
+                "return_cost_reason": "문구",
+                "deferred_notice_fields": ["returnCostReason"],
+            },
+        )
+        # 상품 입력에는 deferred_notice_fields 키가 없다.
+        product = {"name": "X", "salePrice": 1000}
+        result = listing_templates.apply_template(name="defer-적용", product=product)
+        # 템플릿에서 채워졌다.
+        assert product.get("deferred_notice_fields") == ["returnCostReason"]
+        # 출처 보고.
+        assert result["deferred_from_template"] == ["returnCostReason"]
+        assert result["deferred_dropped_invalid"] == []
+
+    def test_apply_input_deferred_wins_over_template(self, isolated_state_dir):
+        """입력에 선언 있음 → 입력 그대로(템플릿 무시).
+
+        입력 우선 원칙 — 명시가 정본. 합치지 않는다.
+        """
+        listing_templates.save_template(
+            name="defer-입력우선",
+            notice_type="ETC",
+            product={
+                "return_cost_reason": "템플릿문구",
+                "deferred_notice_fields": ["returnCostReason"],
+            },
+        )
+        # 상품 입력에는 다른 필드를 미루기로 선언.
+        product = {
+            "name": "X",
+            "salePrice": 1000,
+            "deferred_notice_fields": ["noRefundReason"],
+        }
+        result = listing_templates.apply_template(name="defer-입력우선", product=product)
+        # 입력 선언이 그대로 유지된다 (템플릿 것이 합쳐지지 않는다).
+        assert product["deferred_notice_fields"] == ["noRefundReason"]
+        # 템플릿에서 채운 것이 아니므로 보고도 없다.
+        assert result["deferred_from_template"] == []
+        assert result["deferred_dropped_invalid"] == []
+
+    def test_apply_input_empty_list_wins_over_template(self, isolated_state_dir):
+        """입력에 빈 리스트 선언 → "아무것도 미루지 않겠다" (입력 우선).
+
+        빈 리스트도 "입력이 있다" 로 존중한다 — 키 부재와 다르다.
+        """
+        listing_templates.save_template(
+            name="defer-빈리스트",
+            notice_type="ETC",
+            product={
+                "return_cost_reason": "템플릿문구",
+                "deferred_notice_fields": ["returnCostReason"],
+            },
+        )
+        product = {
+            "name": "X",
+            "salePrice": 1000,
+            "deferred_notice_fields": [],
+        }
+        result = listing_templates.apply_template(name="defer-빈리스트", product=product)
+        # 빈 리스트가 유지된다 — 템플릿 것이 채워지지 않는다.
+        assert product["deferred_notice_fields"] == []
+        assert result["deferred_from_template"] == []
+
+    def test_apply_drops_invalid_from_old_template(self, isolated_state_dir):
+        """낡은 템플릿의 미루기 불가 필드(boolean) → 제외 + deferred_dropped_invalid 보고.
+
+        템플릿 JSON 을 직접 편집해 불가 필드를 인위적으로 넣는 시나리오.
+        전체 적용을 죽이지 않고 해당 필드만 제외한다.
+        """
+        # 정상 템플릿 저장.
+        listing_templates.save_template(
+            name="defer-낡은",
+            notice_type="ETC",
+            product={
+                "return_cost_reason": "문구",
+                "deferred_notice_fields": ["returnCostReason"],
+            },
+        )
+        # 템플릿 JSON 을 직접 편집 — 미루기 불가 필드(importDeclaration, boolean) 를
+        # 인위적으로 추가. 데이터 파일 변화·직접 편집 시뮬레이션.
+        path = listing_templates.templates_path()
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        entry = doc["templates"][0]
+        entry["fields"]["deferred_notice_fields"] = [
+            "returnCostReason",  # string → 가능.
+            "importDeclaration",  # boolean → 불가 (낡은 템플릿).
+        ]
+        path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+
+        # 상품 입력에는 선언이 없다 → 템플릿에서 채운다.
+        product = {"name": "X", "salePrice": 1000}
+        result = listing_templates.apply_template(name="defer-낡은", product=product)
+        # 가능 필드만 채워진다.
+        assert product.get("deferred_notice_fields") == ["returnCostReason"]
+        # 불가 필드는 제외 사실이 보고된다.
+        assert result["deferred_from_template"] == ["returnCostReason"]
+        assert result["deferred_dropped_invalid"] == ["importDeclaration"]
+
+    def test_apply_template_without_deferred_key_no_fill(self, isolated_state_dir):
+        """템플릿에 deferred_notice_fields 키가 없으면 채우지 않는다."""
+        listing_templates.save_template(
+            name="defer-키없음",
+            notice_type="ETC",
+            product={"return_cost_reason": "문구"},
+        )
+        product = {"name": "X", "salePrice": 1000}
+        result = listing_templates.apply_template(name="defer-키없음", product=product)
+        # 템플릿에 키가 없으므로 product 에 채워지지 않는다.
+        assert "deferred_notice_fields" not in product
+        assert result["deferred_from_template"] == []
+        assert result["deferred_dropped_invalid"] == []
+
+    def test_prepare_listing_applies_deferred_from_template(
+        self, isolated_state_dir, monkeypatch
+    ):
+        """실경로 1회: prepare_listing 이 apply_template 를 호출해
+        반환/저장 payload 에 미루기 선언이 실려 있음(실호출 출력).
+
+        상품 입력에 deferred_notice_fields 키가 없고 템플릿에 있으면,
+        prepare_listing 반환의 template_applied 에서 채운 사실이 드러난다.
+        """
+        _apply_common_mocks(monkeypatch)
+        monkeypatch.setattr(
+            "clossify.images.attach_images",
+            lambda srcs: _make_attach_result(["http://cdn/a.png"]),
+        )
+        # 템플릿에 미루기 선언을 저장.
+        listing_templates.save_template(
+            name="prepare-defer",
+            notice_type="WEAR",
+            product={
+                "return_cost_reason": "템플릿문구WEAR",
+                "deferred_notice_fields": ["returnCostReason"],
+            },
+        )
+        # 상품 입력에는 deferred_notice_fields 키가 없다.
+        product = _compliant_product_input()
+        result = mcp_server.prepare_listing(product, apply_template="prepare-defer")
+        assert result["ok"] is True, f"prepare 실패: {result.get('error')}"
+        ta = result.get("template_applied")
+        assert ta is not None
+        # 템플릿에서 미루기 선언이 채워졌다.
+        assert ta["deferred_from_template"] == ["returnCostReason"]
+        assert ta["deferred_dropped_invalid"] == []

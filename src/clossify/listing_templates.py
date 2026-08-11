@@ -405,6 +405,45 @@ def _extract_section(
     return section
 
 
+def _extract_deferred_notice_fields(product: dict[str, Any]) -> list[str]:
+    """상품 입력에서 ``deferred_notice_fields`` 를 읽고 정제한다.
+
+    ``mcp_server._validate_deferred_notice_fields`` 와 **동일한 검증**을 거친다
+    (단일 진실 공급원 존중 — 여기서 새 검증 규칙을 만들지 않는다):
+      - 원산지 필드 거부(``qa_agents._reject_origin_deferred``).
+      - allowlist 밖 필드 거부(``qa_agents._partition_deferred_by_allowlist``).
+      - boolean/date/integer/long 타입 필드 거부(``qa_agents._is_field_deferrable``).
+
+    저장 단계에서 정제된 목록만 남기므로, apply 시 템플릿에서 꺼낸 값은
+    이미 검증을 통과한 것이다. 낡은 템플릿(과거에 boolean 필드가 들어갔다면)
+    도 apply 시 재검증해 안전하게 제외한다(방어적 이중 검증).
+
+    Returns:
+        정제된 미루기 필드명 리스트. 입력에 ``deferred_notice_fields`` 키가
+        없거나 빈 리스트/빈 값만 있으면 **빈 리스트** (호출자가 키 부재로
+        판정).
+    """
+    raw = product.get("deferred_notice_fields")
+    if not isinstance(raw, list) or not raw:
+        return []
+    # 1차 정제 — 비문자열/빈 문자열 항목 거르기(strip).
+    sane: list[str] = []
+    for item in raw:
+        if isinstance(item, str) and item.strip():
+            sane.append(item.strip())
+    if not sane:
+        return []
+    # 2차 정제 — 원산지 필드 거부.
+    from . import qa_agents as _qa
+
+    kept = _qa._reject_origin_deferred(sane)
+    if not kept:
+        return []
+    # 3차 정제 — allowlist + 타입 검증.
+    allowed, _rejected = _qa._partition_deferred_by_allowlist(kept)
+    return list(allowed)
+
+
 def _utc_now_iso() -> str:
     """현재 UTC 시각을 ISO 8601 문자열로."""
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -987,6 +1026,24 @@ def save_template(
     # 알 수 있게 — 조용한 빈 값 금지).
     saved_sections = [k for k, v in fields.items() if isinstance(v, dict) and v]
 
+    # 미루기 선언(deferred_notice_fields) — 상품군이 같으면 미루는 항목도 대개
+    # 같다. 템플릿에 저장해 두 번째 상품부터 왕복을 없앤다(N61).
+    #
+    # **정제된 목록만 저장한다** — mcp_server._validate_deferred_notice_fields 와
+    # 동일한 원산지/allowlist/타입 검증을 거친 결과를 담는다(단일 진실 공급원
+    # 존중 — 여기서 새 검증 규칙을 만들지 않는다). 원산지 필드·allowlist 밖
+    # 필드·boolean/date 타입 필드는 저장 단계에서 빠진다. 사용자가 "미루겠다"
+    # 고 선언한 필드 중 실제로 미루기 가능한 것만 남는다.
+    #
+    # **선언이 없으면 키를 아예 두지 않는다** (빈 리스트 저장 금지 — 템플릿에
+    # deferred_notice_fields 가 없으면 "이 상품군은 미루기를 안 쓴다" 인 것이고,
+    # 빈 리스트는 "빈 목록으로 미루기를 선언했다" 로 의미가 다르다). apply
+    # 단계에서 키 부재와 빈 리스트를 구별해 입력 우선 원칙을 지킨다.
+    saved_deferred = _extract_deferred_notice_fields(product)
+    if saved_deferred:
+        fields["deferred_notice_fields"] = list(saved_deferred)
+        saved_sections.append("deferred_notice_fields")
+
     # 고시 본문 가시성 — 얼마나 많은 필드가 채워졌는지, 정본에 몇 개 후보가
     # 있었는지를 결과에 싣는다. 과거에는 17개 하드코딩 필드만 쓰고 나머지는
     # 조용히 버려서, 사용자가 "식품 필드를 넣었는데 안 담겼다" 는 결함을
@@ -1193,7 +1250,9 @@ def apply_template(
              "filled": [...],   # [{"section": str, "field": str}, ...]
                                   어느 필드를 어느 템플릿에서 채웠는지(출처)
              "not_found": str|None,  # 템플릿이 없을 때 사유
-             "skipped_existing": [...]}  # 사용자가 이미 준 값이라 안 덮은 필드
+             "skipped_existing": [...],  # 사용자가 이미 준 값이라 안 덮은 필드
+             "deferred_from_template": [...],  # 템플릿에서 채운 미루기 필드명
+             "deferred_dropped_invalid": [...]}  # 템플릿의 낡은 불가 필드(제외+보고)
 
     Raises:
         TemplateNameError: 이름이 형식을 벗어날 때(빈 문자열 아님).
@@ -1207,6 +1266,8 @@ def apply_template(
             "filled": [],
             "not_found": None,
             "skipped_existing": [],
+            "deferred_from_template": [],
+            "deferred_dropped_invalid": [],
             "reason": "이름이 주어지지 않았습니다 — 어떤 템플릿도 적용하지 않습니다.",
         }
     if not isinstance(product, dict):
@@ -1226,6 +1287,8 @@ def apply_template(
                 "확인하세요."
             ),
             "skipped_existing": [],
+            "deferred_from_template": [],
+            "deferred_dropped_invalid": [],
         }
 
     fields = entry.get("fields") if isinstance(entry.get("fields"), dict) else {}
@@ -1312,6 +1375,63 @@ def apply_template(
         skipped=skipped_existing,
     )
 
+    # 미루기 선언(deferred_notice_fields) — 템플릿에서 채운다(N61).
+    #
+    # **입력 우선 원칙** — 상품 입력에 ``deferred_notice_fields`` 키가 있으면
+    # *입력이 이긴다*(합치지 않는다 — 명시가 정본). 템플릿의 선언은 무시된다.
+    # 키가 *없을 때만* 템플릿에서 채운다. 빈 리스트도 "입력이 있다" 로 존중한다
+    # (사용자가 "아무것도 미루지 않겠다" 고 명시한 것).
+    #
+    # **출처 표시** — 템플릿에서 채운 경우 ``deferred_from_template`` 에 필드명
+    # 목록을 담는다(설정에서 딸려온 값 보고와 같은 원칙 — 조용히 딸려가지
+    # 않는다). 입력 우선으로 무시된 경우에는 키를 두지 않는다.
+    #
+    # **방어적 재검증** — 템플릿이 낡아 미루기 불가 필드(boolean/date) 가 들어
+    # 있을 수 있다. 저장 단계에서 정제했지만, 저장 이후 데이터 파일이 바뀌거나
+    # 템플릿 JSON 이 직접 편집됐을 수 있으므로 apply 시 **반드시** 기존 검증을
+    # 다시 통과시킨다. 불가 필드는 해당 필드만 제외하고 제외 사실을
+    # ``deferred_dropped_invalid`` 에 명시 — 전체 적용을 죽이지 않는다.
+    deferred_from_template: list[str] = []
+    deferred_dropped_invalid: list[str] = []
+    if "deferred_notice_fields" not in product:
+        tmpl_deferred = fields.get("deferred_notice_fields")
+        if isinstance(tmpl_deferred, list) and tmpl_deferred:
+            # 1차 — 비문자열/빈 문자열 거르기.
+            sane_tmpl: list[str] = []
+            for item in tmpl_deferred:
+                if isinstance(item, str) and item.strip():
+                    sane_tmpl.append(item.strip())
+            if sane_tmpl:
+                # 2차·3차 — 단일 진실 공급원(qa_agents) 로 재검증.
+                from . import qa_agents as _qa
+
+                kept_tmpl = _qa._reject_origin_deferred(sane_tmpl)
+                allowed_tmpl, _rejected_tmpl = _qa._partition_deferred_by_allowlist(kept_tmpl)
+                # 순서 보존 — 중복 제거(저장 시 정제됐지만 방어적).
+                final_set: set[str] = set()
+                final: list[str] = []
+                for fname in allowed_tmpl:
+                    if fname not in final_set:
+                        final_set.add(fname)
+                        final.append(fname)
+                # 거부된 필드(allowlist 밖 / boolean·date 타입) 는 제외 사실을
+                # 명시적으로 보고한다(조용히 버리지 않는다). 원본 목록에서
+                # final 에 없는 것 = 거부된 것.
+                dropped: list[str] = []
+                dropped_set: set[str] = set()
+                for fname in sane_tmpl:
+                    if fname not in final_set and fname not in dropped_set:
+                        dropped_set.add(fname)
+                        dropped.append(fname)
+                if final:
+                    product["deferred_notice_fields"] = list(final)
+                    deferred_from_template = list(final)
+                    filled.append(
+                        {"section": "deferred_notice_fields", "field": ",".join(final)}
+                    )
+                if dropped:
+                    deferred_dropped_invalid = dropped
+
     return {
         "applied": bool(filled),
         "template_name": sane_name,
@@ -1319,6 +1439,8 @@ def apply_template(
         "filled": filled,
         "not_found": None,
         "skipped_existing": skipped_existing,
+        "deferred_from_template": deferred_from_template,
+        "deferred_dropped_invalid": deferred_dropped_invalid,
     }
 
 
