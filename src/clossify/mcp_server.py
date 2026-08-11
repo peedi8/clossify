@@ -39,6 +39,7 @@ from . import auto_open as _auto_open
 from . import common, naver_client, qa_agents
 from . import listing_templates as _templates_mod
 from . import register as _register_mod
+from . import requirements as _requirements_mod
 
 # 서버 인스턴스 — 클라이언트 LLM이 discover 하는 도구들의 컨테이너.
 mcp = MCPServer("clossify")
@@ -3585,6 +3586,19 @@ def _infer_template_notice_type(product: dict[str, Any]) -> str:
     return str(qa_agents._infer_notice_type(product) or "ETC").strip().upper()
 
 
+def _safe_diagnose(product: dict[str, Any] | None) -> dict[str, Any] | None:
+    """``requirements.diagnose`` 를 안전하게 호출한다.
+
+    진단 자체가 예외를 던져도 **원래 거부 응답이 사라지면 안 된다** —
+    감싸서 실패하면 ``None`` 을 반환하고 원래 ``error`` 를 그대로 반환하게 둔다
+    (진단이 본체를 죽이지 않는다).
+    """
+    try:
+        return _requirements_mod.diagnose(product if isinstance(product, dict) else {})
+    except Exception:
+        return None
+
+
 @mcp.tool()
 def prepare_listing(
     product: dict[str, Any],
@@ -3623,20 +3637,37 @@ def prepare_listing(
         ``{"ok": bool, "product_key": str, "needs_llm": [...],
         "needs_user": [...], "qa": {...}, "images": [...],
         "preview_path": str|None, "template_applied": {...}|None,
-        "template_saved": {...}|None, "error": str | None}``
+        "template_saved": {...}|None, "error": str | None,
+        "requirements": {...}|None}``
 
     안내:
         - ``needs_llm`` 의 각 항목은 ``submit_reviews`` 로 회신해야 한다.
         - 회신하지 않으면 PENDING 이 유지되어 등록이 차단된다.
         - 서버 자체는 LLM 을 호출하지 않는다(common._llm_hint 위임).
+        - ``requirements`` 는 **거부됐을 때만** 채워진다(성공 시 ``None``).
+          목적: 막힌 사유 하나만 말하고 끝내지 않고, 그 시점에 알 수 있는
+          필요사항을 한 번에 준다. 호출자는 이걸 보고 **사용자에게 한 번에
+          물어야 한다**(빠진 것 하나씩 왕복하지 마라).
+        - ``requirements.notice_required_fields.certain`` 은 카테고리가 어느
+          쪽으로 확정되든 **반드시 필요한 고시 항목**이다(후보 고시타입들의
+          교집합). 그대로 요구해도 안전하다.
+        - ``requirements.notice_required_fields.likely_extra`` 는 **추정**이다.
+          ``likely_type`` 이 맞을 때만 필요하다 — 물을 때 추정임을 밝혀라.
+        - ``requirements.category.status`` 가 ``ambiguous``/``unknown`` 이면
+          **카테고리를 임의로 정하지 말고** 후보(``candidates``)를 사용자에게
+          보여 고르게 하라.
+        - **값을 지어내지 마라.** ``requirements`` 는 무엇을 달라고 요구할 뿐
+          값을 주지 않는다.
     """
     if not isinstance(product, dict):
+        _diag = _safe_diagnose(None)
         return {
             "ok": False,
             "product_key": None,
             "needs_llm": [],
-            "needs_user": [],
+            "needs_user": _diag.get("missing", []) if _diag else [],
             "qa": {},
+            "requirements": _diag,
             "error": "product 는 dict 여야 합니다.",
         }
 
@@ -3670,23 +3701,27 @@ def prepare_listing(
     try:
         payload = _register_mod.prepare_listing(product)
     except ValueError as exc:
+        _diag = _safe_diagnose(product)
         return {
             "ok": False,
             "product_key": None,
             "needs_llm": [],
-            "needs_user": [],
+            "needs_user": _diag.get("missing", []) if _diag else [],
             "qa": {},
             "template_applied": template_applied,
+            "requirements": _diag,
             "error": _sanitize_text(str(exc)),
         }
     except Exception as exc:
+        _diag = _safe_diagnose(product)
         return {
             "ok": False,
             "product_key": None,
             "needs_llm": [],
-            "needs_user": [],
+            "needs_user": _diag.get("missing", []) if _diag else [],
             "qa": {},
             "template_applied": template_applied,
+            "requirements": _diag,
             "error": f"prepare_listing 중 오류: {_sanitize_error(exc)}",
         }
     # 정규화된 네이버 CDN URL 리스트를 images 키로 노출한다.
