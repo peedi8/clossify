@@ -1,0 +1,18 @@
+# 줄바꿈 정규화 — 저장소는 LF 가 정본이다.
+#
+# 이 파일이 없으면 각자의 core.autocrlf 설정에 따라 diff 가 갈라진다.
+# 실측(2026-08-11): autocrlf=true 환경에서 내용 306줄 변경이 317줄로 보고됐고,
+# 세션 내내 "LF will be replaced by CRLF" 경고가 떴다. 인덱스는 이미 전부 LF 다
+# (git ls-files --eol 로 확인, CRLF 0건) — 이 파일은 그 상태를 고정한다.
+* text=auto eol=lf
+
+# 바이너리는 정규화 대상에서 제외.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.zip binary
+*.xlsx binary
