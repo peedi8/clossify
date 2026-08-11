@@ -1305,7 +1305,7 @@ class TestN76F6ConfigAbsentIsFalse:
         from clossify import naver_client
 
         fake_path = str(Path(_PROJECT_ROOT) / "nonexistent_test_config_zzz.json")
-        with mock.patch.object(naver_client, "config_path", return_value=fake_path):
+        with mock.patch.object(naver_client, "resolve_config_path", return_value=fake_path):
             flags = mcp_server._build_config_flags()
         assert flags is not None, "F6: 파일 부재인데 None (모름) 반환"
         assert flags == {
@@ -1344,7 +1344,7 @@ class TestN76F7ConfigSectionAliases:
             tmp_path = tmp.name
 
         try:
-            with mock.patch.object(naver_client, "config_path", return_value=tmp_path):
+            with mock.patch.object(naver_client, "resolve_config_path", return_value=tmp_path):
                 flags = mcp_server._build_config_flags()
             assert flags is not None, "F7: config 있는데 None 반환"
             # R2 — 성분별 플래그 확인.
@@ -1381,7 +1381,7 @@ class TestN76F7ConfigSectionAliases:
             tmp_path = tmp.name
 
         try:
-            with mock.patch.object(naver_client, "config_path", return_value=tmp_path):
+            with mock.patch.object(naver_client, "resolve_config_path", return_value=tmp_path):
                 flags = mcp_server._build_config_flags()
             assert flags is not None, "F7: config 있는데 None 반환"
             assert (
@@ -1409,7 +1409,7 @@ class TestN76F7ConfigSectionAliases:
             tmp_path = tmp.name
 
         try:
-            with mock.patch.object(naver_client, "config_path", return_value=tmp_path):
+            with mock.patch.object(naver_client, "resolve_config_path", return_value=tmp_path):
                 flags = mcp_server._build_config_flags()
             assert flags is not None, "R4: 비-dict 루트인데 None 반환(진단 사망)"
             assert (
@@ -1439,7 +1439,7 @@ class TestN76F7ConfigSectionAliases:
             tmp_path = tmp.name
 
         try:
-            with mock.patch.object(naver_client, "config_path", return_value=tmp_path):
+            with mock.patch.object(naver_client, "resolve_config_path", return_value=tmp_path):
                 result = mcp_server._safe_diagnose({"name": "x", "salePrice": 1})
             assert result is not None, "R4: 비-dict 루트에서 진단이 사망 (_safe_diagnose=None)"
             assert "missing" in result, f"R4: 진단에 missing 키가 없음: {result}"
@@ -1471,7 +1471,7 @@ class TestN76F7ConfigSectionAliases:
             tmp_path = tmp.name
 
         try:
-            with mock.patch.object(naver_client, "config_path", return_value=tmp_path):
+            with mock.patch.object(naver_client, "resolve_config_path", return_value=tmp_path):
                 with mock.patch.object(
                     naver_client,
                     "_notice_config",
@@ -1488,6 +1488,67 @@ class TestN76F7ConfigSectionAliases:
                     ), "R3: _build_config_flags 가 naver_client._notice_config() 를 호출하지 않음"
                 assert flags["origin_code_configured"] is True
                 print(f"\n=== R3: _notice_config() called, flags={flags} ===")
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    # 환경 격리 반례 (wo-fix-config-seam.md acceptance 2).
+    # 픽스처가 실제로 읽히는지 증명: 같은 패치를 없는 경로로 바꾸면
+    # 결과가 반대(False) 가 되어야 한다. 이전 config_path 패치는
+    # _notice_config() 가 load_config → resolve_config_path 를 직접
+    # 부르므로 패치가 무효했고, 있든 없든 실제 설치 config 를 읽어
+    # 우연히 통과했다. resolve_config_path 패치로 바꾼 뒤에는
+    # 픽스처 경로가 실제로 열린다.
+    def test_env_isolation_counterexample_fixture_vs_nonexistent(self):
+        """tmp 픽스처 경로만 읽는지 반례로 증명한다.
+
+        (1) notice_defaults 섹션이 있는 tmp 픽스처 → flags 전부 True.
+        (2) 같은 패치를 없는 경로로 바꾸면 → flags 전부 False (반대 결과).
+        두 결과가 달라야 패치가 실제로 경로를 바꿨다고 할 수 있다
+        (환경 의존 통과가 아니다).
+        """
+        import tempfile
+
+        from clossify import naver_client
+
+        cfg_content = {
+            "notice_defaults": {
+                "origin_area_code": "82",
+                "origin_content": "한국",
+                "as_tel": "02-123-4567",
+            }
+        }
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as tmp:
+            json.dump(cfg_content, tmp, ensure_ascii=False)
+            tmp_path = tmp.name
+
+        nonexistent = str(Path(_PROJECT_ROOT) / "nonexistent_test_config_env_iso.json")
+        try:
+            # (1) 픽스처 경로 → True.
+            with mock.patch.object(naver_client, "resolve_config_path", return_value=tmp_path):
+                flags_fixture = mcp_server._build_config_flags()
+            assert flags_fixture is not None, "픽스처 경로인데 None 반환"
+            assert flags_fixture["origin_code_configured"] is True, flags_fixture
+            assert flags_fixture["origin_content_configured"] is True, flags_fixture
+            assert flags_fixture["as_configured"] is True, flags_fixture
+
+            # (2) 없는 경로 → False (반대).
+            with mock.patch.object(naver_client, "resolve_config_path", return_value=nonexistent):
+                flags_absent = mcp_server._build_config_flags()
+            assert flags_absent is not None, "없는 경로인데 None 반환"
+            assert flags_absent == {
+                "origin_code_configured": False,
+                "origin_content_configured": False,
+                "as_configured": False,
+            }, f"반례: 없는 경로인데 False 가 아님: {flags_absent}"
+
+            # 두 결과가 달라야 패치가 실제로 경로를 바꾼 것이다.
+            assert flags_fixture != flags_absent, (
+                "환경 격리 실패: 픽스처와 없는 경로가 같은 결과 → "
+                "패치가 무효하고 실제 config 를 읽고 있음"
+            )
+            print(f"\n=== env isolation: fixture={flags_fixture} absent={flags_absent} ===")
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
