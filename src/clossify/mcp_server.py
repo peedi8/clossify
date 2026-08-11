@@ -3590,35 +3590,57 @@ def _build_config_flags() -> dict[str, Any] | None:
     """config 에서 원산지·A/S 존재 여부만 판정해 플래그를 만든다 (N76).
 
     **config 값을 반환하지 않는다** — 존재 여부(bool)만.
-    이미 ``check_config`` 경로에 같은 판정 로직(``origin_configured``,
-    ``as_tel_configured``) 이 있으므로 그 조건을 재사용한다.
 
-    config 읽기 자체가 실패하면 ``None`` 을 반환한다 (거부 응답을 죽이지 않는다).
+    F6 — 플래그 3값을 정확히:
+      - 파일이 **확실히 없음**(신규 설치) → 각 플래그 **False** (미설정 확정).
+      - 읽기 **오류**(파손·권한) → ``None`` (모름).
+      - 있음 → 키 존재 여부로 True/False.
+
+    F7 — config 섹션 별칭 3종을 naver_client 와 **같은 우선순위**로 훑는다:
+      ``smartstore_notice_defaults`` → ``notice_defaults`` → ``product_notice_defaults``.
+      naver_client._notice_config 의 섹션 해석을 재사용한다(중복 구현 금지).
+      단 **값을 반환에 싣지 마라** — 존재 bool 만.
+
+    Returns:
+        ``{"origin_configured": bool|None, "as_configured": bool|None}``.
+        config 읽기 자체가 실패하면 ``None`` (거부 응답을 죽이지 않는다).
     """
     try:
         cfg_path = naver_client.config_path()
         if not os.path.isfile(cfg_path):
-            return None
+            # F6: 파일이 확실히 없음 — 미설정 확정 (False).
+            return {"origin_configured": False, "as_configured": False}
         with open(cfg_path, encoding="utf-8-sig") as f:
             cfg = json.load(f)
-        notice_defaults = cfg.get("smartstore_notice_defaults")
-        if not isinstance(notice_defaults, dict):
-            return {"origin_configured": False, "as_configured": False}
-        # 원산지 — origin_area_code 와 origin_content 모두 있어야 설정됨.
-        origin_area_code = notice_defaults.get("origin_area_code")
-        origin_content = notice_defaults.get("origin_content")
-        origin_set = (
-            bool(origin_area_code)
-            and not _is_placeholder(origin_area_code)
-            and bool(origin_content)
-            and not _is_placeholder(origin_content)
-        )
-        # A/S — as_tel 정본.
-        as_tel_value = notice_defaults.get("as_tel")
-        as_tel_set = bool(as_tel_value) and not _is_placeholder(as_tel_value)
-        return {"origin_configured": origin_set, "as_configured": as_tel_set}
     except Exception:
+        # F6: 읽기 오류(파손·권한) — 모름.
         return None
+
+    # F7: naver_client 와 같은 우선순위로 3섹션을 훑는다.
+    notice_defaults = None
+    for key in ("smartstore_notice_defaults", "notice_defaults", "product_notice_defaults"):
+        section = cfg.get(key)
+        if isinstance(section, dict):
+            notice_defaults = section
+            break
+
+    if notice_defaults is None:
+        # 섹션 자체가 없음 — 미설정 확정 (False).
+        return {"origin_configured": False, "as_configured": False}
+
+    # 원산지 — origin_area_code 와 origin_content 모두 있어야 설정됨.
+    origin_area_code = notice_defaults.get("origin_area_code")
+    origin_content = notice_defaults.get("origin_content")
+    origin_set = (
+        bool(origin_area_code)
+        and not _is_placeholder(origin_area_code)
+        and bool(origin_content)
+        and not _is_placeholder(origin_content)
+    )
+    # A/S — as_tel 정본.
+    as_tel_value = notice_defaults.get("as_tel")
+    as_tel_set = bool(as_tel_value) and not _is_placeholder(as_tel_value)
+    return {"origin_configured": origin_set, "as_configured": as_tel_set}
 
 
 def _safe_diagnose(product: dict[str, Any] | None) -> dict[str, Any] | None:

@@ -641,6 +641,34 @@ def _build_notice_required_fields_block(
     }
 
 
+def _category_id_known(cid: str) -> bool:
+    """categoryId 가 로컬 메타에 존재하는지 확인 (F1).
+
+    ``category_meta.category_path(cid, raise_if_unknown=False)`` 가 빈 문자열이면
+    존재하지 않는 ID 이다. ``requires_kc`` 는 모르는 ID 에 대해 ``False`` 를
+    반환하므로, 이 판정이 F1 의 핵심이다.
+    """
+    try:
+        path = _category.category_path(cid) or ""
+    except Exception:
+        path = ""
+    return bool(path)
+
+
+_ORIGIN_CODE_KEYS = ("origin_code", "origin_area_code", "originAreaCode")
+_ORIGIN_CONTENT_KEYS = ("made_in", "origin_content", "originContent")
+_AS_TEL_KEYS = ("as_tel", "seller_tel", "customerServicePhoneNumber")
+
+
+def _has_text_in(product: dict[str, Any], keys: tuple[str, ...]) -> bool:
+    """``product`` 의 후보 키 중 하나라도 비어있지 않은 문자열 값을 가지면 True."""
+    for key in keys:
+        v = product.get(key)
+        if isinstance(v, str) and v.strip():
+            return True
+    return False
+
+
 def _build_compliance_block(
     product: dict[str, Any],
     category_block: dict[str, Any],
@@ -661,6 +689,18 @@ def _build_compliance_block(
 
     Returns:
         ``{"kc": {...}, "origin": {...}, "after_service": {...}}`` dict.
+
+    N76 리뷰 수정 (F1~F5):
+
+    - **F1**: categoryId 가 로컬 메타에 없으면 ``requires_kc=False`` 라도
+      ``not_required`` 로 단정하지 않고 ``unknown`` 으로 다룬다.
+    - **F2**: 후보별 ``requires_kc`` 가 None(메타 불완전) 이면
+      ``kc_unresolved_candidates`` 카운트에 넣는다. 분류 가능한 후보가 0이면
+      ``status="unknown"``.
+    - **F3**: note 를 카운트에서 만든다 — 고정 문구 금지.
+    - **F4**: 원산지를 code_provided + content_provided 두 부분으로 분해.
+    - **F5**: A/S 판정에 ``as_tel`` **또는 ``seller_tel``**. 원산지도 payload 가
+      받는 키 후보 전부(``origin_code`` 계열·``made_in``·``origin_content``)와 맞춘다.
     """
     flags = config_flags if isinstance(config_flags, dict) else {}
 
@@ -671,6 +711,7 @@ def _build_compliance_block(
     kc_status: str
     kc_required_candidates = 0
     kc_free_candidates = 0
+    kc_unresolved_candidates = 0
     kc_note: str
 
     # categoryId 직접 지정 여부 확인
@@ -685,24 +726,31 @@ def _build_compliance_block(
             break
 
     if cid:
-        try:
-            kc_needed = _category_meta.requires_kc(
-                cid, raise_if_unknown=False, raise_if_incomplete=False
-            )
-        except Exception:
-            kc_needed = None
-        if kc_needed is True:
-            kc_status = "required"
-        elif kc_needed is False:
-            kc_status = "not_required"
-        else:
-            # 불명(incomplete/데이터 문제) — unknown 으로 다룬다.
+        # F1: categoryId 가 로컬 메타에 없으면 requires_kc=False 라도
+        # not_required 로 단정하지 않는다.
+        cid_known = _category_id_known(cid)
+        if not cid_known:
             kc_status = "unknown"
+        else:
+            try:
+                kc_needed = _category_meta.requires_kc(
+                    cid, raise_if_unknown=False, raise_if_incomplete=False
+                )
+            except Exception:
+                kc_needed = None
+            if kc_needed is True:
+                kc_status = "required"
+            elif kc_needed is False:
+                kc_status = "not_required"
+            else:
+                # 불명(incomplete/데이터 문제) — unknown 으로 다룬다.
+                kc_status = "unknown"
     elif all_candidates:
         max_score = max(c.get("score", 0) for c in all_candidates)
         top_tied = [c for c in all_candidates if c.get("score", 0) == max_score]
         kc_required_candidates = 0
         kc_free_candidates = 0
+        kc_unresolved_candidates = 0
         for c in top_tied:
             c_id = str(c.get("category_id") or "")
             if not c_id:
@@ -717,42 +765,66 @@ def _build_compliance_block(
                 kc_required_candidates += 1
             elif kc_needed is False:
                 kc_free_candidates += 1
-            # None(불명) 은 양쪽 모두에 넣지 않는다.
-        kc_status = "depends_on_category"
+            else:
+                # None(불명) 은 unresolved 카운트에 넣는다 (F2).
+                kc_unresolved_candidates += 1
+        # F2: 분류 가능한 후보가 0이면 unknown.
+        classifiable = kc_required_candidates + kc_free_candidates
+        if classifiable == 0:
+            kc_status = "unknown"
+        else:
+            kc_status = "depends_on_category"
     else:
         kc_status = "unknown"
 
+    # F3: note 를 카운트에서 만든다 — 고정 문구 금지.
+    do_not_fabricate = "값을 지어내지 마라."
     if kc_status == "required":
-        kc_note = (
-            "이 카테고리는 KC 인증 대상입니다. 대상이면 인증정보가 필요하며 "
-            "없으면 등록이 거절됩니다. 값을 지어내지 마라."
-        )
+        kc_note = "이 카테고리는 KC 인증 대상이다. " + do_not_fabricate
     elif kc_status == "not_required":
-        kc_note = "이 카테고리는 KC 인증 대상이 아닙니다."
+        kc_note = "이 카테고리는 KC 인증 대상이 아니다."
     elif kc_status == "depends_on_category":
+        parts: list[str] = []
+        if kc_required_candidates and kc_free_candidates:
+            parts.append(
+                f"후보 카테고리들 중 KC 대상 {kc_required_candidates}개와 "
+                f"비대상 {kc_free_candidates}개가 섞여 있다."
+            )
+        elif kc_required_candidates:
+            parts.append(f"후보 카테고리 {kc_required_candidates}개 모두 KC 대상이다.")
+        elif kc_free_candidates:
+            parts.append(f"후보 카테고리 {kc_free_candidates}개 모두 KC 대상이 아니다.")
+        if kc_unresolved_candidates:
+            parts.append(f"KC 필요 여부를 확정할 수 없는 후보 {kc_unresolved_candidates}개가 있다.")
+        parts.append("카테고리 확정 후 판정된다. " + do_not_fabricate)
+        kc_note = " ".join(parts)
+    elif kc_status == "unknown" and cid and not _category_id_known(cid):
         kc_note = (
-            "카테고리 후보에 KC 대상과 비대상이 섞여 있습니다. "
-            "카테고리 확정 후 판정됩니다. 대상이면 인증정보가 필요하며 "
-            "없으면 등록이 거절됩니다. 값을 지어내지 마라."
+            f"categoryId {cid} 를 로컬 메타에서 찾을 수 없어 "
+            "KC 인증 대상 여부를 알 수 없다. 카테고리를 확인하라. " + do_not_fabricate
         )
-    else:
+    elif (
+        kc_status == "unknown"
+        and all_candidates
+        and kc_unresolved_candidates
+        and not kc_required_candidates
+        and not kc_free_candidates
+    ):
         kc_note = (
-            "KC 인증 대상 여부를 알 수 없습니다. 카테고리를 확인하라. "
-            "대상이면 인증정보가 필요하며 없으면 등록이 거절됩니다. "
-            "값을 지어내지 마라."
+            f"후보 {kc_unresolved_candidates}개 모두 KC 필요 여부가 불명이다. "
+            "카테고리를 확인하라. " + do_not_fabricate
         )
+    elif kc_status == "unknown":
+        kc_note = "KC 인증 대상 여부를 알 수 없다. 카테고리를 확인하라. " + do_not_fabricate
 
-    # --- origin ---
-    origin_in_product = bool(
-        isinstance(product.get("origin_code"), str) and str(product.get("origin_code")).strip()
-    )
+    # --- origin (F4: 두 부분으로 분해, F5: payload 키 후보와 맞춤) ---
+    origin_code_provided = _has_text_in(product, _ORIGIN_CODE_KEYS)
+    origin_content_provided = _has_text_in(product, _ORIGIN_CONTENT_KEYS)
     origin_cfg_raw = flags.get("origin_configured")
     origin_configured: bool | None = bool(origin_cfg_raw) if origin_cfg_raw is not None else None
 
-    # --- after_service ---
-    as_in_product = bool(
-        isinstance(product.get("as_tel"), str) and str(product.get("as_tel")).strip()
-    )
+    # --- after_service (F5: as_tel 또는 seller_tel) ---
+    as_in_product = _has_text_in(product, _AS_TEL_KEYS)
     as_cfg_raw = flags.get("as_configured")
     as_configured: bool | None = bool(as_cfg_raw) if as_cfg_raw is not None else None
 
@@ -761,10 +833,12 @@ def _build_compliance_block(
             "status": kc_status,
             "kc_required_candidates": kc_required_candidates,
             "kc_free_candidates": kc_free_candidates,
+            "kc_unresolved_candidates": kc_unresolved_candidates,
             "note": kc_note,
         },
         "origin": {
-            "provided_in_product": origin_in_product,
+            "code_provided": origin_code_provided,
+            "content_provided": origin_content_provided,
             "configured": origin_configured,
         },
         "after_service": {
@@ -777,26 +851,43 @@ def _build_compliance_block(
 def _compliance_missing_items(compliance: dict[str, Any]) -> list[dict[str, str]]:
     """컴플라이언스 블록에서 missing 에 넣을 항목을 만든다 (N76 보수 규칙).
 
-    원산지/AS: ``provided_in_product=False`` **이고** ``configured=False``
-    (명시적 False) 일 때만 missing 에 추가. ``configured=None``(모름) 이면
-    추가하지 않는다.
+    원산지(F4): ``code_provided`` 와 ``content_provided`` 를 **별도로** 판정한다.
+    ``configured`` 가 **명시적 False** 일 때, 빠진 부분(code/content)별로 missing
+    에 추가한다 (둘 다 없으면 두 항목 다). ``configured=None``(모름) 이면
+    missing 에 추가하지 않는다.
+    A/S(F5): ``provided_in_product=False`` **이고** ``configured=False``
+    (명시적 False) 일 때만 missing 에 추가.
     KC: missing 에 넣지 않는다 — 값 요구가 아니라 정보 제공이다.
     """
     items: list[dict[str, str]] = []
 
     origin = compliance.get("origin") or {}
-    if origin.get("provided_in_product") is False and origin.get("configured") is False:
-        items.append(
-            {
-                "field": "origin_code",
-                "label": "원산지",
-                "why": (
-                    "원산지 정보가 상품 입력에 없고 설정에도 없습니다. "
-                    "둘 중 하나에 실제 원산지를 입력해야 합니다."
-                ),
-                "answer_shape": "text",
-            }
-        )
+    if origin.get("configured") is False:
+        # F4: code 쪽과 content 쪽을 별도로 본다.
+        if not origin.get("code_provided"):
+            items.append(
+                {
+                    "field": "origin_code",
+                    "label": "원산지 코드",
+                    "why": (
+                        "원산지 코드(origin_code)가 상품 입력에 없고 설정에도 없습니다. "
+                        "둘 중 하나에 실제 원산지 코드를 입력해야 합니다."
+                    ),
+                    "answer_shape": "text",
+                }
+            )
+        if not origin.get("content_provided"):
+            items.append(
+                {
+                    "field": "origin_content",
+                    "label": "원산지 표시문구",
+                    "why": (
+                        "원산지 표시문구(made_in)가 상품 입력에 없고 설정에도 없습니다. "
+                        "둘 중 하나에 실제 원산지 표시문구를 입력해야 합니다."
+                    ),
+                    "answer_shape": "text",
+                }
+            )
 
     after_service = compliance.get("after_service") or {}
     if (
@@ -865,14 +956,16 @@ def diagnose(
                       "status": "required"|"not_required"|"depends_on_category"|"unknown",
                       "kc_required_candidates": int,  # depends_on_category 일 때만 의미
                       "kc_free_candidates": int,
-                      "note": str,  # 사람이 읽는 한 줄. 값을 지어내지 말라는 안내 포함
+                      "kc_unresolved_candidates": int,  # KC 필요 여부 불명 후보 수 (F2)
+                      "note": str,  # 카운트에서 만든 문구 (F3). 값을 지어내지 말라는 안내 포함
                   },
                   "origin": {
-                      "provided_in_product": bool,  # product.origin_code 존재
-                      "configured": bool | None,    # 플래그. None = 모름
+                      "code_provided": bool,      # product 의 origin_code 계열 (F4)
+                      "content_provided": bool,   # product 의 made_in / origin_content (F4)
+                      "configured": bool | None,  # 플래그. None = 모름
                   },
                   "after_service": {
-                      "provided_in_product": bool,  # product.as_tel 존재
+                      "provided_in_product": bool,  # product.as_tel 또는 seller_tel (F5)
                       "configured": bool | None,
                   },
               },
@@ -1050,9 +1143,11 @@ __all__ = [
     "_build_compliance_block",
     "_candidates_from_title",
     "_candidates_with_all_types",
+    "_category_id_known",
     "_compliance_missing_items",
     "_explicit_notice_type_from_category_id",
     "_explicit_notice_type_from_input",
+    "_has_text_in",
     "_intersect_field_lists",
     "_top_candidates",
     "_valid_image_count",
