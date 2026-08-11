@@ -3648,14 +3648,15 @@ def prepare_listing(
           목적: 막힌 사유 하나만 말하고 끝내지 않고, 그 시점에 알 수 있는
           필요사항을 한 번에 준다. 호출자는 이걸 보고 **사용자에게 한 번에
           물어야 한다**(빠진 것 하나씩 왕복하지 마라).
-        - ``requirements.notice_required_fields.certain`` 은 카테고리가 어느
-          쪽으로 확정되든 **반드시 필요한 고시 항목**이다(후보 고시타입들의
-          교집합). 그대로 요구해도 안전하다.
+        - ``requirements.notice_required_fields.certain`` 은 후보 고시타입들의
+          **공통 안전 부분집합**이다. ``is_complete=false`` 면 전체 요구목록이
+          아니므로 완료로 취급하지 말고 ``completion_blocked_by`` 를 해결한 뒤
+          ``candidate_groups`` 의 타입별 추가 요구까지 적용해야 한다.
         - ``requirements.notice_required_fields.likely_extra`` 는 **추정**이다.
           ``likely_type`` 이 맞을 때만 필요하다 — 물을 때 추정임을 밝혀라.
-        - ``requirements.category.status`` 가 ``ambiguous``/``unknown`` 이면
-          **카테고리를 임의로 정하지 말고** 후보(``candidates``)를 사용자에게
-          보여 고르게 하라.
+        - ``requirements.category.needs_category_choice`` 가 참이면 status가
+          ``likely`` 여도 **카테고리를 임의로 정하지 말고** 후보를 사용자에게
+          보여 고르게 하라. 카테고리 확정이 먼저다.
         - **값을 지어내지 마라.** ``requirements`` 는 무엇을 달라고 요구할 뿐
           값을 주지 않는다.
     """

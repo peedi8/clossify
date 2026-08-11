@@ -7,6 +7,13 @@
 ``prepare_listing`` 이 거부할 때, 그 시점에 **오프라인으로** 알아낼 수 있는
 필요사항을 한 번에 모아 돌려준다. 호출자가 한 턴에 전부 물어볼 수 있게 한다.
 
+.. warning::
+
+    이 모듈의 **상품명→카테고리 추론은 거부 시점 안내 전용**이다.
+    **등록 경로·카테고리 확정에 쓰지 마라.**
+    운영 계약(``naver-seo-rules.md`` 43행):
+    *"카테고리 먼저 확정 → 제목 생성. 제목에서 카테고리 역추론 금지."*
+
 계약:
   - **순수 함수** — 네트워크·LLM·파일쓰기 0회. 읽기 전용 데이터만 쓴다.
   - **법적 신고값을 지어내지 않는다.** 원산지·KC·인증·고시 필드 값을 채우지 않는다.
@@ -30,8 +37,8 @@ def _candidates_from_title(title_ko: str) -> tuple[list[dict[str, Any]], bool]:
     """상품명 분류 결과로 (후보리스트, needs_category_choice) 를 반환.
 
     ``classify_category`` 의 결과에서 후보를 추출한다:
-      - 강한 단일 후보(확정 id) 인 경우 → 해당 카테고리를 단일 후보로.
-        ``needs_category_choice = False`` (카테고리 확정됨).
+      - 강한 단일 후보인 경우에도 해당 카테고리는 상품명에서 유추한 후보일 뿐이다.
+        ``needs_category_choice = True`` 로 두고 사용자가 확정하게 한다.
       - LLM 위임(ambiguous) 인 경우 → input.candidates **전체**(자르지 않음).
         ``needs_category_choice = True`` (호출자가 사용자에게 골라야 함).
       - 후보 없음 → 빈 리스트.
@@ -39,8 +46,7 @@ def _candidates_from_title(title_ko: str) -> tuple[list[dict[str, Any]], bool]:
     Returns:
         ``(candidates, needs_category_choice)``.
         ``candidates``: ``[{"category_id": str, "path": str, "score": int}, ...]``.
-        ``needs_category_choice``: ``classify_category`` 가 dict(LLM 위임) 을
-        반환했으면 ``True``, str(확정 id) 이면 ``False``.
+        ``needs_category_choice``: 비어 있지 않은 상품명 기반 후보면 항상 ``True``.
     """
     if not title_ko or not str(title_ko).strip():
         return [], False
@@ -55,7 +61,7 @@ def _candidates_from_title(title_ko: str) -> tuple[list[dict[str, Any]], bool]:
             path = _category.category_path(cat_id) or ""
         except Exception:
             path = ""
-        return [{"category_id": cat_id, "path": path, "score": 0}], False
+        return [{"category_id": cat_id, "path": path, "score": 0}], True
     if isinstance(result, dict) and result.get("needs_llm"):
         raw_candidates = (
             result.get("input", {}).get("candidates")
@@ -301,6 +307,59 @@ def _intersect_field_lists(
     return tuple(result)
 
 
+def _build_candidates_by_notice_type(
+    candidates: list[dict[str, Any]],
+    notice_types: list[str],
+) -> dict[str, dict[str, Any]]:
+    """최고점 동점자 전부를 고시타입별로 묶는다 (M1).
+
+    각 그룹에:
+      - ``count``: 그 타입의 동점 후보 총수
+      - ``examples``: 점수순 최대 3개 (``{"category_id","path","score"}``)
+
+    **모든 타입이 반드시 포함**돼야 한다 — 상한은 타입 안에서만 건다.
+    """
+    result: dict[str, dict[str, Any]] = {}
+    for cidx, cand in enumerate(candidates):
+        nt = notice_types[cidx] if cidx < len(notice_types) else ""
+        if not nt:
+            continue
+        if nt not in result:
+            result[nt] = {"count": 0, "examples": []}
+        result[nt]["count"] += 1
+        if len(result[nt]["examples"]) < 3 and isinstance(cand, dict):
+            result[nt]["examples"].append(
+                {
+                    "category_id": str(cand.get("category_id") or ""),
+                    "path": str(cand.get("path") or ""),
+                    "score": int(cand.get("score") or 0),
+                }
+            )
+    return result
+
+
+def _candidates_with_all_types(
+    candidates: list[dict[str, Any]],
+    notice_types: list[str],
+) -> list[dict[str, Any]]:
+    """표시용 candidates 목록에서 **각 타입의 대표 1개 이상**이 보이게 한다 (M1).
+
+    점수순으로만 잘라 특정 타입이 통째로 사라지는 지금 동작을 고친다.
+    각 고시타입의 첫 후보를 우선 배치하고, 나머지를 뒤에 붙인다.
+    """
+    seen_types: set[str] = set()
+    representatives: list[dict[str, Any]] = []
+    rest: list[dict[str, Any]] = []
+    for cidx, cand in enumerate(candidates):
+        nt = notice_types[cidx] if cidx < len(notice_types) else ""
+        if nt and nt not in seen_types and isinstance(cand, dict):
+            seen_types.add(nt)
+            representatives.append(cand)
+        elif isinstance(cand, dict):
+            rest.append(cand)
+    return representatives + rest
+
+
 def _build_notice_required_fields_block(
     candidates: list[dict[str, Any]],
     notice_types: list[str],
@@ -308,117 +367,309 @@ def _build_notice_required_fields_block(
     likely_notice_type: str | None,
     *,
     xor_groups: list[list[str]] | None = None,
+    is_explicit_confirmed: bool = False,
 ) -> dict[str, Any]:
     """``notice_required_fields`` dict 를 만든다.
 
-    구조(F4 — XOR 그룹 분리)::
+    새로운 구조(F4 — XOR 그룹 분리 + scope 추적)::
 
         {
-            "certain": [ {"field","label"}, ... ],          # XOR 그룹에 속하지 않은 교집합
-            "certain_one_of": [ [ {"field","label"}, ... ], ... ], # 각 XOR 그룹
+            "certain": [ {"field","label"}, ... ],          # 모든 타입 교집합(XOR 제외)
+            "certain_one_of": [ [ {"field","label"}, ... ], ... ], # 공통 XOR 그룹
             "likely_type": str | None,
             "likely_extra": [ {"field","label"}, ... ],      # likely_type - (certain + XOR)
             "likely_extra_one_of": [ [ ... ], ... ],
+            # ── 신규 키 ──
+            "scope": "confirmed_category" | "top_tied_candidates" | "unknown",
+            "is_complete": bool,                  # true → 모든 것 알음
+            "completion_blocked_by": [str, ...],  # incomplete 일 때 미해결 reason
+            "candidate_groups": [                 # notice_type별 candidate 분류 (리스트)
+                {
+                    "notice_type": str,
+                    "candidates": [...],            # title-derived: matching top-tied dicts
+                    "additional": [{"field","label"},...],
+                    "additional_one_of": [[{"field","label"},...],...],
+                }, ...
+            ],
+            "unresolved_notice_types": [str, ...],  # first-seen order
         }
 
-    - ``certain`` 은 후보 고시타입 전체의 필수필드 **교집합** 중 **XOR 그룹에
-      속하지 않은** 필드. 안전하다.
-    - ``certain_one_of`` 는 교집합에 걸친 XOR 그룹을, 교집합 원본 필드로만
-      제한한 것. 각 그룹에서 **정확히 하나만** 채워야 한다. XOR 그룹의 필드가
-      해당 목록(교집합 원본)에 **하나라도** 있으면 그 그룹은 ``*_one_of`` 로
-      옮긴다(목록에 있는 멤버만 담는다).
-    - ``likely_extra`` / ``likely_extra_one_of`` 는 추정(likely_notice_type) 분.
-      **추정 표시**다.
-    - 후보가 없으면 전부 빈 값.
+    새 파라미터:
+        ``is_explicit_confirmed``: 사용자가 명시한 고시타입 / categoryId 가
+        존재하면 ``True`` (diagnose 에서 계산).
 
-    **F7 — 해석 실패/빈 결과는 빈 집합으로 취급**: ``_notice_type_fields_for(nt)``
-    가 실패하거나 빈 결과를 주면 그 타입은 **빈 튜플** 로 교집합에 참여시킨다
-    (→ 교집합이 비게 된다). "모르면 아무것도 확실하지 않다" 가 맞는 답이다.
+    key 설명:
+      - **scope**: 카테고리 확정 상태. 세 값 중 하나:
+        * ``confirmed_category`` — ``is_explicit_confirmed=True``, 사용자가
+          고시타입이나 categoryId 로 명확히 지정함.
+        * ``top_tied_candidates`` — 상품명 기반 분류로 후보가 나왔으나 아직
+          선택되지 않음.
+        * ``unknown`` — 입력이 비거나 모든 타입이 불분명(unresolved).
+      - **is_complete**: true 면 확실히 모든 것을 안다(정식 카테고리 선택 전
+       이라도 ``confirmed_category`` 는 완전). false 면 ``completion_blocked_by``
+        를 참고.
+      - **completion_blocked_by**: incomplete 원인 목록. ``category_choice``,
+        ``unknown_notice_type`` 등.
+      - **candidate_groups**: ``notice_types_for_fields`` 의 첫 등장 순서대로
+        정리된 notice_type 별 candidate 그룹 리스트. 각 그룹의 ``additional`` 은
+        해당 타입 regular fields - common certain,
+        ``additional_one_of`` 은 해당 타입 XOR groups - commonCertainOneOf.
+        title 유추 candidate 군은 사용자 선택을 필요로 함.
+        명시 확인된 경우만 confirmed_category/complete.
+        각 그룹 객체는 정확히 다음 semantic key 만 갖는다:
+        ``notice_type``, ``candidates``, ``additional``, ``additional_one_of``.
+        (per-group ``scope``, ``is_complete``, ``completion_blocked_by``,
+        ``label`` 은 쓰지 않음.)
+      - **unresolved_notice_types**: full fields 로드 실패 또는 빈 결과인
+        고시타입 목록. 이 목록이 비어 있으면 최소 하나의 타입은 성공했음을 뜻함.
+
+    동작 요약:
+      1. empty input → unknown scope, is_complete=False, blockers/groups/unresolved=[]
+      2. per type: full fields 와 해당 type 의 XOR 그룹 로드.
+         regular fields = full - 해당 type 만의 XOR 멤버.
+      3. any unresolved type → uncertain/certain_one_of 공백, is_complete=False,
+         ["unknown_notice_type"] blocker. candidate_groups 는 empty additions 로 emit.
+      4. common certain = per-type regular fields 교집합(첫 type 순서 유지).
+      5. common certain_one_of = every type 의 full fields 에 모두 속하고
+         every type 에 나타나는 XOR 그룹; 첫 type 표준 순서로 emit.
+      6. candidate_groups = first-seen distinct notice type order. actual first index 사용.
+      7. explicit confirmed → candidates=[], title-derived → matching top-tied dicts.
+      8. known type 에 대해 combined(regular+XOR) ⊆ type full fields 검증(문자열 비교).
+      9. likely_extra/mirroring = 매칭 candidate group 의 additions (estimate).
+      10. scope/completion = confirmed_category→true/top_tied_candidates→false/
+          unknown→false.
+
+    F7 — 해석 실패/빈 결과는 빈 집합으로 취급: ``_notice_type_fields_for(nt)``
+    가 실패하거나 빈 결과를 주면 그 타입은 **불분명(unresolved)** 처리된다
+    ("모르면 아무것도 확실하지 않다").
     """
-    empty_block: dict[str, Any] = {
-        "certain": [],
-        "certain_one_of": [],
-        "likely_type": None,
-        "likely_extra": [],
-        "likely_extra_one_of": [],
-    }
+    # --- Empty / universal_only scope → M2 ---
     if not candidates or not notice_types:
-        return empty_block
+        return {
+            "certain": [],
+            "certain_one_of": [],
+            "likely_type": None,
+            "likely_extra": [],
+            "likely_extra_one_of": [],
+            "scope": "universal_only",
+            "complete": False,
+            "is_complete": False,  # backward compat
+            "completion_blocked_by": [],
+            "candidate_groups": [],
+            "by_notice_type": {},  # M3
+            "unresolved_notice_types": [],
+        }
 
-    # F7: 각 후보의 고시타입별 필드 목록을 가져온다 — 빈/실패도 **빈 튜플** 로 참여.
-    type_field_lists: list[tuple[str, ...]] = []
+    # === Requirement 4: per-type full fields + XOR groups ===
+    type_full_ordered: list[tuple[str, ...]] = []
+    type_xor_groups_raw: list[list[list[str]]] = []
+    unresolved_list: list[str] = []  # requirement 5: first-seen order
+    unresolved_set: set[str] = set()  # fast lookup only
+
     for nt in notice_types:
         try:
             fields = _listing_templates._notice_type_fields_for(nt)
         except Exception:
             fields = ()
-        # F7: fields 가 빈 튜플이어도 **그대로** 추가한다 (과거에는 skip 했다).
-        type_field_lists.append(fields)
+        if not fields and nt not in unresolved_set:
+            unresolved_list.append(nt)
+            unresolved_set.add(nt)
+        type_full_ordered.append(tuple(fields))
+        try:
+            xors = _qa_agents._notice_xor_groups(nt)
+        except Exception:
+            xors = []
+        type_xor_groups_raw.append(list(xors) if isinstance(xors, list) else [])
 
-    # 교집합 (certain 원본)
-    intersection_fields = _intersect_field_lists(type_field_lists)
+    # === Requirement 1: per-type regular fields ===
+    type_regular_ordered: list[tuple[str, ...]] = []
+    for idx in range(len(notice_types)):
+        xor_members_of_nt: set[str] = set()
+        for grp in type_xor_groups_raw[idx]:
+            xor_members_of_nt.update(grp)
+        reg = tuple(f for f in type_full_ordered[idx] if f not in xor_members_of_nt)
+        type_regular_ordered.append(reg)
+
+    # === Requirement 3: any unresolved type? ===
+    if unresolved_set:
+        # Emit candidate groups with empty additions for each type
+        groups: list[dict[str, Any]] = []
+        group_index_by_type: dict[str, int] = {}
+        for cidx in range(len(candidates)):
+            nt = notice_types[cidx] if cidx < len(notice_types) else ""
+            if not nt:
+                continue
+            if nt not in group_index_by_type:
+                group_index_by_type[nt] = len(groups)
+                groups.append(
+                    {
+                        "notice_type": nt,
+                        "candidates": [],
+                        "additional": [],
+                        "additional_one_of": [],
+                    }
+                )
+            if not is_explicit_confirmed and isinstance(candidates[cidx], dict):
+                groups[group_index_by_type[nt]]["candidates"].append(candidates[cidx])
+        unresolved_scope = "confirmed_category" if is_explicit_confirmed else "top_tied_candidates"
+        unresolved_blockers = [] if is_explicit_confirmed else ["category_choice"]
+        unresolved_blockers.append("unknown_notice_type")
+        return {
+            "certain": [],
+            "certain_one_of": [],
+            "likely_type": likely_notice_type,
+            "likely_extra": [],
+            "likely_extra_one_of": [],
+            "scope": unresolved_scope,
+            "complete": False,
+            "is_complete": False,  # backward compat
+            "completion_blocked_by": unresolved_blockers,
+            "candidate_groups": groups,
+            "by_notice_type": {},  # M3 — unresolved types
+            "unresolved_notice_types": unresolved_list,
+        }
+
+    # === Requirement 4 (continued): build first-seen distinct groups and populate candidates ===
+    # Track which type index each distinct notice_type maps to (group index within candidate_groups)
+    type_to_group_idx: dict[str, int] = {}
+    type_to_first_data_idx: dict[str, int] = {}
+    first_seen_order: list[str] = []  # distinct nt in first-seen order
+    groups: list[dict[str, Any]] = []  # candidate_groups as list
+
+    for cidx, cand in enumerate(candidates):
+        nt = notice_types[cidx] if cidx < len(notice_types) else ""
+        if not nt:
+            continue
+        if nt not in type_to_group_idx:
+            type_to_group_idx[nt] = len(first_seen_order)
+            type_to_first_data_idx[nt] = cidx
+            first_seen_order.append(nt)
+            groups.append(
+                {
+                    "notice_type": nt,
+                    "candidates": [],
+                    "additional": [],
+                    "additional_one_of": [],
+                }
+            )
+        # Append candidate to its group
+        if not is_explicit_confirmed and cand and isinstance(cand, dict):
+            groups[type_to_group_idx[nt]]["candidates"].append(cand)
+
+    # === Requirement 7: common certain (intersection of per-type regulars) ===
+    intersection_fields = _intersect_field_lists(type_regular_ordered)
     intersection_set = set(intersection_fields)
 
-    # XOR 그룹 처리 (F4).
-    if xor_groups is None:
-        xor_groups = _xor_groups_for_types(notice_types)
-    certain_one_of_fields: list[list[str]] = []
-    xor_member_set: set[str] = set()
-    for group in xor_groups:
-        if not isinstance(group, list):
+    # === Requirement 8: common certain_one_of ===
+    common_xor_groups: list[list[str]] = []
+    seen_group_keys: set[frozenset[str]] = set()
+    for group in type_xor_groups_raw[0]:
+        if not isinstance(group, list) or len(group) < 2:
             continue
-        # XOR 그룹의 필드가 교집합에 **하나라도** 있으면 그 그룹을 *_one_of 로.
-        in_intersection = [f for f in group if f in intersection_set]
-        if in_intersection:
-            certain_one_of_fields.append(in_intersection)
-            for f in in_intersection:
-                xor_member_set.add(f)
-    # certain 은 교집합에서 XOR 그룹 멤버를 뺀 나머지.
-    certain_fields = tuple(f for f in intersection_fields if f not in xor_member_set)
-    certain = _fields_with_labels(certain_fields, notice_type or likely_notice_type)
-    certain_one_of = [
-        _fields_with_labels(group, notice_type or likely_notice_type)
-        for group in certain_one_of_fields
-    ]
+        gkey = frozenset(group)
+        if gkey in seen_group_keys:
+            continue
+        # Every type must have this XOR group AND all its members in that type's full fields
+        if all(
+            gkey in [frozenset(g) for g in type_xor_groups_raw[i]]
+            and frozenset(group).issubset(set(tfo))
+            for i, tfo in enumerate(type_full_ordered)
+        ):
+            seen_group_keys.add(gkey)
+            common_xor_groups.append(list(group))
+    common_xor_member_set: set[str] = set()
+    for cg in common_xor_groups:
+        common_xor_member_set.update(cg)
 
-    # likely_extra: likely_notice_type 이 있으면 그 타입 전체에서 certain + XOR 를 뺀 나머지.
+    # Populate additional / additional_one_of per group
+    for gi, nt in enumerate(first_seen_order):
+        ti = type_to_first_data_idx[nt]
+        add_fields_ordered = tuple(f for f in type_regular_ordered[ti] if f not in intersection_set)
+        groups[gi]["additional"] = _fields_with_labels(add_fields_ordered, nt)
+        # additional_one_of = this type's XOR groups minus common XOR groups
+        remaining_xors: list[list[str]] = []
+        for grp in type_xor_groups_raw[ti]:
+            if not isinstance(grp, list) or len(grp) < 2:
+                continue
+            gkey = frozenset(grp)
+            if gkey in seen_group_keys:
+                continue
+            if frozenset(grp).intersection(set(type_full_ordered[ti])):
+                remaining_xors.append(grp)
+        groups[gi]["additional_one_of"] = [
+            _fields_with_labels(tuple(g), nt) for g in remaining_xors
+        ]
+
+    # === Requirement 11: reconstruction check (audit only — string compare) ===
+    for gi, nt in enumerate(first_seen_order):
+        ti = type_to_first_data_idx[nt]
+        combined_reg: set[str] = set(intersection_fields)
+        for item in groups[gi]["additional"]:
+            if isinstance(item, dict):
+                combined_reg.add(item["field"])
+        combined_xor: set[str] = set()
+        for og in common_xor_groups:
+            combined_xor.update(og)
+        for ag in groups[gi]["additional_one_of"]:
+            for item in ag:
+                if isinstance(item, dict):
+                    combined_xor.add(item["field"])
+        expected_full: set[str] = set(type_full_ordered[ti])
+        assert combined_reg.isdisjoint(combined_xor), f"Regular-XOR overlap for {nt}"
+        assert (
+            combined_reg.union(combined_xor) == expected_full
+        ), f"Reconstruction mismatch for {nt}: has={combined_reg.union(combined_xor)}, exp={expected_full}"
+
+    # === Requirement 12: overall scope/completion ===
+    if is_explicit_confirmed:
+        overall_scope = "confirmed_category"
+        overall_complete = True
+        overall_blocked: list[str] = []
+    else:
+        overall_scope = "top_tied_candidates"
+        overall_complete = False
+        overall_blocked = ["category_choice"]
+
+    # === M3: by_notice_type — 타입별 추가 요구 (extra / one_of) ===
+    # 각 타입의 additional(= extra) 과 additional_one_of(= one_of) 를 dict 로 옮긴다.
+    # 이것이 likely_type/likely_extra 를 대체한다 (M3).
+    by_notice_type: dict[str, dict[str, Any]] = {}
+    for group in groups:
+        nt = group["notice_type"]
+        by_notice_type[nt] = {
+            "extra": list(group["additional"]),
+            "one_of": [list(clause) for clause in group["additional_one_of"]],
+        }
+
     likely_extra: list[dict[str, str]] = []
     likely_extra_one_of: list[list[dict[str, str]]] = []
-    if likely_notice_type:
-        try:
-            likely_all = _listing_templates._notice_type_fields_for(likely_notice_type)
-        except Exception:
-            likely_all = ()
-        likely_all_set = set(likely_all)
-        # likely 분의 XOR 그룹 처리: likely 타입의 XOR 그룹 중 교집합에 안 들어간 것.
-        likely_xor_groups = _xor_groups_for_types([likely_notice_type])
-        likely_xor_member_set: set[str] = set()
-        for group in likely_xor_groups:
-            if not isinstance(group, list):
-                continue
-            # likely 분 XOR 그룹이 이미 certain_one_of 에 들어있으면 스킵.
-            group_key = frozenset(group)
-            already_in_certain = any(frozenset(g) == group_key for g in certain_one_of_fields)
-            if already_in_certain:
-                continue
-            in_likely = [f for f in group if f in likely_all_set and f not in intersection_set]
-            if in_likely:
-                likely_extra_one_of.append(_fields_with_labels(in_likely, likely_notice_type))
-                for f in in_likely:
-                    likely_xor_member_set.add(f)
-        # certain 원본(certain_fields + certain_one_of flatten) 을 뺀 나머지.
-        already_required = set(certain_fields) | xor_member_set
-        extra_fields = tuple(
-            f for f in likely_all if f not in already_required and f not in likely_xor_member_set
-        )
-        likely_extra = _fields_with_labels(extra_fields, likely_notice_type)
+    for group in groups:
+        if group["notice_type"] == likely_notice_type:
+            likely_extra = list(group["additional"])
+            likely_extra_one_of = [list(clause) for clause in group["additional_one_of"]]
+            break
 
+    # === Build final result ===
+    label_type = (
+        notice_type
+        if notice_type
+        else likely_notice_type
+        if likely_notice_type
+        else (first_seen_order[0] if first_seen_order else None)
+    )
     return {
-        "certain": certain,
-        "certain_one_of": certain_one_of,
+        "certain": _fields_with_labels(intersection_fields, label_type),
+        "certain_one_of": [_fields_with_labels(tuple(g), label_type) for g in common_xor_groups],
         "likely_type": likely_notice_type,
         "likely_extra": likely_extra,
         "likely_extra_one_of": likely_extra_one_of,
+        "scope": overall_scope,
+        "complete": overall_complete,
+        "is_complete": overall_complete,  # backward compat
+        "completion_blocked_by": overall_blocked,
+        "candidate_groups": groups,
+        "by_notice_type": by_notice_type,  # M3
+        "unresolved_notice_types": unresolved_list,
     }
 
 
@@ -440,12 +691,11 @@ def diagnose(product: dict[str, Any]) -> dict[str, Any]:
               "category": {
                   "status": "confident" | "likely" | "ambiguous" | "unknown",
                   "candidates": [ {"category_id": str, "path": str,
-                                   "score": int}, ...],  # 상위 3개까지(표시용)
-                  "needs_category_choice": bool,  # classify_category 가 dict 였으면 True
-                                                    # → candidates 를 사용자에게 보여 고르게 하라.
+                                   "score": int}, ...],  # 최고점 동점자 전부
+                  "needs_category_choice": bool,
                   "notice_type": str | None,        # status=="confident" 일 때만
                   "likely_notice_type": str | None, # 최고점 후보들이 같을 때 (추정)
-                  "notice_types_seen": [str, ...],  # 후보들에서 나온 전부
+                  "notice_types_seen": [str, ...],  # 최고점 동점자에서 나온 전부
               },
               "notice_required_fields": {
                   "certain": [ {"field": str, "label": str}, ... ],  # 교집합(XOR 제외)
@@ -460,6 +710,9 @@ def diagnose(product: dict[str, Any]) -> dict[str, Any]:
     안내:
       - ``category.needs_category_choice`` 가 True 면 카테고리를 임의로 정하지 말고
         ``candidates`` 를 사용자에게 보여 고르게 하라(F2).
+      - ``notice_required_fields.certain`` 은 후보군 전체의 공통 안전 부분집합일
+        뿐이다. ``is_complete=false`` 면 완전한 요구목록이 아니므로 blocker와
+        카테고리를 먼저 해결해야 한다.
       - ``notice_required_fields.certain`` 은 어느 쪽으로 확정되든 반드시 필요한
         고시 항목이다(후보 고시타입들의 교집합).
       - ``notice_required_fields.certain_one_of`` 의 각 그룹에서 **정확히 하나만**
@@ -487,71 +740,53 @@ def diagnose(product: dict[str, Any]) -> dict[str, Any]:
         category_block: dict[str, Any] = {
             "status": "unknown",
             "candidates": [],
+            "candidates_by_notice_type": {},
             "needs_category_choice": False,
             "notice_type": None,
             "likely_notice_type": None,
             "notice_types_seen": [],
         }
     else:
-        # F1: 판정에는 **전체 후보** 를 쓴다. 표시용 candidates 만 상위 3개로 줄인다.
-        all_candidates, needs_category_choice = _candidates_from_title(name)
-        # F1: 최고점 동점자 전부를 판정에 쓴다.
-        notice_types = _notice_types_for_candidates(all_candidates)
-        unique_types: list[str] = []
-        for nt in notice_types:
-            if nt not in unique_types:
-                unique_types.append(nt)
-
+        all_candidates, _ = _candidates_from_title(name)
         if not all_candidates:
             category_block = {
                 "status": "unknown",
                 "candidates": [],
+                "candidates_by_notice_type": {},
                 "needs_category_choice": False,
                 "notice_type": None,
                 "likely_notice_type": None,
                 "notice_types_seen": [],
             }
-        elif len(unique_types) == 1:
-            # 모든 후보의 고시타입이 같다 → confident.
-            nt_val = unique_types[0]
-            category_block = {
-                "status": "confident",
-                "candidates": all_candidates[:3],  # 표시용 상위 3
-                "needs_category_choice": needs_category_choice,
-                "notice_type": nt_val,
-                "likely_notice_type": nt_val,
-                "notice_types_seen": unique_types,
-            }
         else:
-            # 최고점(score 최댓값) 동점자 전부를 판정에 쓴다(F1).
             max_score = max(c.get("score", 0) for c in all_candidates)
-            top_types: list[str] = []
-            for c, nt in zip(all_candidates, notice_types, strict=True):
-                if c.get("score", 0) == max_score:
-                    if nt not in top_types:
-                        top_types.append(nt)
-
-            if len(top_types) == 1:
-                # 최고점 동점자끼리는 같다 → likely (추정).
-                likely_nt = top_types[0]
-                category_block = {
-                    "status": "likely",
-                    "candidates": all_candidates[:3],  # 표시용 상위 3
-                    "needs_category_choice": needs_category_choice,
-                    "notice_type": None,
-                    "likely_notice_type": likely_nt,
-                    "notice_types_seen": unique_types,
-                }
+            top_tied = [c for c in all_candidates if c.get("score", 0) == max_score]
+            top_notice_types = _notice_types_for_candidates(top_tied)
+            unique_top_types: list[str] = []
+            for nt in top_notice_types:
+                if nt not in unique_top_types:
+                    unique_top_types.append(nt)
+            if not unique_top_types:
+                status = "unknown"
+                likely_type = None
+            elif len(unique_top_types) == 1:
+                status = "likely"
+                likely_type = unique_top_types[0]
             else:
-                # 최고점 동점자끼리도 갈린다 → ambiguous.
-                category_block = {
-                    "status": "ambiguous",
-                    "candidates": all_candidates[:3],  # 표시용 상위 3
-                    "needs_category_choice": needs_category_choice,
-                    "notice_type": None,
-                    "likely_notice_type": None,
-                    "notice_types_seen": unique_types,
-                }
+                status = "ambiguous"
+                likely_type = None
+            # M1: 고시타입별 후보 묶기 + 각 타입 대표가 보이게 정렬
+            cbnt = _build_candidates_by_notice_type(top_tied, top_notice_types)
+            candidates_display = _candidates_with_all_types(top_tied, top_notice_types)
+            category_block = {
+                "status": status,
+                "candidates": candidates_display,
+                "candidates_by_notice_type": cbnt,
+                "needs_category_choice": True,
+                "notice_type": None,
+                "likely_notice_type": likely_type,
+                "notice_types_seen": unique_top_types,
+            }
 
     # --- F3: 사용자가 명시한 고시타입/categoryId 가 있으면 그것으로 확정한다 ---
     # 우선순위 1: notice.productInfoProvidedNoticeType / notice_type
@@ -561,19 +796,17 @@ def diagnose(product: dict[str, Any]) -> dict[str, Any]:
         category_block["notice_type"] = explicit_notice_type
         category_block["likely_notice_type"] = explicit_notice_type
         category_block["needs_category_choice"] = False
-        if explicit_notice_type not in (category_block.get("notice_types_seen") or []):
-            category_block["notice_types_seen"] = list(
-                (category_block.get("notice_types_seen") or []) + [explicit_notice_type]
-            )
+        category_block["candidates"] = []
+        category_block["candidates_by_notice_type"] = {}
+        category_block["notice_types_seen"] = [explicit_notice_type]
     elif cid_notice_type is not None:
         category_block["status"] = "confident"
         category_block["notice_type"] = cid_notice_type
         category_block["likely_notice_type"] = cid_notice_type
         category_block["needs_category_choice"] = False
-        if cid_notice_type not in (category_block.get("notice_types_seen") or []):
-            category_block["notice_types_seen"] = list(
-                (category_block.get("notice_types_seen") or []) + [cid_notice_type]
-            )
+        category_block["candidates"] = []
+        category_block["candidates_by_notice_type"] = {}
+        category_block["notice_types_seen"] = [cid_notice_type]
 
     # --- notice_required_fields ---
     notice_type = category_block.get("notice_type")
@@ -604,6 +837,7 @@ def diagnose(product: dict[str, Any]) -> dict[str, Any]:
         notice_types_for_fields,
         notice_type,
         likely_notice_type,
+        is_explicit_confirmed=(explicit_notice_type is not None or cid_notice_type is not None),
     )
 
     # --- images (F5) ---
@@ -629,7 +863,9 @@ def diagnose(product: dict[str, Any]) -> dict[str, Any]:
 
 
 __all__ = [
+    "_build_candidates_by_notice_type",
     "_candidates_from_title",
+    "_candidates_with_all_types",
     "_explicit_notice_type_from_category_id",
     "_explicit_notice_type_from_input",
     "_intersect_field_lists",
