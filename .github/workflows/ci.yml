@@ -98,3 +98,25 @@ jobs:
           python-version: "3.12"
       - name: 자체 검사 (금칙어/한자/커밋메시지)
         run: python scripts/scan_repo.py
+
+      # 시험 mock 의 API 필드명을 정본 어휘와 대조한다.
+      #
+      # ⚠️ 경고 전용이다 — 실패로 만들지 마라. 정본(문서 스크랩)이 불완전해서
+      #    실재하는 필드가 "없음"으로 나오는 경우가 있다(예: originProduct).
+      #    실패로 만들면 사람들이 허용목록에 아무거나 넣어 검사를 무력화한다.
+      #
+      # 발견은 요약에 남고, 여기서 **주석으로도** 올린다 — 요약만 남기면
+      # 잡을 열어보지 않는 한 아무도 안 본다(안 보이는 경고는 없는 경고다).
+      - name: 시험 mock 필드명 대조 (경고 전용)
+        run: |
+          out="$(python scripts/check_mock_fields.py)" || {
+            echo "::error::mock 필드명 대조가 실행되지 못했습니다(검사 자체의 고장)."
+            echo "$out"
+            exit 1
+          }
+          echo "$out"
+          # 발견 항목은 `  [이름]` 한 줄로 나온다. 한글 문구에 기대지 않고 이 형태를 센다.
+          n="$(printf '%s\n' "$out" | grep -cE '^[[:space:]]*\[[A-Za-z_][A-Za-z0-9_]*\][[:space:]]*$' || true)"
+          if [ "${n:-0}" -gt 0 ]; then
+            echo "::warning::시험 mock 에서 정본 확인이 안 되는 API 필드명 ${n}건. 잡 요약에 목록과 제안이 있습니다(빌드를 막지 않습니다)."
+          fi
