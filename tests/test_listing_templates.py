@@ -892,9 +892,7 @@ class TestDeferredNoticeFieldsTemplate:
             # returnCostReason 은 string 타입 + allowlist 내 → 미루기 가능.
             "deferred_notice_fields": ["returnCostReason"],
         }
-        listing_templates.save_template(
-            name="defer-저장", notice_type="ETC", product=product
-        )
+        listing_templates.save_template(name="defer-저장", notice_type="ETC", product=product)
         # 파일에서 직접 확인.
         path = listing_templates.templates_path()
         raw = path.read_text(encoding="utf-8")
@@ -910,9 +908,7 @@ class TestDeferredNoticeFieldsTemplate:
         빈 리스트로 저장하지 않는다 — 키 부재와 빈 리스트는 의미가 다르다.
         """
         product = {"return_cost_reason": "문구"}
-        listing_templates.save_template(
-            name="no-defer", notice_type="ETC", product=product
-        )
+        listing_templates.save_template(name="no-defer", notice_type="ETC", product=product)
         path = listing_templates.templates_path()
         doc = json.loads(path.read_text(encoding="utf-8"))
         fields = doc["templates"][0]["fields"]
@@ -1059,9 +1055,7 @@ class TestDeferredNoticeFieldsTemplate:
         assert result["deferred_from_template"] == []
         assert result["deferred_dropped_invalid"] == []
 
-    def test_prepare_listing_applies_deferred_from_template(
-        self, isolated_state_dir, monkeypatch
-    ):
+    def test_prepare_listing_applies_deferred_from_template(self, isolated_state_dir, monkeypatch):
         """실경로 1회: prepare_listing 이 apply_template 를 호출해
         반환/저장 payload 에 미루기 선언이 실려 있음(실호출 출력).
 
