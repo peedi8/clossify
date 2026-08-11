@@ -1,0 +1,10 @@
+{
+  "originProduct": "실등록·조회로 존재 확인(2026-08-10). 문서 스크랩에 스키마가 안 담긴 컨테이너 필드다",
+  "smartstoreChannelProduct": "실등록 응답에 존재 확인(2026-08-10). 위와 같은 사유",
+  "channelProducts": "상품 검색 응답 `contents[].channelProducts[]` 로 존재 확인(2026-08-10)",
+  "knownField": "시험 내부 픽스처 이름. 외부 API 필드가 아니다",
+  "someOtherKey": "시험 내부 픽스처 이름. 외부 API 필드가 아니다",
+  "internalDebugInfo": "시험 내부 픽스처 이름. 외부 API 필드가 아니다",
+  "requestId": "시험 내부 픽스처 이름. 외부 API 필드가 아니다",
+  "inlineData": "이미지 생성 제공자(네이버 아님)의 응답 필드다. 커머스 문서에 없는 게 정상"
+}
