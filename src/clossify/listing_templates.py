@@ -1426,9 +1426,7 @@ def apply_template(
                 if final:
                     product["deferred_notice_fields"] = list(final)
                     deferred_from_template = list(final)
-                    filled.append(
-                        {"section": "deferred_notice_fields", "field": ",".join(final)}
-                    )
+                    filled.append({"section": "deferred_notice_fields", "field": ",".join(final)})
                 if dropped:
                     deferred_dropped_invalid = dropped
 
