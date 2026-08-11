@@ -138,6 +138,30 @@ jobs:
           }
           echo "count=$(count_all)" >> "$GITHUB_OUTPUT"
 
+      # ★ diff 를 프롬프트에 직접 넣는다.
+      # 두 실행 연속(run 31492942049 · PR#15 실행) 리뷰어가 diff 를 **찾아 읽느라** 26턴을
+      # 다 쓰고 게시 0건으로 끝났다(캐시읽기 각 1.2M 토큰). "12턴에 게시하라"는 지시는
+      # 안 먹혔다 — 탐색 자체를 없애는 것이 답이다. 잘리면 잘렸다고 명시한다.
+      - name: PR diff 준비
+        if: steps.guard.outputs.ready == 'true' && steps.dedupe.outputs.done != 'true'
+        id: diff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr diff "$PR" --patch > /tmp/pr.diff
+          total=$(wc -c < /tmp/pr.diff)
+          head -c 60000 /tmp/pr.diff > /tmp/pr.head
+          {
+            echo 'text<<PR_DIFF_EOF'
+            cat /tmp/pr.head
+            if [ "$total" -gt 60000 ]; then
+              echo ""
+              echo "... (diff 잘림: 전체 ${total}바이트 중 60000바이트만 실림. 나머지는 도구로 확인하라)"
+            fi
+            echo 'PR_DIFF_EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: AI 리뷰 실행
         if: steps.guard.outputs.ready == 'true' && steps.dedupe.outputs.done != 'true'
         id: ai
@@ -174,12 +198,19 @@ jobs:
 
             ${{ steps.guide.outputs.text }}
 
+            ## 변경 내용 (일차 자료 — diff 를 찾으러 다니지 마라, 여기 있다)
+            ```diff
+            ${{ steps.diff.outputs.text }}
+            ```
+
             ## 진행 규칙
-            - **12번째 턴을 넘겼으면 더 보지 말고 그 시점의 결론을 게시하라.** 턴 상한은 25다.
-              확인하지 못한 항목은 "확인 못 함"으로 명시한다. 불완전한 리뷰가 게시 안 된 리뷰보다 낫다.
-            - **도구가 거부되면 같은 것을 다시 시도하지 마라.** 다른 수단으로 우회하고,
-              그래도 안 되면 그 항목을 "확인 못 함"으로 적고 **게시까지 반드시 마쳐라.**
-              거부와 씨름하다 턴을 다 쓰면 아무것도 남지 않는다 — 실제로 그렇게 끝난 적이 있다.
+            - **위 diff 가 일차 자료다.** 도구(Read/Grep/git)는 diff 밖 정의·정본을
+              확인할 때만 쓴다. 저장소를 훑지 마라 — 두 실행 연속 그러다 턴을 다 쓰고
+              아무것도 게시하지 못했다.
+            - **도구 호출 10회 안에 게시를 시작하라.** 확인 못 한 항목은 "확인 못 함"으로
+              명시한다. 불완전한 리뷰가 게시 안 된 리뷰보다 낫다.
+            - **도구가 거부되면 같은 것을 다시 시도하지 마라.** 우회하거나 "확인 못 함"으로
+              적고 **게시까지 반드시 마쳐라.**
             - 확신이 없는 지적에는 **`추정`** 라벨을 붙여라.
             - 수정 코드는 **한 파일·몇 줄·판단이 개입하지 않을 때만** 제시하고,
               `로컬에서 확인함` 또는 `미검증` 을 함께 적어라.
