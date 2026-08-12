@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: LicenseRef-SustainableUse-1.0
 # Providing this software to others is permitted only free of charge and for
 # non-commercial purposes. See LICENSE.md.
-"""상품속성 슬라이스1 (N58) — 조회 배선 + 명시 ID 전송 + 수확 편승 검증.
+"""상품속성 슬라이스1 — 조회 배선 + 명시 ID 전송 + 수확 편승 검증.
 
 본 파일은 워크오더 ``.local/wo-n58-slice1.md`` 의 인수조건 1-4 를 검증한다:
 

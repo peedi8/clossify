@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: LicenseRef-SustainableUse-1.0
 # Providing this software to others is permitted only free of charge and for
 # non-commercial purposes. See LICENSE.md.
-"""우측구이 조작 레인 — 조작 화면 자동 열기 (N26).
+"""우측구이 조작 레인 — 조작 화면 자동 열기.
 
 노선: **조작은 브라우저 창, 확인은 패널.** 승인·설정·이관 폼은 전부
 브라우저에서 여는 전제로 만들어져 있다. 그런데 **여는 사람이 사용자**다 —

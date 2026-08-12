@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: LicenseRef-SustainableUse-1.0
 # Providing this software to others is permitted only free of charge and for
 # non-commercial purposes. See LICENSE.md.
-"""N26 — 조작 화면 자동 열기 검증.
+"""조작 화면 자동 열기 검증.
 
 본 테스트는 ``enable_auto_open`` 설정 스위치와 ``auto_open`` 모듈의
 안전 계약을 검증한다:

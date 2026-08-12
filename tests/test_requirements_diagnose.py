@@ -1,10 +1,10 @@
-"""``requirements.diagnose`` 회귀 테스트 — N19 거부 정보량 증대 (v2).
+"""``requirements.diagnose`` 회귀 테스트 — 거부 정보량 증대 (v2).
 
 본 테스트는 ``prepare_listing`` 거부 시점에 ``diagnose`` 가 반환하는 정보를
 고정한다. acceptance 2·3·4·6 (이미지만 빠진 경우 · 이름도 없는 경우 · 갈리는
 경우 · 진단이 본체를 죽이지 않는다) 을 회귀로 잡는다.
 
-N19-v2 변경: ``category.status`` 에 ``likely`` 가 추가되고,
+v2 변경: ``category.status`` 에 ``likely`` 가 추가되고,
 ``notice_required_fields`` 가 dict (``certain``/``likely_type``/``likely_extra``)
 로 바뀌었다. 교집합(certain) 은 후보가 있으면 항상 채운다.
 
@@ -31,7 +31,7 @@ from clossify import mcp_server, requirements
 
 # --------------------------------------------------------------------------- #
 # Acceptance 2: 사진만 빠진 경우 — 티셔츠.
-# N19-v2: status 는 "likely", likely_notice_type 은 "WEAR",
+# v2: status 는 "likely", likely_notice_type 은 "WEAR",
 #         certain 은 WEAR∩ETC 교집합(7개).
 # --------------------------------------------------------------------------- #
 class TestPhotoOnlyMissing:
@@ -70,7 +70,7 @@ class TestPhotoOnlyMissing:
     def test_category_status_is_likely_or_confident(self):
         """``status`` 는 ``likely`` 또는 ``confident`` 여야 한다.
 
-        N19-v2: 티셔츠 케이스는 상위 후보가 WEAR·WEAR·ETC 이므로
+        v2: 티셔츠 케이스는 상위 후보가 WEAR·WEAR·ETC 이므로
         최고점 후보들이 WEAR 로 같다 → ``likely``.
         하지만 분류기 버전에 따라 전부 WEAR 로 나올 수도 있으므로
         likely/confident 둘 다 허용한다.
@@ -110,7 +110,7 @@ class TestPhotoOnlyMissing:
     def test_certain_is_intersection_not_union(self):
         """``certain`` + ``certain_one_of`` 평탄화 합은 13 이어야 한다 (F1).
 
-        N19 리뷰 수정: 이제 **최고점 동점자 전부** 의 고시타입으로 교집합을 구한다.
+        리뷰 수정: 이제 **최고점 동점자 전부** 의 고시타입으로 교집합을 구한다.
         티셔츠 케이스는 최고점 동점자가 WEAR·WEAR (2개) 이므로 교집합 = WEAR 전체.
         XOR 그룹은 없다(WEAR 은 XOR 정의가 없음) → certain = 13, one_of = 0.
         acceptance 표 기대값 13 (certain + certain_one_of 평탄화 합).
@@ -133,7 +133,7 @@ class TestPhotoOnlyMissing:
     def test_certain_fields_in_top_tie_types(self):
         """``certain`` 의 모든 필드가 최고점 동점자 고시타입 전체에 있어야 한다.
 
-        N19 리뷰 수정: 최고점 동점자가 WEAR·WEAR 이므로 certain 은 WEAR 필드
+        리뷰 수정: 최고점 동점자가 WEAR·WEAR 이므로 certain 은 WEAR 필드
         전체에서 온다. 교집합(WEAR ∩ WEAR) = WEAR.
         """
         from clossify import listing_templates
@@ -223,14 +223,14 @@ class TestEmptyProduct:
 
 # --------------------------------------------------------------------------- #
 # Acceptance 4: 갈리는 경우 — 유기농 아몬드.
-# N19-v2: status 는 "likely" (최고점 후보들이 FOOD 로 같으므로).
+# v2: status 는 "likely" (최고점 후보들이 FOOD 로 같으므로).
 #         likely_notice_type 은 "FOOD", certain 은 FOOD∩FASHION_ITEMS 교집합.
 # --------------------------------------------------------------------------- #
 class TestAmbiguousCategory:
-    """``유기농 아몬드 500g`` 은 status 가 likely 여야 한다 (N19-v2)."""
+    """``유기농 아몬드 500g`` 은 status 가 likely 여야 한다 (v2)."""
 
     def test_status_likely(self):
-        """N19-v2: 최고점 후보들이 FOOD 로 같다 → likely."""
+        """v2: 최고점 후보들이 FOOD 로 같다 → likely."""
         result = mcp_server.prepare_listing({"name": "유기농 아몬드 500g", "salePrice": 12000})
         req = result.get("requirements") or {}
         category = req.get("category") or {}
@@ -266,7 +266,7 @@ class TestAmbiguousCategory:
     def test_certain_is_intersection(self):
         """certain + certain_one_of 평탄화 합은 19 이어야 한다 (F1/F4).
 
-        N19 리뷰 수정: 최고점 동점자가 FOOD 1개이므로 교집합 = FOOD 전체.
+        리뷰 수정: 최고점 동점자가 FOOD 1개이므로 교집합 = FOOD 전체.
         FOOD 의 XOR 그룹(packDate/packDateText, consumptionDate/consumptionDateText)
         은 certain_one_of 로 옮겨간다. acceptance 표 기대값 19
         (certain=15, certain_one_of 평탄화=4).
@@ -356,7 +356,7 @@ class TestPurity:
 
 
 # =========================================================================== #
-# N19 리뷰 수정 회귀 — F1 ~ F7 (wo-n19-review-fixes.md)
+# 리뷰 수정 회귀 — F1 ~ F7 (wo-n19-review-fixes.md)
 # =========================================================================== #
 
 
@@ -879,7 +879,7 @@ class TestT2DocstringMatchesActualKeys:
 
 
 # =========================================================================== #
-# N76 — 거부 진단에 KC · 원산지 · A/S 를 포함한다 (wo-n76-compliance.md)
+# 거부 진단에 컴플라이언스(KC · 원산지 · A/S) 를 포함한다 (wo-n76-compliance.md)
 # =========================================================================== #
 
 
@@ -1293,7 +1293,7 @@ class TestN76McpIntegration:
 
 
 # =========================================================================== #
-# N76 리뷰 수정 — F6/F7 (wo-n76-review-fixes.md)
+# 컴플라이언스 리뷰 수정 — F6/F7 (wo-n76-review-fixes.md)
 # =========================================================================== #
 
 

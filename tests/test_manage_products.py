@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: LicenseRef-SustainableUse-1.0
 # Providing this software to others is permitted only free of charge and for
 # non-commercial purposes. See LICENSE.md.
-"""N27+N64 manage_products 도구 테스트.
+"""manage_products 도구 테스트.
 
 모든 테스트는 실제 네이버 API 를 호출하지 않는다 — monkeypatch/mock 으로
 naver_client 함수를 대체한다. 검증 항목:

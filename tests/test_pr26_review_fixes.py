@@ -568,7 +568,7 @@ class TestDeliveryFeeSourceMatchesResolver:
 
 
 class TestPreviewTopLevelExplicitValues:
-    """상품 top-level 에 명시한 N7 필드값이 미리보기에 그 값과 출처가
+    """상품 top-level 에 명시한 설정 유래 보고 필드값이 미리보기에 그 값과 출처가
     "사용자 입력" 으로 그려지는지 확인. 워크오더 ② 시험.
 
     시험은 실제 미리보기 렌더 함수(render_preview_html) 의 진입점인

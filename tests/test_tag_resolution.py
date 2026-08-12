@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: LicenseRef-SustainableUse-1.0
 # Providing this software to others is permitted only free of charge and for
 # non-commercial purposes. See LICENSE.md.
-"""N63 — 네이버 태그 추천/제한 API 연동 검증.
+"""네이버 태그 추천/제한 API 연동 검증.
 
 본 테스트가 다루는 계약 (a)-(f):
 
@@ -14,7 +14,7 @@
   (f) ``MAX_SELLER_TAGS`` (10) 초과 분은 잘린다.
 
 모든 테스트는 ``recommend_fn``/``restricted_fn`` 을 통해 mock 을 주입한다 —
-실호출 없음(N60 계약). 측정된 픽스처를 그대로 쓴다(아래 측정 계약 블록).
+실호출 없음(테스트 외부 호출 차단 계약). 측정된 픽스처를 그대로 쓴다(아래 측정 계약 블록).
 """
 
 from __future__ import annotations

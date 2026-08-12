@@ -180,7 +180,7 @@ BANNED_CLAIM_RE = re.compile(
     # 영문 BEST: Python \b 는 한글을 단어문자로 취급하여 "BEST상품" 에서
     # 경계가 안 생긴다. 영문자/숫자 경계로만 판별한다.
     r"(?<![A-Za-z0-9])BEST(?![A-Za-z0-9])|"
-    # ── 한글 조각: 한국어판 단어 경계 (N86/T3 + WO 4~6라운드 수리) ──
+    # ── 한글 조각: 한국어판 단어 경계 (WO 4~6라운드 수리) ──
     #
     # **앞쪽 경계 (WO 6라운드)**: 3라운드에서 ``(?<![가-힣])`` 를 붙였으나,
     # 이는 한국 이커머스 특유의 무공백 수식어 결합(``업계최저가``·
@@ -328,7 +328,7 @@ CATEGORY_PATH_NOTICE_HINTS = (
 # SEO-title specific banned patterns. These are a
 # superset of the marketing-claim regex aimed at title copy.
 #
-# **구조 (N86/T3 수리)**: 예전 항목별 lookahead 좁힘은 두더지잡기였다 —
+# **구조 (금지표현 패턴 수리)**: 예전 항목별 lookahead 좁힘은 두더지잡기였다 —
 # 짧은 한글 조각(``고급``·``인기``·``추천`` …) 이 정상 상품명의 부분
 # 문자열로 흔히 등장하여 ``고급스러운``→``스러운``, ``인기가요``→``가요``
 # 처럼 판매자 상품명을 훼손했다. 근본 원인은 삭제형(substring removal) 이

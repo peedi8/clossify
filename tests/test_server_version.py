@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: LicenseRef-SustainableUsage-1.0
 # Providing this software to others is permitted only free of charge and for
 # non-commercial purposes. See LICENSE.md.
-"""N8 — 서버 버전 노출 시험.
+"""서버 버전 노출 시험.
 
 ``MCPServer("clossify")`` 가 ``version`` 인자를 받아 클라이언트에 노출하는지
 확인한다. 이전에는 version 을 넘기지 않아 빈 문자열이었고, 클라이언트에

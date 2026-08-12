@@ -127,7 +127,7 @@ def _collect_notice_rows(
         구분해 표시한다 (감리 ⑧ — 같은 출처 표기로 그려지는 것을 고친다).
       - ``"미제공"`` — 값이 비어 있거나 사용자·config 어디에도 없는 필드.
 
-    **N7 필드의 top-level 명시값을 먼저 본다** (회귀 수정).
+    **설정 유래 규제 필드의 top-level 명시값을 먼저 본다** (회귀 수정).
     ``origin_content``·``importer``·``manufacturer``·``delivery_fee`` 는
     ``naver_client._notice_defaults`` 가 top-level 상품 입력에서 읽는다
     (``p.made_in``/``p.origin_content``, ``p.importer``, ``p.manufacturer``
@@ -164,7 +164,7 @@ def _collect_notice_rows(
 
     # 공통 5필드 + 고시 본문에 있는 모든 필드를 행으로.
     candidate_fields = list(naver_client._NOTICE_COMMON_FIELDS)
-    # N7 보고 필드(origin_content·importer·manufacturer·delivery_fee)는
+    # 설정 유래 규제 보고 필드(origin_content·importer·manufacturer·delivery_fee)는
     # 사용자 고시 본문에 보통 없으므로 후보에 명시적으로 포함시킨다.
     # 이 필드들이 config 유래일 때 미리보기에 각각 한 줄씩 등장해야 한다
     # (감리 지적: "보고 필드가 안 보인다" — 기능 목적 자체가 무력화).
@@ -181,7 +181,7 @@ def _collect_notice_rows(
         "delivery_fee": ("delivery_fee", "deliveryFee"),
     }
 
-    # N7 필드의 top-level 명시값 후보 맵.
+    # 설정 유래 규제 필드의 top-level 명시값 후보 맵.
     # naver_client._notice_defaults 해석기가 실제로 읽는 top-level 키와 동일한
     # 후보를 쓴다 — 해석기와 미리보기가 다른 값을 그리는 불일치를 막는다.
     # manufacturer 의 판매자 별칭 후보는 naver_client._seller_manufacturer_default
@@ -207,7 +207,7 @@ def _collect_notice_rows(
     }
 
     for field in candidate_fields:
-        # N7 필드는 top-level 상품 입력에서 먼저 찾는다. 해석기가 읽는 후보와
+        # 설정 유래 규제 필드는 top-level 상품 입력에서 먼저 찾는다. 해석기가 읽는 후보와
         # 같은 키를 본다 — top-level 에 명시한 값을 "미제공" 으로 그리는
         # 회귀를 고친다.
         top_keys = _n7_top_keys.get(field)
@@ -627,7 +627,7 @@ def _view_only_banner_html() -> str:
     않는다. 인라인 이벤트 핸들러(``onclick`` 등)를 쓰지 않는다 — 배너 자체가
     보기 전용 HTML 의 계약을 깨면 안 된다.
 
-    N15 — 템플릿 저장 안내: 보기 전용 화면에서도 "이 구성을 템플릿으로 저장할
+    템플릿 저장 안내: 보기 전용 화면에서도 "이 구성을 템플릿으로 저장할
     수 있다"는 사실을 알린다. 단, 이 패널에서는 버튼·입력란·스크립트가
     0개여야 하므로 **방법만 안내**한다 — 브라우저 창을 열거나, ``submit_reviews``
     의 ``save_prepared_as_template`` 인자로 이름을 주면 저장된다. 없는 기능을
@@ -1125,7 +1125,7 @@ def render_preview_html(
             "</div>"
         )
 
-        # N15 — 템플릿 저장 안내 바: 조작 모드에서만 나간다(보기 전용 패널은 위
+        # 템플릿 저장 안내 바: 조작 모드에서만 나간다(보기 전용 패널은 위
         # 배너 텍스트로만 안내). **새 전송 경로를 만들지 않는다** — fetch 폼 POST
         # 모두 없다. 클립보드 복사 패턴을 **재사용** 한다: 아래 문구를 복사해
         # 채팅에 붙여넣으면 모델이 ``submit_reviews`` 의

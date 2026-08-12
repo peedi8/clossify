@@ -1303,7 +1303,7 @@ class _TemplateFormHandler(http.server.BaseHTTPRequestHandler):
 
     **예외 방벽**: 각 ``do_*`` 메서드 전체를 try/except 이 감싼다. 예외가
     핸들러 바깥으로 번지면 ``http.server`` 는 응답을 쓰지 않고 연결을 끊는다.
-    이것은 "거짓 성공" 결함(N28)의 한 계열이다. 모든 예외는
+    이것은 "거짓 성공" 결함의 한 계열이다. 모든 예외는
     ``_respond_barrier_error`` 로 5xx + 사람이 읽을 HTML 로 바뀐다.
     """
 

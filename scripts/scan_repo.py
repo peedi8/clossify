@@ -114,6 +114,20 @@ GENERIC_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         "internal_ticket_id",
         re.compile(r"(?<![\w])([A-Z])-(\d{2,4})(?!\d)"),
     ),
+    # - 내부 백로그 식별자 (N### 형태): 대문자 N + 1~3자리 숫자.
+    #   단어 경계(``\b``) 가 양쪽 낱말 문자(``[A-Za-z0-9_]``) 사이에만
+    #   성립하므로, 식별자 접두사(``_N7_FROM_CFG``, ``model_N1``,
+    #   ``TestN76Kc``) 는 경계가 없어 잡히지 않고, 독립된 티켓 참조
+    #   (``N84``, ``(N60)``, ``N19-v2``) 만 매칭한다. 소문자 ``n19`` 는
+    #   대소문자 구분(``N`` 만) 으로 제외된다. ``N###/T#`` 같은 슬래시
+    #   혼합형도 앞쪽 ``N###`` 을 잡는다(뒤쪽 ``T#`` 은 별개 패턴 영역).
+    #   오탐 측정(전 저장소, 스윕 후): src/tests/docs 의 .py/.md = 0건.
+    #   scripts/ 의 2개 파일(N60·N58 잔류) 은 ALLOWED_MASKING_PAIRS 로
+    #   사유와 함께 예외 처리한다(스윕 범위 밖).
+    (
+        "internal_ticket_id_n",
+        re.compile(r"\bN\d{1,3}\b"),
+    ),
     # - 내부 작업 식별자 (FEAT-<word>): ``FEAT-`` 대문자 접두사 + 하이픈 +
     #   2개 이상의 알파벳으로 이루어진 낱말. 앞에 낱말 문자가 없어야 한다.
     #   일반 영단어(``feat-`` 소문자)는 대소문자 구분으로 제외된다.
@@ -167,11 +181,23 @@ GENERIC_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 # 식별자(예: 가짜 모델명/채널번호)는 하이픈 없는 형태 등 패턴에 걸리지
 # 않도록 값을 선택해야 한다. 이렇게 해야 tests/ 에서도 가드가 완전히
 # 활성 상태로 남는다 — 가짜 작업코드가 테스트 파일에 스며들면 잡힌다.
+#
+# ``internal_ticket_id_n`` (N### 형태) 의 scripts/ 예외 — 스윕 범위가
+# src/tests/docs 이므로 scripts/ 의 잔류 N### 은 다음 두 파일로 한정된다.
+# 사유: (1) fetch_origin_and_notice_types.py docstring 의 N60 은 테스트
+# 외부 호출 차단 계약을 인용하고 있다 (스윕이 scripts/ 를 덮으면 제거될
+# 값이지만, 본 워크오더 범위 밖). (2) mock_field_allowlist.json 의 N58 은
+# 가짜 필드명의 출처를 표기하고 있다. 두 파일 모두 다음 스윕에서 제거
+# 예정이며, 그 전까지는 파일 단위로 예외를 둔다.
 ALLOWED_MASKING_PAIRS: list[tuple[str, str]] = [
     (r"tests/.*\.py$", "windows_abs_path"),
     (r"tests/.*\.py$", "posix_home_path"),
     (r"tests/.*\.py$", "kr_mobile_phone"),
     (r"tests/.*\.py$", "secret_assignment"),
+    # N### 잔류: scripts/ 아래 2개 파일 (스윕 범위 src/tests/docs 밖).
+    # 제거 예정 — 별도 스윕에서 처리.
+    (r"^scripts/fetch_origin_and_notice_types\.py$", "internal_ticket_id_n"),
+    (r"^scripts/mock_field_allowlist\.json$", "internal_ticket_id_n"),
 ]
 
 # CJK 통합한자 코드포인트 범위 — 한글은 제외.
@@ -192,6 +218,7 @@ _SELF_SKIP_GENERIC_NAMES = frozenset(
     {
         "windows_abs_path",
         "internal_ticket_id",
+        "internal_ticket_id_n",
         "internal_feat_id",
         "internal_work_id",
         "internal_work_id_concat",

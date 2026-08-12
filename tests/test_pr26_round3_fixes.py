@@ -8,7 +8,7 @@
 조용히 되돌릴 수 있으므로 시험으로 못 박는다.
 
 ① 빈 배송비가 준비 단계를 터뜨리지 않는다 (build_payload 경계).
-② 대화형(실제 승인) 미리보기 경로에 설정 유래 N7 필드가 뜬다.
+② 대화형(실제 승인) 미리보기 경로에 설정 유래 보고 필드가 뜬다.
 ③ camelCase 별칭(deliveryFee)을 설정 점검이 안다.
 ④ 승인 화면 편집이 올바른 자리(top-level / notice)로 간다.
 """
@@ -228,7 +228,7 @@ class TestEmptyDeliveryFeeInRegisterNormalize:
 
 
 class TestInteractivePreviewShowsConfigProvenance:
-    """대화형 승인 경로의 미리보기에 설정 유래 N7 필드가 뜨는지 확인.
+    """대화형 승인 경로의 미리보기에 설정 유래 보고 필드가 뜨는지 확인.
 
     보기 전용 경로로 때우지 마라 — _build_preview_api_payload 가
     notice_filled_from_config 목록을 만들고, _collect_notice_rows 가 그 목록을
@@ -244,7 +244,7 @@ class TestInteractivePreviewShowsConfigProvenance:
             "manufacturer": "설정제조사",
             "delivery_fee": 7700,
         }
-        # prepared payload 의 product dict — 네 N7 필드 모두 없음 (config 유래).
+        # prepared payload 의 product dict — 네 설정 유래 보고 필드 모두 없음 (config 유래).
         resolved_payload = {
             "product": {
                 "name": "테스트상품",

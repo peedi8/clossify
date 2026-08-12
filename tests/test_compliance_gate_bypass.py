@@ -592,7 +592,7 @@ class TestToolRegistrationPreserved:
                 tools = asyncio.get_event_loop().run_until_complete(tools)
         # 8개 도구: check_config, upload_images, register_product, get_product,
         # prepare_listing, submit_reviews, delete_product, manage_products.
-        # manage_products(N27+N64) 는 등록 후 관리(목록/중지/재개/검수)를 담당한다.
+        # manage_products 는 등록 후 관리(목록/중지/재개/검수)를 담당한다.
         assert len(tools) == 8, f"도구가 8개여야 함: {len(tools)}"
 
     def test_tool_names_unchanged(self):

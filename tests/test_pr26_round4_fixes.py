@@ -67,7 +67,7 @@ def _build_payload(p: dict, cfg: dict) -> dict:
 # =========================================================================== #
 # ① 준비한 manufacturer/importer 가 최종 payload 에 실린다.
 #
-# prepare_listing → register_product 경로에서 prepared 의 top-level N7 값이
+# prepare_listing → register_product 경로에서 prepared 의 top-level 설정 유래 보고 값이
 # 최종 payload 에 실리는지 확인. 화면 그대로 승인하면 준비한 값이 버려지고
 # 설정 기본값이 나가는 결함을 고친다.
 #
