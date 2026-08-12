@@ -1097,6 +1097,94 @@ def _h(tk, json_ct=True):
     return h
 
 
+# ---------------------------------------------------------------------------
+# 토큰 만료(GW.AUTHN) 재시도 공통 지점.
+#
+# 네이버 문서 계약: 401 + 응답 본문 ``code == "GW.AUTHN"`` 은 토큰 만료.
+# 이 지점 하나에서 토큰을 1회 재발급하고 요청을 1회 재시도한다.
+# - 재시도는 정확히 1회. 두 번째 실패는 그대로 올린다(무한 재시도 금지).
+# - 401 만으로 재시도하지 않는다 — 본문 ``code == "GW.AUTHN"`` 을 함께 본다.
+# - 본문이 JSON 이 아니거나 ``code`` 가 없으면 재시도하지 않는다.
+# - 토큰·시크릿·서명 값은 절대 남기지 않는다(비밀값 로그 유출 금지).
+#
+# 11곳의 API 호출부가 이 지점을 경유한다(중복 방지). 기존 호출부 시그니처는
+# 유지된다 — 헬퍼가 응답을 그대로 돌려주고, 호출부가 기존 방식으로 소비한다.
+# ---------------------------------------------------------------------------
+_AUTHN_RETRY_EVENTS: list[dict] = []
+
+# 게이트웨이 인증만료 코드 (네이버 문서 고정값).
+_GW_AUTHN_CODE = "GW.AUTHN"
+
+
+def _is_authn_expired_response(response) -> bool:
+    """응답이 401 + ``{"code": "GW.AUTHN"}`` 인지 판정.
+
+    본문이 JSON 이 아니거나 ``code`` 키가 없으면 False (재시도 안 함).
+    """
+    if response is None or response.status_code != 401:
+        return False
+    try:
+        body = response.json()
+    except (ValueError, OSError):
+        return False
+    return isinstance(body, dict) and body.get("code") == _GW_AUTHN_CODE
+
+
+# 지원하는 HTTP 메서드 집합. ``_api_request`` 는 ``getattr(requests, <verb>)``
+# 로 런타임 조회하여 호출한다 — 시험이 ``naver_client.requests.get`` 등을
+# 몽키패치하면 그 패치가 즉시 반영되어야 한다. 미리 캡처한 함수 참조를
+# 딕셔너리에 넣으면 패치가 반영되지 않아 기존 시험이 실제 네트워크로
+# 나가는 회귀가 생긴다.
+_SUPPORTED_METHODS = frozenset({"GET", "POST", "PUT", "DELETE"})
+
+
+def _api_request(method, url, *, tk, header_builder, **kwargs):
+    """``requests.<verb>`` 로 위임하는 공통 API 호출 지점.
+
+    ``method`` 에 따라 ``requests.get`` / ``requests.post`` / ``requests.put`` /
+    ``requests.delete`` 로 위임한다(런타임 ``getattr`` 조회). 이 위임은
+    기존 시험이 감시하던 호출 표면을 유지하기 위함이다.
+
+    401 + ``GW.AUTHN`` 시 토큰을 1회 재발급(``get_token()``) 하고 요청을
+    1회 재시도한다. 재시도도 같은 위임 함수를 탄다. 그 외(403·500·401-타코드·
+    JSON아님)는 그대로 반환한다.
+
+    Args:
+        method: HTTP 메서드 문자열 (``"GET"``·``"POST"``·``"PUT"``·``"DELETE"``).
+        url: 전체 URL.
+        tk: 현재 액세스 토큰.
+        header_builder: ``tk`` 를 받아 헤더 dict 를 반환하는 호출 가능 객체
+            (``_h`` 의 부분 적용). 토큰 재발급 시 새 토큰으로 재생성한다.
+        **kwargs: 위임 함수에 전달할 추가 인자(``data``·``timeout``·…).
+            ``headers`` 는 ``header_builder`` 가 생성하므로 넘기지 않는다.
+
+    Returns:
+        ``requests.Response``.
+    """
+    verb_name = method.upper()
+    if verb_name not in _SUPPORTED_METHODS:
+        raise ValueError(f"지원하지 않는 HTTP 메서드: {method!r}")
+    # 런타임 조회 — 시험의 몽키패치(naverc_client.requests.get 등) 가 반영된다.
+    verb = getattr(requests, verb_name.lower())
+    kwargs["headers"] = header_builder(tk)
+    r = verb(url, **kwargs)
+    if not _is_authn_expired_response(r):
+        return r
+    # 401 + GW.AUTHN — 토큰 재발급 1회 + 재시도 1회.
+    # 재시도도 같은 위임 함수(verb)를 탄다 — 두 번째 호출도 시험 패치에 잡혀야 한다.
+    new_tk = get_token()
+    _AUTHN_RETRY_EVENTS.append(
+        {
+            "url": url,
+            "method": verb_name,
+            "retried": True,
+            # 비밀값(토큰/시크릿) 은 남기지 않는다 — 사실(재시도함)만 기록.
+        }
+    )
+    kwargs["headers"] = header_builder(new_tk)
+    return verb(url, **kwargs)
+
+
 def _guess_image_mime(path):
     """파일 확장자에서 MIME 타입 추정. (mimetypes 모듈이 종종 누락하는 케이스 보강)"""
     ext = os.path.splitext(path)[1].lower().lstrip(".")
@@ -1122,9 +1210,11 @@ def upload_images(paths, tk=None):
             fh = open(p, "rb")
             opened_files.append(fh)
             files.append(("imageFiles", (os.path.basename(p), fh, _guess_image_mime(p))))
-        r = requests.post(
+        r = _api_request(
+            "POST",
             BASE + "/external/v1/product-images/upload",
-            headers=_h(tk, False),
+            tk=tk,
+            header_builder=lambda t: _h(t, False),
             files=files,
             timeout=120,
         )
@@ -1145,9 +1235,11 @@ def _json_or_text_response(response):
 
 
 def _post_product_payload(payload, tk):
-    r = requests.post(
+    r = _api_request(
+        "POST",
         BASE + "/external/v2/products",
-        headers=_h(tk),
+        tk=tk,
+        header_builder=lambda t: _h(t),
         data=json.dumps(payload).encode("utf-8"),
         timeout=60,
     )
@@ -1469,9 +1561,11 @@ def seller_tag_autostrip_meta(body):
 def update_product(channel_no, payload, tk=None):
     """PUT /external/v2/products/channel-products/{channelNo}."""
     tk = tk or get_token()
-    r = requests.put(
+    r = _api_request(
+        "PUT",
         BASE + f"/external/v2/products/channel-products/{channel_no}",
-        headers=_h(tk),
+        tk=tk,
+        header_builder=lambda t: _h(t),
         data=json.dumps(payload).encode("utf-8"),
         timeout=60,
     )
@@ -1480,9 +1574,11 @@ def update_product(channel_no, payload, tk=None):
 
 def get_product(origin_no, tk=None):
     tk = tk or get_token()
-    r = requests.get(
+    r = _api_request(
+        "GET",
         BASE + f"/external/v2/products/origin-products/{origin_no}",
-        headers=_h(tk, False),
+        tk=tk,
+        header_builder=lambda t: _h(t, False),
         timeout=20,
     )
     return r.status_code, (r.json() if r.status_code == 200 else r.text)
@@ -1500,9 +1596,11 @@ def delete_origin_product(origin_product_no, tk=None):
     호출자(mcp_server)가 입력 검증·확인·로컬 기록 정리를 담당한다.
     """
     tk = tk or get_token()
-    r = requests.delete(
+    r = _api_request(
+        "DELETE",
         BASE + f"/external/v2/products/origin-products/{origin_product_no}",
-        headers=_h(tk, False),
+        tk=tk,
+        header_builder=lambda t: _h(t, False),
         timeout=20,
     )
     return r.status_code, _json_or_text_response(r)
@@ -1536,9 +1634,11 @@ def search_products(page: int = 1, size: int = 10, tk=None):
         API 호출 래퍼다 — 값을 해석·변환·추정하지 않는다.
     """
     tk = tk or get_token()
-    r = requests.post(
+    r = _api_request(
+        "POST",
         BASE + "/external/v1/products/search",
-        headers=_h(tk),
+        tk=tk,
+        header_builder=lambda t: _h(t),
         data=json.dumps({"page": int(page), "size": int(size)}).encode("utf-8"),
         timeout=20,
     )
@@ -1586,9 +1686,11 @@ def fetch_product_inspections(page: int = 1, size: int = 100, tk=None):
         p_int, s_int = 1, 100
     params["page"] = p_int
     params["size"] = s_int
-    r = requests.get(
+    r = _api_request(
+        "GET",
         BASE + "/external/v1/product-inspections/channel-products",
-        headers=_h(tk, False),
+        tk=tk,
+        header_builder=lambda t: _h(t, False),
         params=params,
         timeout=20,
     )
@@ -1620,9 +1722,11 @@ def recommend_tags(keyword, tk=None):
         ``[{"code": int, "text": str}, ...]``. 실패 시 body 는 응답 본문.
     """
     tk = tk or get_token()
-    r = requests.get(
+    r = _api_request(
+        "GET",
         BASE + "/external/v2/tags/recommend-tags",
-        headers=_h(tk, False),
+        tk=tk,
+        header_builder=lambda t: _h(t, False),
         params={"keyword": str(keyword or "")},
         timeout=20,
     )
@@ -1656,9 +1760,11 @@ def get_category_attributes(category_id, tk=None):
     """
     tk = tk or get_token()
     # [가정] 쿼리 파라미터명 categoryId — 문서 실측 전 관례 추정.
-    r = requests.get(
+    r = _api_request(
+        "GET",
         BASE + "/v1/product-attributes/attributes",
-        headers=_h(tk, False),
+        tk=tk,
+        header_builder=lambda t: _h(t, False),
         params={"categoryId": str(category_id or "")},
         timeout=20,
     )
@@ -1699,9 +1805,11 @@ def restricted_tags(tags, tk=None):
         # 쉼표 연결 — 실측 계약. None/빈 값은 빈 문자열로(400 유도).
         joined = ",".join(str(t or "").strip() for t in tags if str(t or "").strip())
     tk = tk or get_token()
-    r = requests.get(
+    r = _api_request(
+        "GET",
         BASE + "/external/v2/tags/restricted-tags",
-        headers=_h(tk, False),
+        tk=tk,
+        header_builder=lambda t: _h(t, False),
         params={"tags": joined},
         timeout=20,
     )
