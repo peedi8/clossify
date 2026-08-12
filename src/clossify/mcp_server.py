@@ -3423,15 +3423,20 @@ def delete_product(
     #   - 이 도구는 ``confirm=True`` 게이트를 통과한 명시적 호출이므로, 원래 없던
     #     상품을 지우려는 경우의 위해가 낮다(이미 목표 상태 달성).
     #
-    # 증명: 재시도가 일어났는지 **단조 증가 카운터**(``_AUTHN_RETRY_COUNT``)
-    # 변화로 감지한다. 과거엔 ``len(_AUTHN_RETRY_EVENTS)`` 로 판정했으나,
-    # 그 버퍼는 ``deque(maxlen=1000)`` 이라 **가득 차면 ``len()`` 이 안
-    # 변한다** — 그 시점부터 영구히 "재시도 없었음"으로 잘못 판정했다
-    # (WO PR #27 8라운드 ①). 단조 카운터는 버퍼 크기와 무관하게 매
-    # 재시도마다 올라가므로 포화 상태에서도 정확하다.
-    _retry_count_before = naver_client._AUTHN_RETRY_COUNT
+    # 증명: 재시도가 일어났는지 **이 요청 한 건** 의 사실로 알아낸다
+    # (WO PR #27 9라운드). 과거엔 ``_AUTHN_RETRY_EVENTS`` 길이 →
+    # ``_AUTHN_RETRY_COUNT`` 단조 증가값 을 읽었으나, 둘 다 **프로세스 전역
+    # 상태** 다 — MCP 도구 호출이 겹치면 무관한 다른 요청이 카운터/버퍼를
+    # 올리고, 이 삭제가 첫 시도 평범 404 를 받아도 "재시도됐다"고 거짓
+    # 판정했다. 그 결과 원격에 상품이 남아 있는데 "삭제 성공"으로 보고하고
+    # 로컬 등록 기록을 지웠다. 이제 ``delete_origin_product`` 에 가변 컨테이너를
+    # 넘기고, 그 컨테이너에는 **이 DELETE 호출 한 건** 안에 재시도가 일어났는지
+    # 만 기록된다. 다른 요청이 컨테이너를 건드릴 수 없다.
+    retried_signal: dict[str, bool] = {}
     try:
-        status_code, body = naver_client.delete_origin_product(normalized_no)
+        status_code, body = naver_client.delete_origin_product(
+            normalized_no, retried_out=retried_signal
+        )
     except Exception as exc:  # _sanitize_error 로 민감 정보 마스킹.
         return {
             "ok": False,
@@ -3444,9 +3449,10 @@ def delete_product(
     ok = isinstance(status_code, int) and 200 <= status_code < 300
     if not ok:
         # 비 2xx — 하지만 재시도 후 "이미 없음"(404) 이면 삭제 성공으로 인정.
-        # 단조 증가 카운터가 바뀌었는지로 "재시도가 있었나"를 판정한다.
-        # ``len(_AUTHN_RETRY_EVENTS)`` 는 deque 포화 시 변하지 않아 쓸 수 없다.
-        _retry_happened = _retry_count_before < naver_client._AUTHN_RETRY_COUNT
+        # **이 요청 한 건** 안에 재시도가 일어났는지를 컨테이너에서 읽는다
+        # (전역 카운터/버퍼 아님). 컨테이너에 ``retried`` 키가 있으면 이 DELETE
+        # 가 401+GW.AUTHN 으로 1회 재시도된 것이다.
+        _retry_happened = retried_signal.get("retried", False)
         if _retry_happened and status_code == 404:
             # 첫 DELETE 가 성공했고 재시도가 404 를 받은 경우 — 멱등 성공.
             # 로컬 기록 정리로 넘어간다. ``ok`` 를 True 로 바꾼다.

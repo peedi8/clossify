@@ -1374,6 +1374,16 @@ def _api_request(
 
     Returns:
         ``requests.Response``.
+
+    **요청 단위 재시도 사실 (WO PR #27 9라운드)**: 이 함수가 **이 호출 한 건**
+        안에 재시도가 일어났는지를 응답 객체의 ``_clossify_retried`` 속성으로
+        호출자에게 직접 알려준다. ``True`` 면 이 응답이 재시도의 결과(또는
+        재시도 후의 최종 응답) 임을 뜻한다. 재시도가 없었으면 속성을 아예
+        두지 않는다(예: ``r.__dict__`` 에 ``_clossify_retried`` 가 없음).
+        이 사실은 **오직 이 응답 객체에 묶여 있다** — 프로세스 전역
+        카운터(``_AUTHN_RETRY_COUNT``) 나 공유 버퍼(``_AUTHN_RETRY_EVENTS``)
+        를 읽지 않는다. MCP 도구 호출이 겹쳐 다른 요청이 전역 카운터를 올려도
+        이 응답의 속성은 영향받지 않는다.
     """
     global _AUTHN_RETRY_COUNT
     verb_name = method.upper()
@@ -1384,6 +1394,7 @@ def _api_request(
     kwargs["headers"] = header_builder(tk)
     r = verb(url, **kwargs)
     if not _is_authn_expired_response(r):
+        # 재시도 없음 → 속성 미부여(속성 부재 = 재시도 안 함).
         return r
     # 401 + GW.AUTHN 이지만 allow_retry=False → 재시도하지 않고 원 응답 반환.
     # 생성 POST 등 되돌리기 어려운 요청은 여기서 멈춘다.
@@ -1433,12 +1444,18 @@ def _api_request(
             # 비밀값(토큰/시크릿) 은 남기지 않는다 — 사실(재시도함)만 기록.
         }
     )
-    # 단조 증가 카운터 — ``deque(maxlen=...)`` 의 ``len()`` 이 포화 상태에서
-    # 멈추는 한계를 넘어 "이번 요청 안에 재시도가 있었나"를 버퍼 크기와
-    # 무관하게 판정할 수 있게 한다 (WO PR #27 8라운드 ①).
+    # 단조 증가 카운터 — 관측용(진단) 으로 남긴다. 단, **삭제 판정은 이 전역
+    # 값을 읽지 않는다** (WO PR #27 9라운드) — MCP 호출이 겹치면 무관한 요청이
+    # 카운터를 올려 이 요청이 "재시도됐다"고 거짓으로 읽힌다. 대신 이 응답
+    # 객체의 ``_clossify_retried`` 속성으로 호출자에게 **이 요청 한 건** 의
+    # 재시도 사실을 직접 전달한다.
     _AUTHN_RETRY_COUNT += 1
     kwargs["headers"] = header_builder(new_tk)
-    return verb(url, **kwargs)
+    retried_r = verb(url, **kwargs)
+    # 요청 단위 사실: 이 응답 객체에만 "재시도했다"를 표시한다.
+    # 전역/공유 상태를 읽는 호출자는 없다.
+    retried_r._clossify_retried = True
+    return retried_r
 
 
 def _guess_image_mime(path):
@@ -1879,7 +1896,7 @@ def get_product(origin_no, tk=None):
     return r.status_code, (r.json() if r.status_code == 200 else r.text)
 
 
-def delete_origin_product(origin_product_no, tk=None):
+def delete_origin_product(origin_product_no, tk=None, *, retried_out=None):
     """DELETE /external/v2/products/origin-products/{originProductNo}.
 
     2026-08-05 실측 확인: HTTP 200, 본문 ``{"data": true}``. 라이브 스토어에서
@@ -1889,6 +1906,19 @@ def delete_origin_product(origin_product_no, tk=None):
     (``get_product``/``update_product``) 규약을 그대로 따른다 — 일관성을 해치는
     변형을 만들지 않는다. 본 함수는 순수 API 래퍼다: 단일 대상만 지우고,
     호출자(mcp_server)가 입력 검증·확인·로컬 기록 정리를 담당한다.
+
+    Args:
+        origin_product_no: 삭제 대상 원상품 번호.
+        tk: 액세스 토큰. ``None`` 이면 ``get_token()`` 으로 발급.
+        retried_out: **요청 단위 재시도 사실 전달 (WO PR #27 9라운드)**.
+            ``None`` 이 아닌 ``dict`` 를 넘기면, 이 호출 한 건 안에 401+
+            ``GW.AUTHN`` 재시도가 일어났을 때 ``retried_out["retried"] = True``
+            를 **쓴다**. 재시도가 없으면 이 키를 **쓰지 않는다** (키 부재 =
+            재시도 안 함). 호출자는 이 컨테이너에서 **이 요청 한 건** 의 재시도
+            사실을 읽는다 — 전역 카운터(``_AUTHN_RETRY_COUNT``) 를 읽으면 MCP
+            도구 호출이 겹칠 때 무관한 요청이 카운터를 올려 거짓 양성이 난다.
+            기본값 ``None`` 이면 기존 동작(재시도 사실을 호출자에게 넘기지 않음)
+            이 유지되므로 **기존 호출부 시그니처가 깨지지 않는다**.
     """
     injected_tk = tk is not None
     tk = tk or get_token()
@@ -1902,6 +1932,10 @@ def delete_origin_product(origin_product_no, tk=None):
         injected_token=injected_tk,
         timeout=20,
     )
+    # 요청 단위 재시도 사실을 응답 객체에서 직접 읽어 호출자 컨테이너에 기록.
+    # 전역 상태를 읽지 않는다 — 이 응답에만 사실이 묶여 있다.
+    if isinstance(retried_out, dict) and getattr(r, "_clossify_retried", False):
+        retried_out["retried"] = True
     return r.status_code, _json_or_text_response(r)
 
 
