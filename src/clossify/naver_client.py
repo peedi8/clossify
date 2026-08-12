@@ -211,11 +211,22 @@ def _kc_config():
 
 
 def _first_value(*values, default=""):
+    """첫 번째 "실질값" 을 반환한다.
+
+    **자리표시자 판정은 ``_has_text`` 와 같은 단일 진실 공급원을 쓴다.**
+    (5라운드 감리 ①) 과거에는 ``_first_value`` 가 None/빈 문자열만 걸러내고
+    자리표시자(``REPLACE_WITH_ORIGIN_CONTENT`` 등)를 그대로 반환했다 —
+    예시 설정을 복사만 한 사용자의 자리표시자가 규제 신고값으로 전송되었다.
+    반면 출처 보고(``_has_text``)는 같은 자리표시자를 "미설정" 으로 봐서,
+    "자리표시자를 보내면서 설정에서 안 채워졌다고 보고" 하는 모순이 있었다.
+
+    이제 ``_has_text`` 를 호출해 자리표시자를 동일하게 걸러낸다 — 값을 고르는
+    쪽과 출처를 말하는 쪽이 같은 판정을 쓴다. 판정을 두 벌 유지하면 같은 병이
+    재발한다 (이 PR 에서 세 번째).
+    """
     for value in values:
-        if value not in (None, ""):
-            text = str(value).strip()
-            if text:
-                return text
+        if _has_text(value):
+            return str(value).strip()
     return default
 
 
@@ -396,6 +407,17 @@ def _resolve_delivery_fee_with_slot(p, cfg_notice) -> tuple[int, str]:
         # 건너뛴 값을 보고가 "설정값" 이라고 말하면 실제(3000 기본값)와 어긋난다.
         if "REPLACE_WITH_" in text:
             continue
+        # **5라운드 감리 ⑥**: 불리언(True/False)이 ``int()`` 로 변환되어
+        # ``True`` → ``1``, ``False`` → ``0`` 이 되는 것을 막는다.
+        # ``bool`` 은 ``int`` 의 서브클래스이므로 ``isinstance(raw, int)`` 가
+        # 통과하지만, 배송비로 불리언을 받는 것은 입력 오류다. 자리표시 포함한
+        # 기존 오류 형식(숫자가 아닙니다) 을 유지한다.
+        if isinstance(raw, bool):
+            raise ValueError(
+                f"배송비(delivery_fee) 값이 숫자가 아닙니다: {raw!r} "
+                f"(자리: {slot_label}). "
+                "불리언(True/False)은 배송비로 유효하지 않습니다."
+            )
         # 감리 ④ (4라운드): float 입력(예 3000.5)이 ``int()`` 로 조용히
         # 잘리는 것을 막는다 — ``int(3000.5)`` → ``3000`` 은 폐기가 아니라
         # 잘림이며, 원단위가 없는 한국 통화에서 소수 배송비는 입력 오류다.
@@ -704,11 +726,20 @@ def _has_text(value) -> bool:
     (감리 지적). 본 함수는 ``qa_agents._is_placeholder_value`` 에 판정을 위임한다
     — 새 판정 함수를 만들지 않고 정본 하나를 쓴다.
 
+    **5라운드 감리 ①**: ``config.example.json`` 의 자리표시자
+    (``REPLACE_WITH_...`` 접두사) 도 "미설정" 으로 본다. ``_is_placeholder_value``
+    의 토큰 집합에는 이 접두사가 없어서, 값을 고르는 쪽(``_first_value``) 과
+    출처를 말하는 쪽(본 함수) 이 서로 다른 판정을 쓰는 모순이 있었다. 같은
+    판정을 쓰게 한다 — 판정을 두 벌 유지하면 같은 병이 재발한다.
+
     Returns:
-        ``True`` = 실질 정보가 있는 값. ``False`` = None/빈/공백/placeholder.
+        ``True`` = 실질 정보가 있는 값. ``False`` = None/빈/공백/placeholder/
+        ``REPLACE_WITH_`` 자리표시자.
     """
     from . import qa_agents
 
+    if isinstance(value, str) and "REPLACE_WITH_" in value:
+        return False
     return not qa_agents._is_placeholder_value(value)
 
 

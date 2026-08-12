@@ -555,6 +555,13 @@ def _apply_approval_edits(
                         result["_rejected"].append(f)
                 elif v:
                     result[top_key] = v
+                else:
+                    # **5라운드 감리 ③**: 빈 top-level 편집(지우기)을 조용히
+                    # 무시하지 않는다 — "보이게 거부" 로 다룬다. 사용자가 값을
+                    # 지웠다고 믿는데 이전 설정값이 그대로 신고되면 규제 결함이다.
+                    # 지우기 허용 여부는 정책 판단이므로 임의 확정하지 않고,
+                    # 안전한 쪽(거부 표시) 을 기본으로 한다.
+                    result["_rejected"].append(f)
             else:
                 if result["notice"] is None:
                     result["notice"] = {}
@@ -2768,21 +2775,34 @@ def register_product(
             if _prepared_fee is not None:
                 delivery_fee = _prepared_fee
                 filled_from_prepared.append("delivery_fee")
+
+    # ------------------------------------------------------------------ #
+    # **5라운드 감리 ②**: manufacturer·importer 복원은 ``_needs_any`` 와
+    # 무관하게 수행한다. MCP 등록 시그니처에 manufacturer/importer 인자가
+    # 없으므로, 호출자가 다른 입력을 전부 명시하면(배송비 포함)
+    # ``_needs_any`` 가 거짓이 되어 블록이 스킵되고, prepared 의 N7 값이
+    # 복원되지 않는다 — 준비한 신고값이 조용히 설정 기본값·빈 값으로
+    # 대체된다. 복원을 ``_needs_any`` 블록 밖으로 뺀다.
+    # ------------------------------------------------------------------ #
+    if _resolved_payload is not None:
+        _fp_product_n7 = (
+            _resolved_payload.get("product")
+            if isinstance(_resolved_payload.get("product"), dict)
+            else {}
+        )
         # manufacturer·importer: prepared 의 top-level N7 규제 신고값 복원.
-        # **감리 ①** (4라운드): MCP 등록 시그니처에 manufacturer/importer 인자가
-        # 없으므로, prepare_listing 이 저장한 명시값이 복원되지 않으면 화면에서
-        # 승인한 값이 버려지고 config 폴백값(또는 빈 문자열)이 나간다 — 규제
-        # 신고값이 사용자가 본 것과 다르게 전송되는, 이 프로젝트가 가장 심각하게
-        # 다루는 종류의 결함. delivery_fee 와 같은 자리·같은 방식으로 복원한다.
-        # 승인 편집이 있으면 아래 _approval_top_level_edits 가 우선한다(명시 입력
-        # 우선 원칙). 복원한 값은 filled_from_prepared 에 기록한다 (조용한 복원 금지).
+        # **감리 ①** (4라운드): prepare_listing 이 저장한 명시값이 복원되지 않으면
+        # 화면에서 승인한 값이 버려지고 config 폴백값(또는 빈 문자열)이 나간다.
+        # 승인 편집이 있으면 _approval_top_level_edits 가 우선한다(명시 입력 우선).
+        # 복원한 값은 filled_from_prepared 에 기록한다 (조용한 복원 금지).
         for _n7_key in ("manufacturer", "importer"):
-            _prepared_n7 = _fp_product.get(_n7_key)
+            _prepared_n7 = _fp_product_n7.get(_n7_key)
             # 빈 문자열은 "명시값 없음" 과 같다 — 복원하지 않는다 (⑤ 원칙과 동일).
             if isinstance(_prepared_n7, str) and _prepared_n7.strip():
                 # 승인 편집이 이미 값을 넣었으면 그것이 우선 (명시 입력 우선).
                 _approval_top_level_edits.setdefault(_n7_key, _prepared_n7.strip())
-                filled_from_prepared.append(_n7_key)
+                if _n7_key not in filled_from_prepared:
+                    filled_from_prepared.append(_n7_key)
 
     # ------------------------------------------------------------------ #
     # 복원 후 재검증 — prepared 가 검증을 우회하는 뒷문이 되면 안 된다.
@@ -2899,8 +2919,12 @@ def register_product(
     # delivery_fee 가 명시적으로 주어진 경우에만 상품 dict 에 넣는다.
     # None 이면 키를 넣지 않는다 — _notice_defaults 가 config 폴백으로
     # 판정할 수 있도록 (기본값 3000 은 _notice_defaults 한 곳에서만 결정).
+    # **5라운드 감리 ④**: 진입점에서 ``int()`` 로 깎지 않는다 — 소수점(3000.5)
+    # 이 ``int()`` 로 잘려서 통과하는 것을 막는 가드가 정본 해석기
+    # (``_resolve_delivery_fee_with_slot``) 에 있는데, 여기서 미리 깎으면
+    # 가드가 볼 게 없다. 원값을 그대로 넘기고 변환·검증은 정본 한 곳에서만.
     if delivery_fee is not None:
-        product["delivery_fee"] = int(delivery_fee)
+        product["delivery_fee"] = delivery_fee
     # 감리 ④: 승인 편집에서 온 top-level 규제값(origin_content·importer·
     # manufacturer) 을 상품 dict 에 싣는다 — 해석기가 p.<key> 에서 읽는다.
     # notice 딕셔너리가 아니라 이 자리에 있어야 승인한 수정이 실제로 반영된다.
