@@ -149,7 +149,7 @@ def _register_kitchen(*, product_notice, monkeypatch, isolated_prepared_dir):
     monkeypatch.delenv("COMMERCE_DRY_RUN", raising=False)
     captured: dict = {"payload": None, "calls": 0}
 
-    def _fake_post(payload, tk):
+    def _fake_post(payload, tk, **kwargs):
         captured["payload"] = copy.deepcopy(payload)
         captured["calls"] += 1
         return 200, {"originProductNo": "TEST-KITCHEN-1"}
@@ -196,7 +196,7 @@ def _register_etc(*, product_notice, monkeypatch, isolated_prepared_dir):
     monkeypatch.delenv("COMMERCE_DRY_RUN", raising=False)
     captured: dict = {"payload": None, "calls": 0}
 
-    def _fake_post(payload, tk):
+    def _fake_post(payload, tk, **kwargs):
         captured["payload"] = copy.deepcopy(payload)
         captured["calls"] += 1
         return 200, {"originProductNo": "TEST-ETC-1"}

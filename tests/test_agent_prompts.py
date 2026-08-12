@@ -360,3 +360,85 @@ def test_registration_agent_prompt_mentions_all_gating_args() -> None:
         f"{missing}. The client model cannot use a gate it has never been told "
         "about."
     )
+
+
+# ---------------------------------------------------------------------------
+# (g) [WO PR27 round-3, task ②] The ``정식`` prompt wording must be
+#     context-conditional, not an unconditional allow. The deterministic
+#     regex cannot distinguish food-category nouns (``한정식``·``가정식``·
+#     ``정식 도시락``) from claim-style uses (``정식 수입``·``정식 인증``),
+#     so the agent prompt is the only layer that blocks the claim form. If
+#     this test fails the prompt has drifted back to an unconditional allow.
+# ---------------------------------------------------------------------------
+# Food-category nouns that MUST still be allowed by the agent.
+_JEONGSIK_FOOD_ALLOW = [
+    "한정식",
+    "가정식",
+    "정식 도시락",
+]
+# Claim-style uses that the agent MUST refuse.
+_JEONGSIK_CLAIM_DISALLOW = [
+    "정식 수입",
+    "정식 인증",
+]
+
+
+def test_naming_agent_jeongsik_is_context_conditional() -> None:
+    """naming_agent.md must distinguish food nouns (allow) from claim uses
+    (disallow) for ``정식``.
+
+    The deterministic ``BANNED_CLAIM_RE`` deliberately omits ``정식`` because it
+    cannot tell ``한정식`` (food) from ``정식 수입`` (claim). The agent prompt
+    is the backstop — it must explicitly (a) allow the food-category nouns and
+    (b) refuse the claim-style uses. An unconditional allow on either side is a
+    regression (either blocks legitimate food products or lets claims through).
+    """
+    prompt_path = _AGENTS_DIR / "naming_agent.md"
+    assert prompt_path.exists(), "naming_agent.md is missing."
+    text = prompt_path.read_text(encoding="utf-8")
+    # All three food nouns must appear so the model knows to keep them.
+    missing_food = [w for w in _JEONGSIK_FOOD_ALLOW if w not in text]
+    assert not missing_food, (
+        "naming_agent.md does not list the food-category noun(s) "
+        f"{missing_food} for ``정식`` — the model has no signal that these "
+        "are allowed."
+    )
+    # Both claim-style uses must appear so the model knows to refuse them.
+    missing_claim = [w for w in _JEONGSIK_CLAIM_DISALLOW if w not in text]
+    assert not missing_claim, (
+        "naming_agent.md does not list the claim-style use(s) "
+        f"{missing_claim} for ``정식`` — the model has no signal that these "
+        "are disallowed. The ``정식`` exception has drifted back to an "
+        "unconditional allow."
+    )
+
+
+def test_compliance_rules_jeongsik_describes_agent_context_split() -> None:
+    """COMPLIANCE_RULES.md ``정식`` entry must mention the agent-side context
+    split (food nouns allowed, claim uses refused).
+
+    This is the single-source-of-truth document; if it does not describe the
+    agent's role, the agent prompt's behaviour looks arbitrary and a future
+    contributor will not know to preserve the split when editing either file.
+    """
+    rules_path = _AGENTS_DIR / "COMPLIANCE_RULES.md"
+    assert rules_path.exists(), "COMPLIANCE_RULES.md is missing."
+    text = rules_path.read_text(encoding="utf-8")
+    # The rules doc must reference the agent layer and at least one food noun
+    # and one claim use so the split is described concretely.
+    assert "naming_agent" in text or "에이전트" in text, (
+        "COMPLIANCE_RULES.md ``정식`` entry does not mention the agent layer "
+        "that enforces the context split."
+    )
+    has_food = any(w in text for w in _JEONGSIK_FOOD_ALLOW)
+    has_claim = any(w in text for w in _JEONGSIK_CLAIM_DISALLOW)
+    assert has_food, (
+        "COMPLIANCE_RULES.md ``정식`` entry does not mention any food-category "
+        f"noun ({_JEONGSIK_FOOD_ALLOW}) — the allow-side of the split is "
+        "undocumented."
+    )
+    assert has_claim, (
+        "COMPLIANCE_RULES.md ``정식`` entry does not mention any claim-style "
+        f"use ({_JEONGSIK_CLAIM_DISALLOW}) — the disallow-side of the split "
+        "is undocumented."
+    )
