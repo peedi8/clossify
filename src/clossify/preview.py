@@ -152,16 +152,36 @@ def _collect_notice_rows(
 
     # 공통 5필드 + 고시 본문에 있는 모든 필드를 행으로.
     candidate_fields = list(naver_client._NOTICE_COMMON_FIELDS)
+    # N7 보고 필드(origin_content·importer·manufacturer·delivery_fee)는
+    # 사용자 고시 본문에 보통 없으므로 후보에 명시적으로 포함시킨다.
+    # 이 필드들이 config 유래일 때 미리보기에 각각 한 줄씩 등장해야 한다
+    # (감리 지적: "보고 필드가 안 보인다" — 기능 목적 자체가 무력화).
+    for n7_field in ("origin_content", "importer", "manufacturer", "delivery_fee"):
+        if n7_field not in candidate_fields:
+            candidate_fields.append(n7_field)
     for key in user_body:
         if key not in candidate_fields:
             candidate_fields.append(str(key))
+
+    # config 키 별칭 맵: 보고명 → config 에서 값을 읽을 때 쓸 키 목록.
+    # delivery_fee 는 config 에서 deliveryFee(camelCase) 로도 올 수 있다.
+    _cfg_key_aliases: dict[str, tuple[str, ...]] = {
+        "delivery_fee": ("delivery_fee", "deliveryFee"),
+    }
 
     for field in candidate_fields:
         if field in user_body:
             _add(field, user_body[field], "사용자 입력")
         elif field in cfg_filled:
-            cfg_value = cfg_notice.get(field)
-            if cfg_value:
+            # config 에서 값을 읽는다. 별칭이 있으면 별칭 키도 확인.
+            cfg_keys = _cfg_key_aliases.get(field, (field,))
+            cfg_value = None
+            for ck in cfg_keys:
+                cv = cfg_notice.get(ck)
+                if cv is not None and str(cv).strip():
+                    cfg_value = cv
+                    break
+            if cfg_value is not None:
                 _add(field, cfg_value, "설정 기본값")
             else:
                 _add(field, "", "미제공")

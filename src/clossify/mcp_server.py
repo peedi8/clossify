@@ -859,6 +859,10 @@ _POLICY_CONFIG_KEYS: tuple[tuple[str, ...], ...] = (
     ("smartstore_notice_defaults", "qualityAssuranceStandard"),
     ("smartstore_notice_defaults", "compensationProcedure"),
     ("smartstore_notice_defaults", "troubleShootingContents"),
+    # delivery_fee 는 배송비 상거래 조건 — fail-closed 대상이 아니므로
+    # 미설정이 등록을 막지 않는다 (3000 유지). 하지만 정책 키 인벤토리에
+    # 편입해 미설정을 진단하게 한다 (설정 가능하다고 광고했으면 자리를 준다).
+    ("smartstore_notice_defaults", "delivery_fee"),
 )
 
 
@@ -1905,7 +1909,7 @@ def register_product(
     tags: list[str] | None = None,
     status: str = "SALE",
     stock: int = 1,
-    delivery_fee: int = 3000,
+    delivery_fee: int | None = None,
     courier: str = "",
     notice: dict[str, Any] | None = None,
     preview_confirmed: bool = False,
@@ -1956,7 +1960,11 @@ def register_product(
             기본값 ``"SALE"``.
         stock: 단일 품목(옵션 없음)일 때의 재고. ``options`` 제공 시 무시되고
             옵션별 재고 합으로 계산된다.
-        delivery_fee: 기본 배송비 (KRW). 기본 3000.
+        delivery_fee: 기본 배송비 (KRW). ``None`` (기본값) 이면 상품 dict 에 키를
+            넣지 않아 ``_notice_defaults`` 가 config 폴백으로 판정한다
+            (``smartstore_notice_defaults.delivery_fee``). 명시적으로 주어지면
+            그 값이 우선한다. 최종 기본값 3000 은 ``_notice_defaults`` 한 곳에서만
+            결정된다.
         courier: 택배사 코드. 기본 ``""`` (빈 문자열 = 사용자가 명시적으로
             제공해야 함). ``naver_client._resolve_delivery_company`` 가
             ``p.courier`` → ``config.smartstore_notice_defaults.delivery_company``
@@ -2424,6 +2432,7 @@ def register_product(
     _need_options = options is None
     _need_option_groups = option_groups is None
     _need_deferred = deferred_notice_fields is None
+    _need_delivery_fee = delivery_fee is None
     filled_from_prepared: list[str] = []
 
     _needs_any = (
@@ -2434,6 +2443,7 @@ def register_product(
         or _need_options
         or _need_option_groups
         or _need_deferred
+        or _need_delivery_fee
     )
     if _needs_any and _resolved_payload is not None:
         _fill_pkey = _product_key
@@ -2535,6 +2545,13 @@ def register_product(
             if isinstance(_prepared_deferred, list) and _prepared_deferred:
                 deferred_notice_fields = list(_prepared_deferred)
                 filled_from_prepared.append("deferred_notice_fields")
+        # delivery_fee: prepared 에 저장된 값이 있으면 복원한다. 호출자가
+        # 명시적으로 넘기지 않은(_need_delivery_fee) 경우에만 — 명시 입력 우선.
+        if _need_delivery_fee:
+            _prepared_fee = _fp_product.get("delivery_fee")
+            if _prepared_fee is not None:
+                delivery_fee = _prepared_fee
+                filled_from_prepared.append("delivery_fee")
 
     # ------------------------------------------------------------------ #
     # 복원 후 재검증 — prepared 가 검증을 우회하는 뒷문이 되면 안 된다.
@@ -2646,9 +2663,13 @@ def register_product(
         "salePrice": int(price),
         "tags": list(tags) if tags else [],
         "stock": int(stock),
-        "delivery_fee": int(delivery_fee),
         "courier": courier,
     }
+    # delivery_fee 가 명시적으로 주어진 경우에만 상품 dict 에 넣는다.
+    # None 이면 키를 넣지 않는다 — _notice_defaults 가 config 폴백으로
+    # 판정할 수 있도록 (기본값 3000 은 _notice_defaults 한 곳에서만 결정).
+    if delivery_fee is not None:
+        product["delivery_fee"] = int(delivery_fee)
     if options:
         product["options"] = options
     if notice is not None:

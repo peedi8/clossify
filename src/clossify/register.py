@@ -427,14 +427,13 @@ def _build_product_dict(d, seo_title, category_id):
         sale_price = d.get("sell_price") or d.get("price")
     if sale_price is None:
         raise ValueError("salePrice(KRW) 가 필요합니다.")
-    return {
+    result = {
         "name": name[:50],
         "categoryId": str(category_id or d.get("categoryId") or d.get("category_id") or ""),
         "salePrice": int(sale_price),
         "options": d.get("options") or [],
         "tags": d.get("tags") or [],
         "courier": d.get("courier") or "",
-        "delivery_fee": d.get("delivery_fee", 3000),
         "notice": d.get("notice") or {},
         "as_tel": d.get("as_tel") or "",
         "as_guide": d.get("as_guide") or "",
@@ -442,6 +441,11 @@ def _build_product_dict(d, seo_title, category_id):
         "manufacturer": d.get("manufacturer") or "",
         "importer": d.get("importer") or "",
     }
+    # delivery_fee: 키가 있을 때만 넣는다 (기본값 3000 은 _notice_defaults
+    # 한 곳에서만 결정 — 키가 없으면 config 폴백이 발동해야 한다).
+    if "delivery_fee" in d:
+        result["delivery_fee"] = d.get("delivery_fee")
+    return result
 
 
 def _apply_qa_to_payload(payload, qa_result):
@@ -482,9 +486,12 @@ def _build_register_product_dict(d, name, category_id, *, resolved_tags=None):
         "salePrice": int(sale_price),
         "tags": tags_value,
         "stock": int(d.get("stock", 1)),
-        "delivery_fee": int(d.get("delivery_fee", 3000)),
         "courier": d.get("courier") or "",
     }
+    # delivery_fee: 키가 있을 때만 넣는다 (기본값 3000 은 _notice_defaults
+    # 한 곳에서만 결정 — 키가 없으면 config 폴백이 발동해야 한다).
+    if "delivery_fee" in d:
+        product["delivery_fee"] = int(d.get("delivery_fee"))
     if d.get("options"):
         product["options"] = d.get("options")
     notice = d.get("notice")
@@ -1806,7 +1813,8 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None, recommend_fn=None, r
             "as_tel": d.get("as_tel") or "",
             "as_guide": d.get("as_guide") or "",
             "courier": d.get("courier") or "",
-            "delivery_fee": d.get("delivery_fee", 3000),
+            # delivery_fee: 키가 있을 때만 넣는다 (기본값 3000 은 _notice_defaults
+            # 한 곳에서만 결정 — 키가 없으면 config 폴백이 발동해야 한다).
             # option_groups: 다축 옵션의 그룹 이름(예: ["색상","사이즈"]).
             # naver_client._option_group_list 가 "option_groups" 키를 읽어
             # optionCombinationGroupNames 를 채운다. 이 키가 빠지면 폴백으로
@@ -1834,6 +1842,10 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None, recommend_fn=None, r
     # 위에서 이미 원산지/allowlist 검증을 거친 ``sane_deferred`` 를 그대로 저장한다.
     # 컴플라이언스 검사에 넘긴 값과 저장하는 값이 같아야 준비 통과 → 등록 통과
     # 일관성이 성립한다. 여기서 다시 정제하면 검사에 쓴 값과 저장값이 어긋난다.
+    # delivery_fee: 키가 있을 때만 넣는다 (기본값 3000 은 _notice_defaults
+    # 한 곳에서만 결정 — 키가 없으면 config 폴백이 발동해야 한다).
+    if "delivery_fee" in d:
+        payload["product"]["delivery_fee"] = d.get("delivery_fee")
     if sane_deferred:
         payload["deferred_notice_fields"] = list(sane_deferred)
     if image_generation_meta is not None:

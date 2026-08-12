@@ -328,6 +328,47 @@ def _resolve_delivery_company(p, cfg_notice):
     return str(raw or "").strip()
 
 
+def _resolve_delivery_fee(p, cfg_notice) -> int:
+    """배송비(baseFee) 후보를 선택하고 정수로 변환한다.
+
+    후보 순서: ``p.delivery_fee`` → ``cfg.delivery_fee`` →
+    ``cfg.deliveryFee`` → 3000(기본값).
+
+    - **값이 없으면** (누락) → 3000 (회귀 없음).
+    - **값이 있는데 정수로 변환 불가** → ``ValueError``. 조용한 폴백 금지.
+      오류 메시지에 어느 자리(상품 입력 / 설정)에서 왔는지 적는다.
+
+    숫자 0 (무료배송) 은 유효한 명시값이다.
+    """
+    # 후보를 (값, 자리이름) 튜플로 모은다.
+    candidates = [
+        (p.get("delivery_fee"), "상품 입력(delivery_fee)"),
+        (cfg_notice.get("delivery_fee"), "설정(smartstore_notice_defaults.delivery_fee)"),
+        (cfg_notice.get("deliveryFee"), "설정(smartstore_notice_defaults.deliveryFee)"),
+    ]
+    for raw, slot in candidates:
+        if raw is None:
+            continue
+        text = str(raw).strip()
+        if not text:
+            continue
+        # config.example.json 의 REPLACE_WITH_... 자리표시자는 "미설정" 으로 취급.
+        # (나머지 시스템이 같은 규칙을 쓴다 — check_config 도 플레이스홀더를
+        # 미설정으로 본다). 자리표시자를 유효값으로 해석하면 int() 변환에서
+        # ValueError 가 나서 예시 복사→값 채우기 워크플로가 망가진다.
+        if "REPLACE_WITH_" in text:
+            continue
+        try:
+            return int(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"배송비(delivery_fee) 값이 숫자가 아닙니다: {raw!r} "
+                f"(자리: {slot}). "
+                "입력 오류가 의도치 않은 배송비로 실제 판매 중인 상품이 될 수 있습니다."
+            ) from exc
+    return 3000
+
+
 def _notice_defaults(p):
     cfg_notice = _notice_config()
     product_name = _first_value(p.get("name"), p.get("title_ko"), default="상품명")
@@ -460,15 +501,9 @@ def _notice_defaults(p):
         # 만들지 않는다. 후보 순서: p.delivery_fee(명시) → config → 3000.
         # config 키는 delivery_fee 와 camelCase deliveryFee 둘 다 받는다
         # (기존 _first_value 패턴과 동일). 어디서 왔는지는 보고한다(N7).
-        "delivery_fee": _int_value(
-            _first_value(
-                p.get("delivery_fee"),
-                cfg_notice.get("delivery_fee"),
-                cfg_notice.get("deliveryFee"),
-                default=3000,
-            ),
-            3000,
-        ),
+        # **값이 있는데 숫자가 아니면 오류** (조용한 폴백 금지). 누락(값 없음)
+        # → 3000 유지. 어느 자리(상품 입력 / 설정)인지 오류 메시지에 적는다.
+        "delivery_fee": _resolve_delivery_fee(p, cfg_notice),
         # 어떤 공통 5필드가 상품 입력이 아닌 config 에서 채워졌는지.
         # build_payload 가 이 값을 페이로드 루트의 notice_filled_from_config
         # 메타에 싣는다(비어있지 않을 때만). 묻지 않고 채워진 값이 조용히
@@ -677,17 +712,15 @@ def _per_product_filled_from_config(p, cfg_notice, user_bodies) -> list:
     """
     filled: list = []
 
-    # origin_content: _notice_defaults 의 made_in 과 동일한 후보 경로.
-    # 상품 입력: made_in / origin_content (top-level), 고시 본문에 직접 넣은 값.
-    # config: origin_content.
+    # origin_content: _notice_defaults 의 made_in 해석기가 실제로 소비하는
+    # 입력만 보고 억제 근거로 삼는다. 해석기 후보: p.made_in → p.origin_content
+    # → cfg.origin_content (중첩 고시 본문은 읽지 않는다). 따라서 user_bodies
+    # 의 countryOfOrigin 등은 출처 판정에서 제외 — 해석기가 거길 안 보므로
+    # "명시값 있음" 으로 억제하면 실제로는 config 값이 나가는데 보고가 사라진다.
+    # 중첩값을 해석기에 배선하는 것은 범위 밖이다 (동작 변경).
     if not _has_text(p.get("made_in")) and not _has_text(p.get("origin_content")):
-        if not any(
-            _has_text(b.get(k))
-            for b in user_bodies
-            for k in ("origin_content", "countryOfOrigin", "made_in", "originContent")
-        ):
-            if _has_text(cfg_notice.get("origin_content")):
-                filled.append("origin_content")
+        if _has_text(cfg_notice.get("origin_content")):
+            filled.append("origin_content")
 
     # importer: _notice_defaults 의 importer 와 동일한 후보 경로.
     if not _has_text(p.get("importer")):
@@ -719,7 +752,10 @@ def _per_product_filled_from_config(p, cfg_notice, user_bodies) -> list:
 
     # delivery_fee: 상거래 조건이므로 config 폴백이 있지만 보고한다.
     # 상품 입력에 명시값이 있으면 config 가 채운 게 아니다.
-    if not _has_text(p.get("delivery_fee")):
+    # **숫자 0 은 유효한 명시값(무료배송)** 이므로 _has_text 가 아니라
+    # 키 존재 여부로 판정한다 — _has_text(0) 은 False 다
+    # (qa_agents._is_placeholder_value(0) == True 이므로).
+    if "delivery_fee" not in p:
         if _has_text(cfg_notice.get("delivery_fee")) or _has_text(cfg_notice.get("deliveryFee")):
             filled.append("delivery_fee")
 
