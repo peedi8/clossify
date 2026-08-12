@@ -53,6 +53,12 @@ _COMMON_5 = (
     "troubleShootingContents",
 )
 
+# N7 — 상품마다 달라야 하는 규제값 중 config 폴백이 있는 필드.
+# _CFG_FULL / _CFG_EMPTY_COMMON 이 origin_content·manufacturer 를 가지고 있고
+# 테스트 상품(mcp_server.register_product 경유) 은 이 값을 상품 입력으로 주지
+# 않으므로, config 유래로 보고된다.
+_N7_FROM_CFG_FULL = ("origin_content", "manufacturer")
+
 # config 에 5개 공통 필드를 채운 notice 섹션(원산지/AS 정보 포함).
 _CFG_FULL = {
     "origin_area_code": "04",
@@ -198,32 +204,50 @@ class TestNoticeFilledFromConfigInAllReturns:
     """(a)(b)(c) MCP register_product 반환의 모든 경로에 메타 키가 있다."""
 
     def test_a_success_return_has_filled_five(self, monkeypatch, isolated_prepared_dir):
-        """(a) config 로 5필드를 채운 성공 경로 → 반환에 5개 정확히."""
+        """(a) config 로 5필드를 채운 성공 경로 → 공통 5 + N7 필드 보고.
+
+        N7 확장: origin_content·manufacturer 도 config 유래로 보고에 등장한다.
+        테스트 상품(mcp_server 경유) 은 made_in/manufacturer 를 상품 입력으로
+        주지 않으므로 config 값이 채워진 것으로 보고된다.
+        """
         result, _ = _register_with_dry_run_off(notice_cfg=_CFG_FULL, monkeypatch=monkeypatch)
         assert result["ok"] is True, f"등록이 실패함: {result}"
-        assert "notice_filled_from_config" in result, "반환에 키가 없음"
+        assert "notice_filled_from_config" in result, "반환에 키 없음"
         filled = result["notice_filled_from_config"]
         assert isinstance(filled, list), f"list 가 아님: {type(filled)}"
-        assert sorted(filled) == sorted(_COMMON_5), f"5개가 정확히 와야 함: {filled!r}"
+        expected = list(_COMMON_5) + list(_N7_FROM_CFG_FULL)
+        assert sorted(filled) == sorted(expected), f"공통 5 + N7 필드가 정확히 와야 함: {filled!r}"
 
     def test_b_empty_when_nothing_filled(self, monkeypatch, isolated_prepared_dir):
-        """(b) 공통 5필드를 아무것도 채우지 않은 경우 → 빈 리스트."""
+        """(b) 공통 5필드를 아무것도 채우지 않은 경우 → 공통 5는 빈 리스트.
+
+        N7 확장: _CFG_EMPTY_COMMON 은 origin_content·manufacturer 를 가지고
+        있으므로 이 두 필드는 config 유래로 보고된다. 공통 5필드 자체는
+        없으므로, 보고에서 공통 5는 등장하지 않는다.
+        """
         result, _ = _register_with_dry_run_off(
             notice_cfg=_CFG_EMPTY_COMMON, monkeypatch=monkeypatch
         )
         assert result["ok"] is True
         assert "notice_filled_from_config" in result, "키 자체가 없으면 안 됨"
-        assert (
-            result["notice_filled_from_config"] == []
-        ), f"빈 리스트여야 함: {result['notice_filled_from_config']!r}"
+        filled = result["notice_filled_from_config"]
+        # 공통 5필드는 config 에 없으므로 보고에 없어야 한다.
+        common_in_report = set(filled) & set(_COMMON_5)
+        assert not common_in_report, f"공통 5필드가 config 에 없는데 보고됨: {common_in_report!r}"
+        # N7 필드(origin_content·manufacturer)는 config 유래로 보고된다.
+        assert sorted(filled) == sorted(_N7_FROM_CFG_FULL), f"N7 필드만 보고되어야 함: {filled!r}"
 
     def test_c_compliance_blocked_has_key(self, monkeypatch, isolated_prepared_dir):
-        """(c) 컴플라이언스 FAIL 차단 경로에도 키가 있다."""
+        """(c) 컴플라이언스 FAIL 차단 경로에도 키가 있다.
+
+        N7 확장: 공통 5 + N7(origin_content·manufacturer) 필드가 보고된다.
+        """
         result = _register_blocked(monkeypatch, notice_cfg=_CFG_FULL)
         assert result["ok"] is False
         assert result.get("blocked_by") == "compliance"
         assert "notice_filled_from_config" in result, "차단 경로에 키 없음"
-        assert sorted(result["notice_filled_from_config"]) == sorted(_COMMON_5)
+        expected = list(_COMMON_5) + list(_N7_FROM_CFG_FULL)
+        assert sorted(result["notice_filled_from_config"]) == sorted(expected)
 
     def test_c_build_failure_has_empty_key(self, monkeypatch, isolated_prepared_dir):
         """(c) build_payload 예외로 인한 실패 경로에도 키(빈 리스트)가 있다.
@@ -293,7 +317,8 @@ class TestNoticeFilledFromConfigInAllReturns:
                         )
         assert result["ok"] is False
         assert "notice_filled_from_config" in result
-        assert sorted(result["notice_filled_from_config"]) == sorted(_COMMON_5)
+        expected = list(_COMMON_5) + list(_N7_FROM_CFG_FULL)
+        assert sorted(result["notice_filled_from_config"]) == sorted(expected)
 
 
 class TestNoInternalMetaOnTheWire:

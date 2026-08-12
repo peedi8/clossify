@@ -211,11 +211,22 @@ def _kc_config():
 
 
 def _first_value(*values, default=""):
+    """첫 번째 "실질값" 을 반환한다.
+
+    **자리표시자 판정은 ``_has_text`` 와 같은 단일 진실 공급원을 쓴다.**
+    (5라운드 감리 ①) 과거에는 ``_first_value`` 가 None/빈 문자열만 걸러내고
+    자리표시자(``REPLACE_WITH_ORIGIN_CONTENT`` 등)를 그대로 반환했다 —
+    예시 설정을 복사만 한 사용자의 자리표시자가 규제 신고값으로 전송되었다.
+    반면 출처 보고(``_has_text``)는 같은 자리표시자를 "미설정" 으로 봐서,
+    "자리표시자를 보내면서 설정에서 안 채워졌다고 보고" 하는 모순이 있었다.
+
+    이제 ``_has_text`` 를 호출해 자리표시자를 동일하게 걸러낸다 — 값을 고르는
+    쪽과 출처를 말하는 쪽이 같은 판정을 쓴다. 판정을 두 벌 유지하면 같은 병이
+    재발한다 (이 PR 에서 세 번째).
+    """
     for value in values:
-        if value not in (None, ""):
-            text = str(value).strip()
-            if text:
-                return text
+        if _has_text(value):
+            return str(value).strip()
     return default
 
 
@@ -326,6 +337,150 @@ def _resolve_delivery_company(p, cfg_notice):
         default="",
     )
     return str(raw or "").strip()
+
+
+def _resolve_delivery_fee(p, cfg_notice) -> int:
+    """배송비(baseFee) 후보를 선택하고 정수로 변환한다.
+
+    후보 순서: ``p.delivery_fee`` → ``cfg.delivery_fee`` →
+    ``cfg.deliveryFee`` → 3000(기본값).
+
+    - **값이 없으면** (누락) → 3000 (회귀 없음).
+    - **값이 있는데 정수로 변환 불가** → ``ValueError``. 조용한 폴백 금지.
+      오류 메시지에 어느 자리(상품 입력 / 설정)에서 왔는지 적는다.
+
+    숫자 0 (무료배송) 은 유효한 명시값이다.
+
+    후보 선택 규칙(이 함수)과 출처 보고 규칙(``_per_product_filled_from_config``)
+    이 서로 다르면 "3000 을 보내면서 설정값이라고 말한다" / "0 을 보내면서
+    보고가 빠진다" 같은 틈이 생긴다. 판정 로직을 두 벌 유지하지 않기 위해
+    본 함수는 선택된 값과 자리를 함께 돌려주는 ``_resolve_delivery_fee_with_slot``
+    을 호출하고, 출처 보고도 같은 결과를 쓴다(단일 진실 공급원).
+    """
+    value, _slot = _resolve_delivery_fee_with_slot(p, cfg_notice)
+    return value
+
+
+def _resolve_delivery_fee_with_slot(p, cfg_notice) -> tuple[int, str]:
+    """배송비 후보를 선택하고 (값, 자리이름) 을 함께 돌려준다.
+
+    출처 보고(``_per_product_filled_from_config``)가 본 함수의 선택 결과를
+    그대로 쓴다 — 판정 로직을 두 벌 유지하면 같은 병이 재발한다(자리표시자를
+    설정값으로 보고하거나 숫자 0 을 미설정으로 보고하는 등).
+
+    자리이름(``slot``) 규약:
+      - ``"product"`` — 상품 입력 ``p.delivery_fee`` 에서 고름.
+      - ``"config"`` — 설정(``delivery_fee`` 또는 ``deliveryFee``)에서 고름.
+      - ``"default"`` — 후보가 없거나 전부 자리표시자라 3000 기본값으로 떨어짐.
+        이 자리일 때는 출처 보고에 ``delivery_fee`` 가 **들어가지 않는다**
+        (설정에서 채운 게 아니므로).
+
+    자리표시자(``REPLACE_WITH_...``)와 빈 값은 후보 선택에서 건너뛴다 —
+    해석기와 같은 규칙. 숫자 0 은 유효한 명시값(무료배송)이므로 건너뛰지 않는다.
+    """
+    # 후보를 (값, 자리이름, 보고용 자리) 튜플로 모은다.
+    # 보고용 자리는 "이 값이 설정에서 왔는가" 를 출처 보고가 쓴다.
+    candidates: list[tuple[object, str, str]] = [
+        (p.get("delivery_fee"), "상품 입력(delivery_fee)", "product"),
+        (
+            cfg_notice.get("delivery_fee"),
+            "설정(smartstore_notice_defaults.delivery_fee)",
+            "config",
+        ),
+        (
+            cfg_notice.get("deliveryFee"),
+            "설정(smartstore_notice_defaults.deliveryFee)",
+            "config",
+        ),
+    ]
+    for raw, slot_label, slot_kind in candidates:
+        if raw is None:
+            continue
+        text = str(raw).strip()
+        if not text:
+            continue
+        # config.example.json 의 REPLACE_WITH_... 자리표시자는 "미설정" 으로 취급.
+        # (나머지 시스템이 같은 규칙을 쓴다 — check_config 도 플레이스홀더를
+        # 미설정으로 본다). 자리표시자를 유효값으로 해석하면 int() 변환에서
+        # ValueError 가 나서 예시 복사→값 채우기 워크플로가 망가진다.
+        # 출처 보고에서도 "설정에서 채웠다" 고 하면 안 된다 — 해석기가
+        # 건너뛴 값을 보고가 "설정값" 이라고 말하면 실제(3000 기본값)와 어긋난다.
+        if "REPLACE_WITH_" in text:
+            continue
+        # **5라운드 감리 ⑥**: 불리언(True/False)이 ``int()`` 로 변환되어
+        # ``True`` → ``1``, ``False`` → ``0`` 이 되는 것을 막는다.
+        # ``bool`` 은 ``int`` 의 서브클래스이므로 ``isinstance(raw, int)`` 가
+        # 통과하지만, 배송비로 불리언을 받는 것은 입력 오류다. 자리표시 포함한
+        # 기존 오류 형식(숫자가 아닙니다) 을 유지한다.
+        if isinstance(raw, bool):
+            raise ValueError(
+                f"배송비(delivery_fee) 값이 숫자가 아닙니다: {raw!r} "
+                f"(자리: {slot_label}). "
+                "불리언(True/False)은 배송비로 유효하지 않습니다."
+            )
+        # 감리 ④ (4라운드): float 입력(예 3000.5)이 ``int()`` 로 조용히
+        # 잘리는 것을 막는다 — ``int(3000.5)`` → ``3000`` 은 폐기가 아니라
+        # 잘림이며, 원단위가 없는 한국 통화에서 소수 배송비는 입력 오류다.
+        # 단, ``3000.0`` 은 정수 ``3000`` 과 값이 같으므로 허용한다 — JSON
+        # 에서 ``3000.0`` 은 ``3000`` 의 유효한 표현이고, ``float(X.0)`` 은
+        # 정수 ``X`` 와 구별할 수 없다 (``float.is_integer()`` 로 판정).
+        # **주의**: 이 ValueError 를 아래 except (TypeError, ValueError) 가
+        # 잡아 "숫자가 아닙니다" 로 재포장하면 안 된다 — 소수 오류 메시지가
+        # "정수가 아닙니다" 에서 "숫자가 아닙니다" 로 바뀌어 진단 정보가 사라진다.
+        # 그래서 float 판정은 try 블록 밖에서 먼저 한다.
+        if isinstance(raw, float) and not raw.is_integer():
+            raise ValueError(
+                f"배송비(delivery_fee) 값이 정수가 아닙니다: {raw!r} "
+                f"(자리: {slot_label}). "
+                "소수점 단위 배송비는 원화 통화에서 유효하지 않습니다."
+            )
+        try:
+            return int(raw), slot_kind
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"배송비(delivery_fee) 값이 숫자가 아닙니다: {raw!r} "
+                f"(자리: {slot_label}). "
+                "입력 오류가 의도치 않은 배송비로 실제 판매 중인 상품이 될 수 있습니다."
+            ) from exc
+    return 3000, "default"
+
+
+def _build_delivery_fee_block(delivery_fee: int) -> dict:
+    """배송비 블록(``deliveryFee`` 객체)을 구성한다.
+
+    **감리 ②** (4라운드): 해석된 배송비가 0 이면 **무료 배송** 으로 정의하는데
+    (``_resolve_delivery_fee`` 가 숫자 0 을 유효한 명시값·무료배송으로 받음),
+    과거에는 ``baseFee: 0`` + ``deliveryFeeType: "PAID"`` 를 함께 낸다 — 배송
+    블록이 자기모순이다. 커머스 API 가 거절하거나 다르게 표현할 수 있다.
+
+    문서 근거 (네이버 커머스 API 원상품 정보 구조체 —
+    ``clossify-ops/naver-docs/`` 의
+    ``docs_commerce-api_*_schemas_*-EC_9B_90-EC_83_81-...`` 파일들):
+      > deliveryFeeType 배송비 타입 (string)
+      > 배송비 타입을 입력하지 않으면 FREE(무료)로 설정됩니다.
+      > FREE(무료), CONDITIONAL_FREE(조건부 무료), PAID(유료),
+      > UNIT_QUANTITY_PAID(수량별), RANGE_QUANTITY_PAID(구간별)
+      > Possible values: [ FREE , CONDITIONAL_FREE , PAID ,
+      >   UNIT_QUANTITY_PAID , RANGE_QUANTITY_PAID ]
+
+    즉, 무료배송은 ``deliveryFeeType: "FREE"`` 로 선언하는 것이 문서상 규약.
+    ``PAID`` + ``baseFee: 0`` 조합을 낼 근거가 문서에 없다. 따라서 배송비가 0
+    이면 ``FREE`` 타입을 내고 ``baseFee`` 는 0 으로 둔다(FREE 일 때 baseFee 의
+    의미가 문서에 정의되지 않으나 0 은 자기모순이 아님). 양수이면 ``PAID`` +
+    ``baseFee`` 를 낸다.
+    """
+    fee = int(delivery_fee)
+    if fee == 0:
+        return {
+            "deliveryFeeType": "FREE",
+            "baseFee": 0,
+            "deliveryFeePayType": "PREPAID",
+        }
+    return {
+        "deliveryFeeType": "PAID",
+        "baseFee": fee,
+        "deliveryFeePayType": "PREPAID",
+    }
 
 
 def _notice_defaults(p):
@@ -456,6 +611,13 @@ def _notice_defaults(p):
             p.get("exchange_delivery_fee", cfg_notice.get("exchange_delivery_fee")),
             6000,
         ),
+        # 배송비(baseFee) — 상거래 조건이므로 규제값처럼 fail-closed 로
+        # 만들지 않는다. 후보 순서: p.delivery_fee(명시) → config → 3000.
+        # config 키는 delivery_fee 와 camelCase deliveryFee 둘 다 받는다
+        # (기존 _first_value 패턴과 동일). 어디서 왔는지는 보고한다(N7).
+        # **값이 있는데 숫자가 아니면 오류** (조용한 폴백 금지). 누락(값 없음)
+        # → 3000 유지. 어느 자리(상품 입력 / 설정)인지 오류 메시지에 적는다.
+        "delivery_fee": _resolve_delivery_fee(p, cfg_notice),
         # 어떤 공통 5필드가 상품 입력이 아닌 config 에서 채워졌는지.
         # build_payload 가 이 값을 페이로드 루트의 notice_filled_from_config
         # 메타에 싣는다(비어있지 않을 때만). 묻지 않고 채워진 값이 조용히
@@ -564,16 +726,25 @@ def _has_text(value) -> bool:
     (감리 지적). 본 함수는 ``qa_agents._is_placeholder_value`` 에 판정을 위임한다
     — 새 판정 함수를 만들지 않고 정본 하나를 쓴다.
 
+    **5라운드 감리 ①**: ``config.example.json`` 의 자리표시자
+    (``REPLACE_WITH_...`` 접두사) 도 "미설정" 으로 본다. ``_is_placeholder_value``
+    의 토큰 집합에는 이 접두사가 없어서, 값을 고르는 쪽(``_first_value``) 과
+    출처를 말하는 쪽(본 함수) 이 서로 다른 판정을 쓰는 모순이 있었다. 같은
+    판정을 쓰게 한다 — 판정을 두 벌 유지하면 같은 병이 재발한다.
+
     Returns:
-        ``True`` = 실질 정보가 있는 값. ``False`` = None/빈/공백/placeholder.
+        ``True`` = 실질 정보가 있는 값. ``False`` = None/빈/공백/placeholder/
+        ``REPLACE_WITH_`` 자리표시자.
     """
     from . import qa_agents
 
+    if isinstance(value, str) and "REPLACE_WITH_" in value:
+        return False
     return not qa_agents._is_placeholder_value(value)
 
 
 def _notice_common_filled_from_config(p, cfg_notice) -> list:
-    """공통 5필드 중 "상품 입력이 아닌 config 에서만 채워진" 필드명 목록.
+    """공통 5필드 + 상품마다 달라야 하는 규제값 중 "config 에서만 채워진" 필드명 목록.
 
     우선순위: **상품 입력 > config > 미설정(묻기)**.
 
@@ -586,9 +757,20 @@ def _notice_common_filled_from_config(p, cfg_notice) -> list:
             사용자가 준 값이 실제 본문에 들어갔는데도 "config 에서 왔다"고
             잘못 보고하게 된다.
     - 상품 입력이 비고 config 에 비어있지 않은 값이 있으면 → "config 에서 채워진"
-      것으로 보고 해당 고시 camelCase 필드명을 목록에 넣는다.
+      것으로 보고 해당 필드명을 목록에 넣는다.
     - config 값이 "" / 공백뿐이면 미설정 취급 — 채워지지 않은 것으로 본다
       (빈 값이 유효 입력으로 둔갑하면 안 된다).
+
+    **N7 확장 — origin_content·importer·manufacturer·delivery_fee 도 보고.**
+
+    이 필드들은 **상품마다 달라야 하는 규제값**이다 (중국산·국내산을 같이 파는
+    판매자, 제조사/수입사가 상품마다 다른 경우). 스토어 서랍(config) 에 기본값을
+    둘 수 있지만, 묻지 않고 조용히 채워지면 **잘못 신고** 위험이 있다. 그래서
+    **차단이 아니라 가시화**로 다룬다 — config 에서 채워졌으면 보고에 등장시켜
+    사용자가 확인하게 한다. 보고명은 내부 키 이름 그대로(``origin_content``·
+    ``importer``·``manufacturer``·``delivery_fee``) 쓴다. ``origin_content`` 를
+    고시 필드명인 ``countryOfOrigin`` 로 바꾸지 않는다 — 내부 키 이름 그대로가
+    사용자에게 덜 헷갈린다.
 
     반환값은 페이로드 빌드 결과 메타(notice_filled_from_config)에 실려
     사용자에게 전달된다 — 묻지 않고 채워진 값이 조용히 딸려가면 잘못 신고된다.
@@ -632,6 +814,88 @@ def _notice_common_filled_from_config(p, cfg_notice) -> list:
             continue
         if any(_has_text(cfg_notice.get(k)) for k in cfg_keys):
             filled.append(notice_field)
+
+    # N7 — 상품마다 달라야 하는 규제값이 config 에서만 채워졌으면 보고.
+    # 차단이 아니라 가시화로 다룬다(잘못 신고 위험).
+    filled.extend(_per_product_filled_from_config(p, cfg_notice, user_bodies))
+    return filled
+
+
+def _per_product_filled_from_config(p, cfg_notice, user_bodies) -> list:
+    """상품마다 달라야 하는 규제값이 config 에서만 채워졌는지 보고 (N7).
+
+    ``origin_content``·``importer``·``manufacturer``·``delivery_fee`` 는
+    상품마다 달라야 하는 규제값/상거래 조건이다. 스토어 서랍(config) 에
+    기본값을 둘 수 있지만, 묻지 않고 조용히 채워지면 잘못 신고 위험이 있다.
+    그래서 **차단이 아니라 가시화**로 다룬다 — 상품 입력에 없고 config 에만
+    있으면 ``notice_filled_from_config`` 목록에 넣어 사용자가 확인하게 한다.
+
+    보고명은 내부 키 이름 그대로 쓴다(``origin_content``·``importer``·
+    ``manufacturer``·``delivery_fee``).
+    """
+    filled: list = []
+
+    # origin_content: _notice_defaults 의 made_in 해석기가 실제로 소비하는
+    # 입력만 보고 억제 근거로 삼는다. 해석기 후보: p.made_in → p.origin_content
+    # → cfg.origin_content (중첩 고시 본문은 읽지 않는다). 따라서 user_bodies
+    # 의 countryOfOrigin 등은 출처 판정에서 제외 — 해석기가 거길 안 보므로
+    # "명시값 있음" 으로 억제하면 실제로는 config 값이 나가는데 보고가 사라진다.
+    # 중첩값을 해석기에 배선하는 것은 범위 밖이다 (동작 변경).
+    if not _has_text(p.get("made_in")) and not _has_text(p.get("origin_content")):
+        if _has_text(cfg_notice.get("origin_content")):
+            filled.append("origin_content")
+
+    # importer: _notice_defaults 의 importer 해석기가 실제로 소비하는
+    # 입력만 억제 근거로 삼는다. 해석기 후보: p.importer → cfg.importer
+    # (중첩 고시 본문은 읽지 않는다). 1라운드에서 원산지에 대해 똑같은
+    # 지적을 받아 고쳤다 — 수입사는 같은 구조의 결함이었다. 중첩 고시 본문의
+    # importer 값이 있으면 "명시값 있음" 으로 억제되는데, 해석기는 중첩 본문을
+    # 안 보므로 실제로는 config 값이 나가고 보고는 빠진다.
+    # 중첩값을 해석기에 배선하는 것은 범위 밖이다 (동작 변경).
+    if not _has_text(p.get("importer")):
+        if _has_text(cfg_notice.get("importer")):
+            filled.append("importer")
+
+    # manufacturer: _seller_manufacturer_default 의 모든 상품 입력 후보만
+    # 억제 근거로 삼는다. 해석기 후보: p.manufacturer 및 판매자 별칭
+    # (seller_name_ko / sellerNameKo / seller_name / sellerName /
+    # shop_name_ko / shopNameKo / shop_name / shopName / nick / nickName)
+    # → cfg.manufacturer. 중첩 고시 본문은 읽지 않는다.
+    # importer/origin 과 같은 이유로 중첩 본문의 manufacturer 를 억제 근거로
+    # 삼으면 실제로는 config 값이 나가는데 보고가 빠진다.
+    _manufacturer_p_keys = (
+        "manufacturer",
+        "seller_name_ko",
+        "sellerNameKo",
+        "seller_name",
+        "sellerName",
+        "shop_name_ko",
+        "shopNameKo",
+        "shop_name",
+        "shopName",
+        "nick",
+        "nickName",
+    )
+    if not any(_has_text(p.get(k)) for k in _manufacturer_p_keys):
+        if _has_text(cfg_notice.get("manufacturer")):
+            filled.append("manufacturer")
+
+    # delivery_fee: 상거래 조건이므로 config 폴백이 있지만 보고한다.
+    # **해석기가 고른 자리**를 보고의 근거로 삼는다 — 판정 로직을 두 벌
+    # 유지하면 같은 병이 재발한다. 해석기(_resolve_delivery_fee_with_slot)
+    # 가 "config" 자리에서 고른 경우에만 보고에 넣는다.
+    #
+    # 이 단일 진실 공급원이 없었을 때의 실패 모드:
+    #   - 자리표시자(REPLACE_WITH_...)를 해석기는 건너뛰고 3000 을 보내는데,
+    #     _has_text 는 그 긴 문자열을 실질값으로 봐 "설정에서 채웠다" 고 보고.
+    #     → 3000 을 보내면서 설정값이라고 말함.
+    #   - 설정 0(무료배송)을 해석기는 유효값으로 0 을 보내는데, _has_text(0)
+    #     은 False 라 보고가 빠짐 → 0 을 보내면서 출처 보고 누락.
+    # 둘 다 "판정 두 벌" 이 만든 틈이다. 이제 해석기의 선택을 그대로 쓴다.
+    _fee_value, fee_slot = _resolve_delivery_fee_with_slot(p, cfg_notice)
+    if fee_slot == "config":
+        filled.append("delivery_fee")
+
     return filled
 
 
@@ -2087,11 +2351,7 @@ def build_payload(p, detail_html, images, status="SALE", deferred_notice_fields=
                 # "CJGLS" 기본값 제거.
                 "deliveryCompany": defaults["delivery_company"],
                 "deliveryBundleGroupUsable": False,
-                "deliveryFee": {
-                    "deliveryFeeType": "PAID",
-                    "baseFee": int(p.get("delivery_fee", 3000)),
-                    "deliveryFeePayType": "PREPAID",
-                },
+                "deliveryFee": _build_delivery_fee_block(defaults["delivery_fee"]),
                 "claimDeliveryInfo": {
                     "returnDeliveryFee": defaults["return_delivery_fee"],
                     "exchangeDeliveryFee": defaults["exchange_delivery_fee"],

@@ -122,7 +122,19 @@ def _collect_notice_rows(
       - ``"사용자 입력"`` — 상품 입력에 명시된 값.
       - ``"설정 기본값"`` — config 의 smartstore_notice_defaults 에서 채워진 값
         (``notice_filled_from_config`` 목록에 있는 필드).
+      - ``"사용자 입력 (설정에도 있음)"`` — 고시 본문에 사용자가 넣은 값과
+        config 유래 값이 같은 필드에 겹칠 때, 중첩 고시값과 설정 유래를
+        구분해 표시한다 (감리 ⑧ — 같은 출처 표기로 그려지는 것을 고친다).
       - ``"미제공"`` — 값이 비어 있거나 사용자·config 어디에도 없는 필드.
+
+    **N7 필드의 top-level 명시값을 먼저 본다** (회귀 수정).
+    ``origin_content``·``importer``·``manufacturer``·``delivery_fee`` 는
+    ``naver_client._notice_defaults`` 가 top-level 상품 입력에서 읽는다
+    (``p.made_in``/``p.origin_content``, ``p.importer``, ``p.manufacturer``
+    및 판매자 별칭, ``p.delivery_fee``). 과거 이 함수는 고시 본문 노드
+    (``user_body``)만 읽어서, top-level 에 명시한 값을 **빈 값 + 미제공**
+    으로 그렸다 — 실제 전송값과 다른 거짓 미리보기. 이제 해석기가 읽는
+    같은 후보를 같은 순서로 먼저 본다.
     """
     rows: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -152,16 +164,113 @@ def _collect_notice_rows(
 
     # 공통 5필드 + 고시 본문에 있는 모든 필드를 행으로.
     candidate_fields = list(naver_client._NOTICE_COMMON_FIELDS)
+    # N7 보고 필드(origin_content·importer·manufacturer·delivery_fee)는
+    # 사용자 고시 본문에 보통 없으므로 후보에 명시적으로 포함시킨다.
+    # 이 필드들이 config 유래일 때 미리보기에 각각 한 줄씩 등장해야 한다
+    # (감리 지적: "보고 필드가 안 보인다" — 기능 목적 자체가 무력화).
+    for n7_field in ("origin_content", "importer", "manufacturer", "delivery_fee"):
+        if n7_field not in candidate_fields:
+            candidate_fields.append(n7_field)
     for key in user_body:
         if key not in candidate_fields:
             candidate_fields.append(str(key))
 
+    # config 키 별칭 맵: 보고명 → config 에서 값을 읽을 때 쓸 키 목록.
+    # delivery_fee 는 config 에서 deliveryFee(camelCase) 로도 올 수 있다.
+    _cfg_key_aliases: dict[str, tuple[str, ...]] = {
+        "delivery_fee": ("delivery_fee", "deliveryFee"),
+    }
+
+    # N7 필드의 top-level 명시값 후보 맵.
+    # naver_client._notice_defaults 해석기가 실제로 읽는 top-level 키와 동일한
+    # 후보를 쓴다 — 해석기와 미리보기가 다른 값을 그리는 불일치를 막는다.
+    # manufacturer 의 판매자 별칭 후보는 naver_client._seller_manufacturer_default
+    # 의 후보와 같다.
+    _manufacturer_top_keys = (
+        "manufacturer",
+        "seller_name_ko",
+        "sellerNameKo",
+        "seller_name",
+        "sellerName",
+        "shop_name_ko",
+        "shopNameKo",
+        "shop_name",
+        "shopName",
+        "nick",
+        "nickName",
+    )
+    _n7_top_keys: dict[str, tuple[str, ...]] = {
+        "origin_content": ("made_in", "origin_content"),
+        "importer": ("importer",),
+        "manufacturer": _manufacturer_top_keys,
+        "delivery_fee": ("delivery_fee",),
+    }
+
     for field in candidate_fields:
+        # N7 필드는 top-level 상품 입력에서 먼저 찾는다. 해석기가 읽는 후보와
+        # 같은 키를 본다 — top-level 에 명시한 값을 "미제공" 으로 그리는
+        # 회귀를 고친다.
+        top_keys = _n7_top_keys.get(field)
+        if top_keys and isinstance(product, dict):
+            top_value: Any = None
+            for tk in top_keys:
+                cv = product.get(tk)
+                # **감리 (6라운드)**: 자리표시자 판정은 해석기의 단일 진실 공급원
+                # (``naver_client._has_text``) 을 그대로 호출한다 — 새 판정 함수를
+                # 만들면 같은 결함이 다섯 번째로 재발한다.
+                # 참고: ``_has_text(int 0)`` 은 ``False`` 를 반환하는 기존 한계가
+                # 있으므로, 숫자(int/float, bool 제외) 는 유효한 명시값으로 본다
+                # (배송비 0 = 무료배송). 숫자는 자리표시자 토큰이 될 수 없다.
+                if isinstance(cv, bool):
+                    # bool 은 int 서브클래스지만 배송비·규제값으로 불리언은 입력
+                    # 오류다 — 유효하지 않은 것으로 본다.
+                    continue
+                if isinstance(cv, int | float):
+                    top_value = cv
+                    break
+                if naver_client._has_text(cv):
+                    top_value = cv
+                    break
+            if top_value is not None:
+                _add(field, top_value, "사용자 입력")
+                continue
         if field in user_body:
-            _add(field, user_body[field], "사용자 입력")
-        elif field in cfg_filled:
-            cfg_value = cfg_notice.get(field)
-            if cfg_value:
+            # **감리 (6라운드)**: ``user_body`` 의 값이 자리표시자(TBD/TODO/
+            # REPLACE_WITH_...) 이면 "사용자 입력" 으로 받아들이지 않는다 —
+            # 해석기(``_first_value``/``_has_text``)가 같은 자리표시자를
+            # 건너뛰고 config 폴백으로 가기 때문에, 미리보기도 같은 판정으로
+            # 건너뛴다. ``naver_client._has_text`` 를 호출한다 (판정 두 벌 금지).
+            uv = user_body[field]
+            if naver_client._has_text(uv):
+                # 감리 ⑧ (4라운드): 고시 본문에 사용자가 넣은 값과 config 유래 값이
+                # 같은 필드에 겹칠 때 출처를 갈라 표시한다. 과거에는 무조건
+                # "사용자 입력" 으로 그려서, config 도 같은 필드에 값을 가지고 있다는
+                # 사실이 묻혔다 — 중첩 고시값과 설정 유래를 구분 안 하는 결함.
+                _src = "사용자 입력 (설정에도 있음)" if field in cfg_filled else "사용자 입력"
+                _add(field, uv, _src)
+                continue
+            # 자리표시자면 폴백으로 — 아래 cfg_filled 분기로 넘어간다.
+        if field in cfg_filled:
+            # config 에서 값을 읽는다. 별칭이 있으면 별칭 키도 확인.
+            cfg_keys = _cfg_key_aliases.get(field, (field,))
+            cfg_value = None
+            for ck in cfg_keys:
+                cv = cfg_notice.get(ck)
+                # **감리 (6라운드)**: 자리표시자 판정을 해석기의 단일 진실 공급원
+                # (``naver_client._has_text``) 에 위임한다. 과거에는 ``REPLACE_WITH_``
+                # 접두사만 하드코딩으로 걸렀으나, TBD/TODO/해당없음 등
+                # ``qa_agents._is_placeholder_value`` 토큰은 잡지 못해 판정이
+                # 어긋났다. 판정을 새로 만들지 않고 해석기가 쓰는 것을 호출한다.
+                # 숫자(int/float, bool 제외) 는 자리표시자가 될 수 없으므로 유효.
+                if isinstance(cv, bool):
+                    continue
+                if isinstance(cv, int | float):
+                    cfg_value = cv
+                    break
+                if naver_client._has_text(cv):
+                    cfg_value = cv
+                    break
+            if cfg_value is not None:
                 _add(field, cfg_value, "설정 기본값")
             else:
                 _add(field, "", "미제공")
@@ -215,6 +324,8 @@ body{margin:0;padding:24px;background:#f5f5f5;font-family:-apple-system,
   text-align:left;vertical-align:top}
 .notice-table th{background:#f5f5f5;font-weight:600;width:30%}
 .source-user{color:#137333;font-size:11px}
+.source-user-config-overlap{color:#7a5900;font-size:11px;font-weight:600;
+  background:#fff8e1;padding:1px 4px;border-radius:3px}
 .source-config{color:#a50e0e;font-size:11px;font-weight:600}
 .source-missing{color:#a50e0e;background:#fff3cd;font-weight:600}
 .missing-row td{background:#fff8e1}
@@ -369,6 +480,11 @@ def _render_notice_table(rows: list[dict[str, str]]) -> str:
         )
         if source == "사용자 입력":
             parts.append('<td><span class="source-user">사용자 입력</span></td>')
+        elif source == "사용자 입력 (설정에도 있음)":
+            parts.append(
+                '<td><span class="source-user-config-overlap">'
+                "사용자 입력 (설정에도 있음)</span></td>"
+            )
         elif source == "설정 기본값":
             parts.append('<td><span class="source-config">설정 기본값</span></td>')
         else:
@@ -483,6 +599,11 @@ def _render_notice_table_readonly(rows: list[dict[str, str]]) -> str:
             parts.append('<td><em style="color:#999">(비어 있음)</em></td>')
         if source == "사용자 입력":
             parts.append('<td><span class="source-user">사용자 입력</span></td>')
+        elif source == "사용자 입력 (설정에도 있음)":
+            parts.append(
+                '<td><span class="source-user-config-overlap">'
+                "사용자 입력 (설정에도 있음)</span></td>"
+            )
         elif source == "설정 기본값":
             parts.append('<td><span class="source-config">설정 기본값</span></td>')
         else:
@@ -941,7 +1062,9 @@ def render_preview_html(
         '<p class="preview-meta"><span class="source-config">설정 기본값</span>'
         " 표시가 있는 필드는 판매자가 입력하지 않았지만 config 의 "
         "smartstore_notice_defaults 에서 자동으로 채워진 값입니다. "
-        "의도한 값인지 확인하세요.</p>"
+        "의도한 값인지 확인하세요. "
+        '<span class="source-user-config-overlap">사용자 입력 (설정에도 있음)</span>'
+        " 은 고시 본문 값과 설정 값이 겹치는 필드입니다.</p>"
     )
     parts.append("</div>")
 

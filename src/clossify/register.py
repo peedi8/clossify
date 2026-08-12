@@ -427,14 +427,13 @@ def _build_product_dict(d, seo_title, category_id):
         sale_price = d.get("sell_price") or d.get("price")
     if sale_price is None:
         raise ValueError("salePrice(KRW) 가 필요합니다.")
-    return {
+    result = {
         "name": name[:50],
         "categoryId": str(category_id or d.get("categoryId") or d.get("category_id") or ""),
         "salePrice": int(sale_price),
         "options": d.get("options") or [],
         "tags": d.get("tags") or [],
         "courier": d.get("courier") or "",
-        "delivery_fee": d.get("delivery_fee", 3000),
         "notice": d.get("notice") or {},
         "as_tel": d.get("as_tel") or "",
         "as_guide": d.get("as_guide") or "",
@@ -442,6 +441,11 @@ def _build_product_dict(d, seo_title, category_id):
         "manufacturer": d.get("manufacturer") or "",
         "importer": d.get("importer") or "",
     }
+    # delivery_fee: 키가 있을 때만 넣는다 (기본값 3000 은 _notice_defaults
+    # 한 곳에서만 결정 — 키가 없으면 config 폴백이 발동해야 한다).
+    if "delivery_fee" in d:
+        result["delivery_fee"] = d.get("delivery_fee")
+    return result
 
 
 def _apply_qa_to_payload(payload, qa_result):
@@ -482,9 +486,19 @@ def _build_register_product_dict(d, name, category_id, *, resolved_tags=None):
         "salePrice": int(sale_price),
         "tags": tags_value,
         "stock": int(d.get("stock", 1)),
-        "delivery_fee": int(d.get("delivery_fee", 3000)),
         "courier": d.get("courier") or "",
     }
+    # delivery_fee: 실질값이 있을 때만 넣는다 (기본값 3000 은 _notice_defaults
+    # 한 곳에서만 결정 — 키가 없거나 빈 값이면 config 폴백이 발동해야 한다).
+    # 빈 선택 필드(None/""/공백)가 컴플라이언스 실파냐 수준의 예외로 둔갑하면
+    # 안 된다 — _resolve_delivery_fee_with_slot 은 None/"" 을 "생략" 으로 본다.
+    # 같은 값을 두 곳이 다르게 보는 것(2라운드 감리 ① 의 재발 방지).
+    # **5라운드 감리 ⑤**: 진입점에서 ``int()`` 로 깎지 않는다 — 소수점(3000.5)
+    # 이 ``int()`` 로 잘려서 통과하는 것을 막는 가드가 정본 해석기에 있는데,
+    # 여기서 미리 깎으면 가드가 볼 게 없다. 원값을 그대로 넘긴다.
+    raw_fee = d.get("delivery_fee")
+    if raw_fee is not None and str(raw_fee).strip():
+        product["delivery_fee"] = raw_fee
     if d.get("options"):
         product["options"] = d.get("options")
     notice = d.get("notice")
@@ -1806,7 +1820,8 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None, recommend_fn=None, r
             "as_tel": d.get("as_tel") or "",
             "as_guide": d.get("as_guide") or "",
             "courier": d.get("courier") or "",
-            "delivery_fee": d.get("delivery_fee", 3000),
+            # delivery_fee: 키가 있을 때만 넣는다 (기본값 3000 은 _notice_defaults
+            # 한 곳에서만 결정 — 키가 없으면 config 폴백이 발동해야 한다).
             # option_groups: 다축 옵션의 그룹 이름(예: ["색상","사이즈"]).
             # naver_client._option_group_list 가 "option_groups" 키를 읽어
             # optionCombinationGroupNames 를 채운다. 이 키가 빠지면 폴백으로
@@ -1834,6 +1849,13 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None, recommend_fn=None, r
     # 위에서 이미 원산지/allowlist 검증을 거친 ``sane_deferred`` 를 그대로 저장한다.
     # 컴플라이언스 검사에 넘긴 값과 저장하는 값이 같아야 준비 통과 → 등록 통과
     # 일관성이 성립한다. 여기서 다시 정제하면 검사에 쓴 값과 저장값이 어긋난다.
+    # delivery_fee: **실질값이 있을 때만** 넣는다 (기본값 3000 은 _notice_defaults
+    # 한 곳에서만 결정 — 키가 없으면 config 폴백이 발동해야 한다).
+    # 감리 ⑤ (4라운드): 빈 값(None/""/공백)이 prepared 에 저장되면 다음 단계가
+    # "명시값 있음" 으로 오인한다 — 생략 보존 원칙(이 PR 의 핵심 원칙)과 같다.
+    _delivery_fee_raw = d.get("delivery_fee")
+    if _delivery_fee_raw is not None and str(_delivery_fee_raw).strip() != "":
+        payload["product"]["delivery_fee"] = _delivery_fee_raw
     if sane_deferred:
         payload["deferred_notice_fields"] = list(sane_deferred)
     if image_generation_meta is not None:
