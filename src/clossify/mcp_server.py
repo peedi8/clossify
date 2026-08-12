@@ -1066,6 +1066,10 @@ def _read_existing_policies(
 
 # config 키 경로 → 추출 항목 이름 매핑. 추출 항목 이름은
 # _extract_policy_values_from_product 이 만드는 dict 의 키와 짝을 맞춘다.
+# _POLICY_CONFIG_KEYS 의 모든 키는 여기에 1:1 대응 항목이 있어야 한다 —
+# 대응이 없으면 check_config(read_existing=True) 가 "미설정" 진단만 하고
+# 기존 상품에서 값을 제안·불일치 보고를 못 하는 깨진 대응이 된다
+# (delivery_fee 가 정확히 그 결함이었다 — 2라운드 감리).
 _POLICY_TO_EXTRACTION_KEY: tuple[tuple[tuple[str, ...], str], ...] = (
     (("smartstore_notice_defaults", "origin_area_code"), "origin_area_code"),
     (("smartstore_notice_defaults", "origin_content"), "origin_content"),
@@ -1078,6 +1082,11 @@ _POLICY_TO_EXTRACTION_KEY: tuple[tuple[tuple[str, ...], str], ...] = (
     (("smartstore_notice_defaults", "qualityAssuranceStandard"), "qualityAssuranceStandard"),
     (("smartstore_notice_defaults", "compensationProcedure"), "compensationProcedure"),
     (("smartstore_notice_defaults", "troubleShootingContents"), "troubleShootingContents"),
+    # delivery_fee: originProduct.deliveryInfo.deliveryFee.baseFee 에서 읽는다.
+    # 다른 정책 항목과 같은 모양으로 제안·불일치 보고에 편입한다.
+    # 단, **미설정이 등록을 막지 않는다** — 배송비는 fail-closed 대상이
+    # 아니므로(_POLICY_CONFIG_KEYS 주석 참조), 제안만 하고 차단은 하지 않는다.
+    (("smartstore_notice_defaults", "delivery_fee"), "delivery_fee"),
 )
 
 
@@ -1087,6 +1096,7 @@ def _extract_policy_values_from_product(
     """get_product 응답 본문에서 스토어 정책값을 추출한다.
 
     응답의 출처 노드:
+      - ``originProduct.deliveryInfo.deliveryFee.baseFee`` (배송비)
       - ``originProduct.deliveryInfo.claimDeliveryInfo`` (반품/교환 배송비)
       - ``originProduct.detailAttribute.afterServiceInfo`` (AS 전화·안내문)
       - ``originProduct.detailAttribute.originAreaInfo`` (원산지 코드·내용·수입자)
@@ -1111,6 +1121,15 @@ def _extract_policy_values_from_product(
     detail = origin.get("detailAttribute")
     if not isinstance(detail, dict):
         detail = {}
+
+    # 배송비(baseFee). originProduct.deliveryInfo.deliveryFee.baseFee 에서 읽는다.
+    # 다른 정책 항목과 같은 모양으로 추출된다 — check_config(read_existing=True)
+    # 가 기존 상품의 배송비를 제안·불일치 보고에 편입하게 한다.
+    delivery_info = origin.get("deliveryInfo")
+    if isinstance(delivery_info, dict):
+        delivery_fee_block = delivery_info.get("deliveryFee")
+        if isinstance(delivery_fee_block, dict):
+            setv("delivery_fee", delivery_fee_block.get("baseFee"))
 
     # AS 전화·안내문.
     as_info = detail.get("afterServiceInfo")
@@ -1146,8 +1165,15 @@ def _extract_policy_values_from_product(
 
 
 def _normalize_policy_text(value: Any) -> str:
-    """정책값 비교를 위한 정규화 — 앞뒤 공백·중복 공백 제거."""
-    return " ".join(str(value or "").split())
+    """정책값 비교를 위한 정규화 — 앞뒤 공백·중복 공백 제거.
+
+    ``None`` 은 빈 문자열로 본다. 숫자 ``0`` 은 ``"0"`` 으로 정규화한다
+    — 배송비 무료(``baseFee == 0``)가 빈 문자열로 떨어지면 "없는 값" 으로
+    오인되어 불일치 보고가 빠진다.
+    """
+    if value is None:
+        return ""
+    return " ".join(str(value).split())
 
 
 def _stringify_policy(value: Any) -> str:

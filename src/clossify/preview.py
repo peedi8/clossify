@@ -123,6 +123,15 @@ def _collect_notice_rows(
       - ``"설정 기본값"`` — config 의 smartstore_notice_defaults 에서 채워진 값
         (``notice_filled_from_config`` 목록에 있는 필드).
       - ``"미제공"`` — 값이 비어 있거나 사용자·config 어디에도 없는 필드.
+
+    **N7 필드의 top-level 명시값을 먼저 본다** (회귀 수정).
+    ``origin_content``·``importer``·``manufacturer``·``delivery_fee`` 는
+    ``naver_client._notice_defaults`` 가 top-level 상품 입력에서 읽는다
+    (``p.made_in``/``p.origin_content``, ``p.importer``, ``p.manufacturer``
+    및 판매자 별칭, ``p.delivery_fee``). 과거 이 함수는 고시 본문 노드
+    (``user_body``)만 읽어서, top-level 에 명시한 값을 **빈 값 + 미제공**
+    으로 그렸다 — 실제 전송값과 다른 거짓 미리보기. 이제 해석기가 읽는
+    같은 후보를 같은 순서로 먼저 본다.
     """
     rows: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -169,7 +178,50 @@ def _collect_notice_rows(
         "delivery_fee": ("delivery_fee", "deliveryFee"),
     }
 
+    # N7 필드의 top-level 명시값 후보 맵.
+    # naver_client._notice_defaults 해석기가 실제로 읽는 top-level 키와 동일한
+    # 후보를 쓴다 — 해석기와 미리보기가 다른 값을 그리는 불일치를 막는다.
+    # manufacturer 의 판매자 별칭 후보는 naver_client._seller_manufacturer_default
+    # 의 후보와 같다.
+    _manufacturer_top_keys = (
+        "manufacturer",
+        "seller_name_ko",
+        "sellerNameKo",
+        "seller_name",
+        "sellerName",
+        "shop_name_ko",
+        "shopNameKo",
+        "shop_name",
+        "shopName",
+        "nick",
+        "nickName",
+    )
+    _n7_top_keys: dict[str, tuple[str, ...]] = {
+        "origin_content": ("made_in", "origin_content"),
+        "importer": ("importer",),
+        "manufacturer": _manufacturer_top_keys,
+        "delivery_fee": ("delivery_fee",),
+    }
+
     for field in candidate_fields:
+        # N7 필드는 top-level 상품 입력에서 먼저 찾는다. 해석기가 읽는 후보와
+        # 같은 키를 본다 — top-level 에 명시한 값을 "미제공" 으로 그리는
+        # 회귀를 고친다.
+        top_keys = _n7_top_keys.get(field)
+        if top_keys and isinstance(product, dict):
+            top_value: Any = None
+            for tk in top_keys:
+                cv = product.get(tk)
+                # 숫자 0 (무료배송) 은 유효한 명시값으로 본다.
+                if cv is None:
+                    continue
+                if isinstance(cv, str) and not cv.strip():
+                    continue
+                top_value = cv
+                break
+            if top_value is not None:
+                _add(field, top_value, "사용자 입력")
+                continue
         if field in user_body:
             _add(field, user_body[field], "사용자 입력")
         elif field in cfg_filled:

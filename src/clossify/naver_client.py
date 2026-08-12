@@ -339,14 +339,50 @@ def _resolve_delivery_fee(p, cfg_notice) -> int:
       오류 메시지에 어느 자리(상품 입력 / 설정)에서 왔는지 적는다.
 
     숫자 0 (무료배송) 은 유효한 명시값이다.
+
+    후보 선택 규칙(이 함수)과 출처 보고 규칙(``_per_product_filled_from_config``)
+    이 서로 다르면 "3000 을 보내면서 설정값이라고 말한다" / "0 을 보내면서
+    보고가 빠진다" 같은 틈이 생긴다. 판정 로직을 두 벌 유지하지 않기 위해
+    본 함수는 선택된 값과 자리를 함께 돌려주는 ``_resolve_delivery_fee_with_slot``
+    을 호출하고, 출처 보고도 같은 결과를 쓴다(단일 진실 공급원).
     """
-    # 후보를 (값, 자리이름) 튜플로 모은다.
-    candidates = [
-        (p.get("delivery_fee"), "상품 입력(delivery_fee)"),
-        (cfg_notice.get("delivery_fee"), "설정(smartstore_notice_defaults.delivery_fee)"),
-        (cfg_notice.get("deliveryFee"), "설정(smartstore_notice_defaults.deliveryFee)"),
+    value, _slot = _resolve_delivery_fee_with_slot(p, cfg_notice)
+    return value
+
+
+def _resolve_delivery_fee_with_slot(p, cfg_notice) -> tuple[int, str]:
+    """배송비 후보를 선택하고 (값, 자리이름) 을 함께 돌려준다.
+
+    출처 보고(``_per_product_filled_from_config``)가 본 함수의 선택 결과를
+    그대로 쓴다 — 판정 로직을 두 벌 유지하면 같은 병이 재발한다(자리표시자를
+    설정값으로 보고하거나 숫자 0 을 미설정으로 보고하는 등).
+
+    자리이름(``slot``) 규약:
+      - ``"product"`` — 상품 입력 ``p.delivery_fee`` 에서 고름.
+      - ``"config"`` — 설정(``delivery_fee`` 또는 ``deliveryFee``)에서 고름.
+      - ``"default"`` — 후보가 없거나 전부 자리표시자라 3000 기본값으로 떨어짐.
+        이 자리일 때는 출처 보고에 ``delivery_fee`` 가 **들어가지 않는다**
+        (설정에서 채운 게 아니므로).
+
+    자리표시자(``REPLACE_WITH_...``)와 빈 값은 후보 선택에서 건너뛴다 —
+    해석기와 같은 규칙. 숫자 0 은 유효한 명시값(무료배송)이므로 건너뛰지 않는다.
+    """
+    # 후보를 (값, 자리이름, 보고용 자리) 튜플로 모은다.
+    # 보고용 자리는 "이 값이 설정에서 왔는가" 를 출처 보고가 쓴다.
+    candidates: list[tuple[object, str, str]] = [
+        (p.get("delivery_fee"), "상품 입력(delivery_fee)", "product"),
+        (
+            cfg_notice.get("delivery_fee"),
+            "설정(smartstore_notice_defaults.delivery_fee)",
+            "config",
+        ),
+        (
+            cfg_notice.get("deliveryFee"),
+            "설정(smartstore_notice_defaults.deliveryFee)",
+            "config",
+        ),
     ]
-    for raw, slot in candidates:
+    for raw, slot_label, slot_kind in candidates:
         if raw is None:
             continue
         text = str(raw).strip()
@@ -356,17 +392,19 @@ def _resolve_delivery_fee(p, cfg_notice) -> int:
         # (나머지 시스템이 같은 규칙을 쓴다 — check_config 도 플레이스홀더를
         # 미설정으로 본다). 자리표시자를 유효값으로 해석하면 int() 변환에서
         # ValueError 가 나서 예시 복사→값 채우기 워크플로가 망가진다.
+        # 출처 보고에서도 "설정에서 채웠다" 고 하면 안 된다 — 해석기가
+        # 건너뛴 값을 보고가 "설정값" 이라고 말하면 실제(3000 기본값)와 어긋난다.
         if "REPLACE_WITH_" in text:
             continue
         try:
-            return int(raw)
+            return int(raw), slot_kind
         except (TypeError, ValueError) as exc:
             raise ValueError(
                 f"배송비(delivery_fee) 값이 숫자가 아닙니다: {raw!r} "
-                f"(자리: {slot}). "
+                f"(자리: {slot_label}). "
                 "입력 오류가 의도치 않은 배송비로 실제 판매 중인 상품이 될 수 있습니다."
             ) from exc
-    return 3000
+    return 3000, "default"
 
 
 def _notice_defaults(p):
@@ -722,16 +760,24 @@ def _per_product_filled_from_config(p, cfg_notice, user_bodies) -> list:
         if _has_text(cfg_notice.get("origin_content")):
             filled.append("origin_content")
 
-    # importer: _notice_defaults 의 importer 와 동일한 후보 경로.
+    # importer: _notice_defaults 의 importer 해석기가 실제로 소비하는
+    # 입력만 억제 근거로 삼는다. 해석기 후보: p.importer → cfg.importer
+    # (중첩 고시 본문은 읽지 않는다). 1라운드에서 원산지에 대해 똑같은
+    # 지적을 받아 고쳤다 — 수입사는 같은 구조의 결함이었다. 중첩 고시 본문의
+    # importer 값이 있으면 "명시값 있음" 으로 억제되는데, 해석기는 중첩 본문을
+    # 안 보므로 실제로는 config 값이 나가고 보고는 빠진다.
+    # 중첩값을 해석기에 배선하는 것은 범위 밖이다 (동작 변경).
     if not _has_text(p.get("importer")):
-        if not any(_has_text(b.get("importer")) for b in user_bodies):
-            if _has_text(cfg_notice.get("importer")):
-                filled.append("importer")
+        if _has_text(cfg_notice.get("importer")):
+            filled.append("importer")
 
-    # manufacturer: _seller_manufacturer_default 의 모든 상품 입력 후보를 포함.
-    # seller_name_ko / sellerNameKo / seller_name / sellerName /
-    # shop_name_ko / shopNameKo / shop_name / shopName / nick / nickName
-    # 어느 하나라도 상품 입력에 있으면 명시값으로 본다.
+    # manufacturer: _seller_manufacturer_default 의 모든 상품 입력 후보만
+    # 억제 근거로 삼는다. 해석기 후보: p.manufacturer 및 판매자 별칭
+    # (seller_name_ko / sellerNameKo / seller_name / sellerName /
+    # shop_name_ko / shopNameKo / shop_name / shopName / nick / nickName)
+    # → cfg.manufacturer. 중첩 고시 본문은 읽지 않는다.
+    # importer/origin 과 같은 이유로 중첩 본문의 manufacturer 를 억제 근거로
+    # 삼으면 실제로는 config 값이 나가는데 보고가 빠진다.
     _manufacturer_p_keys = (
         "manufacturer",
         "seller_name_ko",
@@ -746,18 +792,24 @@ def _per_product_filled_from_config(p, cfg_notice, user_bodies) -> list:
         "nickName",
     )
     if not any(_has_text(p.get(k)) for k in _manufacturer_p_keys):
-        if not any(_has_text(b.get("manufacturer")) for b in user_bodies):
-            if _has_text(cfg_notice.get("manufacturer")):
-                filled.append("manufacturer")
+        if _has_text(cfg_notice.get("manufacturer")):
+            filled.append("manufacturer")
 
     # delivery_fee: 상거래 조건이므로 config 폴백이 있지만 보고한다.
-    # 상품 입력에 명시값이 있으면 config 가 채운 게 아니다.
-    # **숫자 0 은 유효한 명시값(무료배송)** 이므로 _has_text 가 아니라
-    # 키 존재 여부로 판정한다 — _has_text(0) 은 False 다
-    # (qa_agents._is_placeholder_value(0) == True 이므로).
-    if "delivery_fee" not in p:
-        if _has_text(cfg_notice.get("delivery_fee")) or _has_text(cfg_notice.get("deliveryFee")):
-            filled.append("delivery_fee")
+    # **해석기가 고른 자리**를 보고의 근거로 삼는다 — 판정 로직을 두 벌
+    # 유지하면 같은 병이 재발한다. 해석기(_resolve_delivery_fee_with_slot)
+    # 가 "config" 자리에서 고른 경우에만 보고에 넣는다.
+    #
+    # 이 단일 진실 공급원이 없었을 때의 실패 모드:
+    #   - 자리표시자(REPLACE_WITH_...)를 해석기는 건너뛰고 3000 을 보내는데,
+    #     _has_text 는 그 긴 문자열을 실질값으로 봐 "설정에서 채웠다" 고 보고.
+    #     → 3000 을 보내면서 설정값이라고 말함.
+    #   - 설정 0(무료배송)을 해석기는 유효값으로 0 을 보내는데, _has_text(0)
+    #     은 False 라 보고가 빠짐 → 0 을 보내면서 출처 보고 누락.
+    # 둘 다 "판정 두 벌" 이 만든 틈이다. 이제 해석기의 선택을 그대로 쓴다.
+    _fee_value, fee_slot = _resolve_delivery_fee_with_slot(p, cfg_notice)
+    if fee_slot == "config":
+        filled.append("delivery_fee")
 
     return filled
 
