@@ -516,3 +516,215 @@ class TestWoRound3SstarBranchAudit:
     def test_segyesstar_choiso_chojeo_not_caught(self):
         """``세계\\s*최초`` (유지) — ``세계 최저 초콜릿`` 안 걸림 (``최초`` 아님)."""
         assert BANNED_CLAIM_RE.search("세계 최저 초콜릿") is None
+
+
+# --------------------------------------------------------------------------- #
+# 8. WO 4라운드 감리 — 조사·어미 허용 경계.
+#
+# 3라운드의 ``(?![가-힣])`` 뒤쪽 경계가 한국어 조사·어미(은·는·이·가·을·
+# 를·의·에 …) 전부 한글이어서 ``정품입니다``·``정품을 보장``·``최고의 품질``
+# 같은 정상 금지 주장을 통째로 놓쳤다(미탐 대량 — 컴플라이언스 하드 게이트가
+# 있으나 마나). 4라운드는 경계를 뒤집는다: 비한글이거나, 뒤가 조사·어미로
+# 시작할 때만 매치. 복합명사(``정품인증서``·``가공식품``) 와 부정형(``비공식``)
+# 은 여전히 보호된다.
+# --------------------------------------------------------------------------- #
+
+
+class TestWoRound4ParticleEndingCaught:
+    """WO 4라운드 A 그룹 — 조사·어미 결합 15건, 전부 CAUGHT 여야 한다.
+
+    실측 (수리 전, 3라운드 정규식):
+      ``정품입니다``       → MISS (``입니다`` 어미가 한글)
+      ``정품을 보장``      → MISS (``을`` 조사가 한글)
+      ``최고의 품질``      → MISS (``의`` 조사가 한글)
+      ``최저가로 드립니다`` → MISS
+      ``업계 1위의``       → MISS
+      ``100%입니다``       → CAUGHT (``100%`` 가 먼저 매치 — 우연 통과)
+      ``완벽한 마감``      → CAUGHT (``완벽한`` 패턴이 ``한`` 을 사전 허용)
+    수리 후: 전부 CAUGHT 여야 한다.
+    """
+
+    def test_jeongpum_imnida_caught(self):
+        """``정품입니다`` → 걸림 (``입니다`` 종결어미)."""
+        assert BANNED_CLAIM_RE.search("정품입니다") is not None
+
+    def test_jeongpum_ieyo_caught(self):
+        """``정품이에요`` → 걸림 (``이에요`` 종결어미)."""
+        assert BANNED_CLAIM_RE.search("정품이에요") is not None
+
+    def test_jeongpum_eul_bojang_caught(self):
+        """``정품을 보장`` → 걸림 (``을`` 목적격 조사)."""
+        assert BANNED_CLAIM_RE.search("정품을 보장") is not None
+
+    def test_jinpum_man_chwiryeop_caught(self):
+        """``진품만 취급`` → 걸림 (``만`` 보조사)."""
+        assert BANNED_CLAIM_RE.search("진품만 취급") is not None
+
+    def test_choegoui_pumjil_caught(self):
+        """``최고의 품질`` → 걸림 (``의`` 관형격 조사)."""
+        assert BANNED_CLAIM_RE.search("최고의 품질") is not None
+
+    def test_choegogeup_euro_caught(self):
+        """``최고급으로`` → 걸림 (``으로`` 부사격 조사)."""
+        assert BANNED_CLAIM_RE.search("최고급으로") is not None
+
+    def test_premium_euro_jejak_caught(self):
+        """``프리미엄으로 제작`` → 걸림 (``으로`` 부사격 조사)."""
+        assert BANNED_CLAIM_RE.search("프리미엄으로 제작") is not None
+
+    def test_chojeoga_euro_deurimnida_caught(self):
+        """``최저가로 드립니다`` → 걸림 (``로`` 부사격 조사)."""
+        assert BANNED_CLAIM_RE.search("최저가로 드립니다") is not None
+
+    def test_chojeoga_imnida_caught(self):
+        """``최저가입니다`` → 걸림 (``입니다`` 종결어미)."""
+        assert BANNED_CLAIM_RE.search("최저가입니다") is not None
+
+    def test_mujeogeon_ijyo_caught(self):
+        """``무조건이죠`` → 걸림 (``이죠`` 종결어미 — ``죠`` 회화체)."""
+        assert BANNED_CLAIM_RE.search("무조건이죠") is not None
+
+    def test_gungnae_yuil_ui_caught(self):
+        """``국내 유일의`` → 걸림 (``의`` 관형격 조사)."""
+        assert BANNED_CLAIM_RE.search("국내 유일의") is not None
+
+    def test_segye_choiso_ro_caught(self):
+        """``세계 최초로`` → 걸림 (``로`` 부사격 조사)."""
+        assert BANNED_CLAIM_RE.search("세계 최초로") is not None
+
+    def test_eopgye_1wi_ui_caught(self):
+        """``업계 1위의`` → 걸림 (``의`` 관형격 조사 — 순위 + 조사)."""
+        assert BANNED_CLAIM_RE.search("업계 1위의") is not None
+
+    def test_100percent_imnida_caught(self):
+        """``100%입니다`` → 걸림 (``100%`` 우선 매치 + ``입니다`` 어미)."""
+        assert BANNED_CLAIM_RE.search("100%입니다") is not None
+
+    def test_wanbyeokhan_majak_caught(self):
+        """``완벽한 마감`` → 걸림 (``완벽한`` 관형형 + ``마감``)."""
+        assert BANNED_CLAIM_RE.search("완벽한 마감") is not None
+
+
+class TestWoRound4CompoundNounNotCaught:
+    """WO 4라운드 B 그룹 — 복합명사·부정형 12건, 전부 NOT caught 여야 한다.
+
+    조사·어미 목록 허용으로 경계를 뒤집었지만, 복합명사(``정품인증서``·
+    ``가공식품``·``한정식``·``공산품``) 와 부정형(``비공식``) 은 뒤에 오는
+    한글이 조사·어미가 아니므로 여전히 보호된다. 3라운드 통제군 회귀 없음.
+    """
+
+    def test_jeongpuminjeungseo_file_not_caught(self):
+        """``정품인증서 파일`` → 안 걸림 (``인`` 은 조사가 아님)."""
+        assert BANNED_CLAIM_RE.search("정품인증서 파일") is None
+
+    def test_gagongsikpum_seonmul_not_caught(self):
+        """``가공식품 선물세트`` → 안 걸림 (``식`` 뒤 ``품`` 은 조사가 아님)."""
+        assert BANNED_CLAIM_RE.search("가공식품 선물세트") is None
+
+    def test_gagong_sikryopum_not_caught(self):
+        """``가공 식료품`` → 안 걸림 (``식`` 뒤 ``료`` 는 조사가 아님)."""
+        assert BANNED_CLAIM_RE.search("가공 식료품") is None
+
+    def test_susan_gagong_sikjajae_not_caught(self):
+        """``수산 가공 식자재`` → 안 걸림."""
+        assert BANNED_CLAIM_RE.search("수산 가공 식자재") is None
+
+    def test_hanjeongsik_bansanggi_not_caught(self):
+        """``한정식 반상기`` → 안 걸림 (``정식`` 은 정규식에서 제외)."""
+        assert BANNED_CLAIM_RE.search("한정식 반상기") is None
+
+    def test_gongsanpum_bogwanham_not_caught(self):
+        """``공산품 보관함`` → 안 걸림 (``공산`` 은 ``공식`` 이 아님)."""
+        assert BANNED_CLAIM_RE.search("공산품 보관함") is None
+
+    def test_bigongsik_goods_not_caught(self):
+        """``비공식 굿즈`` → 안 걸림 (앞 ``비`` 한글 lookbehind 차단)."""
+        assert BANNED_CLAIM_RE.search("비공식 굿즈") is None
+
+    def test_bigongsik_fanart_not_caught(self):
+        """``비공식 팬아트`` → 안 걸림."""
+        assert BANNED_CLAIM_RE.search("비공식 팬아트") is None
+
+    def test_sgiiseonhyu_bochungje_not_caught(self):
+        """``식이섬유 보충제`` → 안 걸림."""
+        assert BANNED_CLAIM_RE.search("식이섬유 보충제") is None
+
+    def test_1wisangyongpum_not_caught(self):
+        """``1위생용품`` → 안 걸림 (``위`` 뒤 ``생`` 은 조사가 아님)."""
+        assert BANNED_CLAIM_RE.search("1위생용품") is None
+
+    def test_3wisang_mask_not_caught(self):
+        """``3위생 마스크`` → 안 걸림 (``위`` 뒤 ``생`` 은 조사가 아님)."""
+        assert BANNED_CLAIM_RE.search("3위생 마스크") is None
+
+    def test_wisangjanggap_100mae_not_caught(self):
+        """``위생장갑 100매`` → 안 걸림 (``100매`` 는 ``100%`` 아님)."""
+        assert BANNED_CLAIM_RE.search("위생장갑 100매") is None
+
+
+class TestWoRound4SanitizationPreserves:
+    """WO 4라운드 C 그룹 — ``_sanitize_seo_title`` 회귀 없음 (원문 보존).
+
+    B 그룹 통제군 12건이 정제 후에도 원문 그대로 보존되는지 함께 검증.
+    ``_sanitize_seo_title`` 은 ``BANNED_CLAIM_RE`` 를 먼저 sub 한다.
+    """
+
+    def test_jeongpuminjeungseo_file_preserved(self):
+        from clossify.text_props import _sanitize_seo_title
+
+        assert _sanitize_seo_title("정품인증서 파일") == "정품인증서 파일"
+
+    def test_gagongsikpum_seonmul_preserved(self):
+        from clossify.text_props import _sanitize_seo_title
+
+        assert _sanitize_seo_title("가공식품 선물세트") == "가공식품 선물세트"
+
+    def test_gagong_sikryopum_preserved(self):
+        from clossify.text_props import _sanitize_seo_title
+
+        assert _sanitize_seo_title("가공 식료품") == "가공 식료품"
+
+    def test_susan_gagong_sikjajae_preserved(self):
+        from clossify.text_props import _sanitize_seo_title
+
+        assert _sanitize_seo_title("수산 가공 식자재") == "수산 가공 식자재"
+
+    def test_hanjeongsik_bansanggi_preserved(self):
+        from clossify.text_props import _sanitize_seo_title
+
+        assert _sanitize_seo_title("한정식 반상기") == "한정식 반상기"
+
+    def test_gongsanpum_bogwanham_preserved(self):
+        from clossify.text_props import _sanitize_seo_title
+
+        assert _sanitize_seo_title("공산품 보관함") == "공산품 보관함"
+
+    def test_bigongsik_goods_preserved(self):
+        from clossify.text_props import _sanitize_seo_title
+
+        assert _sanitize_seo_title("비공식 굿즈") == "비공식 굿즈"
+
+    def test_bigongsik_fanart_preserved(self):
+        from clossify.text_props import _sanitize_seo_title
+
+        assert _sanitize_seo_title("비공식 팬아트") == "비공식 팬아트"
+
+    def test_sgiiseonhyu_bochungje_preserved(self):
+        from clossify.text_props import _sanitize_seo_title
+
+        assert _sanitize_seo_title("식이섬유 보충제") == "식이섬유 보충제"
+
+    def test_1wisangyongpum_preserved(self):
+        from clossify.text_props import _sanitize_seo_title
+
+        assert _sanitize_seo_title("1위생용품") == "1위생용품"
+
+    def test_3wisang_mask_preserved(self):
+        from clossify.text_props import _sanitize_seo_title
+
+        assert _sanitize_seo_title("3위생 마스크") == "3위생 마스크"
+
+    def test_wisangjanggap_100mae_preserved(self):
+        from clossify.text_props import _sanitize_seo_title
+
+        assert _sanitize_seo_title("위생장갑 100매") == "위생장갑 100매"
