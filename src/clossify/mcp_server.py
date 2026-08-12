@@ -393,6 +393,51 @@ def _generate_config_form(
 #
 # 명시값 우선 원칙: register_product 의 명시 인자가 항상 우선하므로, 여기서
 # 반환된 값을 명시 인자에 대입하면 prepared 의 자동 채움보다 우선하게 된다.
+def _build_preview_api_payload(resolved_payload: dict[str, Any]) -> dict[str, Any] | None:
+    """대화형 미리보기용 임시 api_payload 를 만든다.
+
+    **왜 필요한가** (감리 ②): ``register_product`` 가 로컬 승인 대기 모드에
+    진입하면 미리보기 HTML 을 **조작 모드**로 다시 쓴다. 이때 ``api_payload``
+    를 넘기지 않으면 ``_collect_notice_rows`` 가 빈 ``notice_filled_from_config``
+    를 받아 설정 유래 N7 필드를 전부 "미제공" 으로 그린다. 사용자가 실제로 보고
+    승인하는 화면만 거짓 — 보기 전용 경로는 설정값을 표시하는데 승인 화면은 안
+    하는 모순이 생긴다.
+
+    본 함수는 ``build_payload`` 전체를 부르지 않고 미리보기에 필요한 두 정보만
+    추출한다 — (1) 고시 타입(``productInfoProvidedNoticeType``), (2) 설정 유래
+    필드 목록(``notice_filled_from_config``). ``naver_client._notice_defaults``
+    와 ``_product_info_notice`` 을 직접 호출해 이 값들을 얻는다.
+    ``build_payload`` 는 네트워크/이미지 검증을 수반하므로 승인 대기 시점에
+    전체를 호출하지 않는다 — 미리보기 렌더에 필요한 최소 정보만 구성한다.
+
+    Args:
+        resolved_payload: ``prepare_listing`` 이 만든 prepared payload.
+
+    Returns:
+        임시 api_payload dict (``notice_filled_from_config`` 와 고시 타입 포함).
+        resolved_payload 에 product dict 가 없으면 None.
+    """
+    product = resolved_payload.get("product")
+    if not isinstance(product, dict):
+        return None
+    try:
+        defaults = naver_client._notice_defaults(product)
+        notice = naver_client._product_info_notice(product, defaults)
+        api_payload: dict[str, Any] = {
+            "originProduct": {
+                "detailAttribute": {
+                    "productInfoProvidedNotice": notice,
+                },
+            },
+            "notice_filled_from_config": list(defaults.get("notice_filled_from_config") or []),
+        }
+    except (ValueError, TypeError, KeyError):
+        # 고시 타입 추론/해석 실패 — 미리보기에 최소 정보만이라도 넘긴다.
+        # 승인 버튼 동작에는 영향이 없고, 빈 출처 목록으로 렌더된다.
+        return None
+    return api_payload
+
+
 def _apply_approval_edits(
     edits: dict[str, Any],
 ) -> dict[str, Any]:
@@ -403,13 +448,34 @@ def _apply_approval_edits(
 
     Returns:
         ``{"name": str|None, "price": int|None, "tags": list|None,
-        "notice": dict|None}`` — 해당하지 않는 키는 None.
+        "notice": dict|None, "delivery_fee": int|None,
+        "origin_content": str|None, "importer": str|None,
+        "manufacturer": str|None}`` — 해당하지 않는 키는 None.
+
+    **감리 ④**: ``delivery_fee``·``origin_content``·``importer``·``manufacturer``
+    는 미리보기 고시 표에 ``고시.<field>`` 로 등장하지만, 해석기가 **top-level
+    상품 키**에서 읽는다 (고시 본문이 아님). 이 편집을 ``notice`` 딕셔너리에
+    넣으면 해석기가 안 보므로 **승인한 수정이 조용히 무시**된다. 이 필드들은
+    ``notice`` 가 아닌 전용 top-level 키로 빼서 반환한다.
     """
     result: dict[str, Any] = {
         "name": None,
         "price": None,
         "tags": None,
         "notice": None,
+        # 감리 ④: top-level 상품 키로 가야 하는 N7 필드.
+        "delivery_fee": None,
+        "origin_content": None,
+        "importer": None,
+        "manufacturer": None,
+    }
+    # 미리보기 고시 표에서 top-level 상품 키로 가야 하는 필드들.
+    # 해석기(naver_client._notice_defaults)가 p.<key> 에서 읽는 후보들.
+    _TOP_LEVEL_NOTICE_FIELDS = {
+        "delivery_fee": "delivery_fee",
+        "origin_content": "origin_content",
+        "importer": "importer",
+        "manufacturer": "manufacturer",
     }
     if not isinstance(edits, dict):
         return result
@@ -434,7 +500,22 @@ def _apply_approval_edits(
             result["tags"] = parts if parts else None
         elif f.startswith("고시."):
             notice_field = f[3:]  # "고시." 이후.
-            if notice_field:
+            if not notice_field:
+                continue
+            # 감리 ④: top-level 상품 키로 가야 하는 필드는 notice 가 아닌
+            # 전용 키로 뺀다 — notice 딕셔너리에 넣으면 해석기가 안 본다.
+            if notice_field in _TOP_LEVEL_NOTICE_FIELDS:
+                top_key = _TOP_LEVEL_NOTICE_FIELDS[notice_field]
+                if top_key == "delivery_fee":
+                    # 배송비는 숫자로 변환. 실패하면 무시(조용한 치환 금지).
+                    cleaned = v.replace(",", "").replace("원", "").strip()
+                    try:
+                        result["delivery_fee"] = int(cleaned)
+                    except ValueError:
+                        pass
+                elif v:
+                    result[top_key] = v
+            else:
                 if result["notice"] is None:
                     result["notice"] = {}
                 result["notice"][notice_field] = v
@@ -847,6 +928,12 @@ def _run_compliance_gate(
 
 # 정책값을 읽을 config 키 → (config 키 경로, 항목 이름) 매핑.
 # 빈 값(빈 문자열/공백/플레이스홀더)을 가진 키가 policy_gaps 에 들어간다.
+#
+# **별칭** (감리 ③): 해석기(naver_client)가 camelCase 별칭을 허용하는 키는
+# 진단에서도 같은 별칭을 봐야 한다. 판매자가 ``deliveryFee`` 로 설정하면
+# 등록은 그 값을 쓰면서 ``check_config`` 가 "미설정" 이라 진단하는 모순을
+# 만들면 안 된다. ``_POLICY_CONFIG_ALIASES`` 가 각 정책 키의 별칭 후보를
+# 제공한다 — 어느 별칭에든 실질값이 있으면 "설정됨" 으로 본다.
 _POLICY_CONFIG_KEYS: tuple[tuple[str, ...], ...] = (
     ("smartstore_notice_defaults", "origin_area_code"),
     ("smartstore_notice_defaults", "origin_content"),
@@ -865,6 +952,18 @@ _POLICY_CONFIG_KEYS: tuple[tuple[str, ...], ...] = (
     ("smartstore_notice_defaults", "delivery_fee"),
 )
 
+# 정책 키의 camelCase 별칭 후보. 해석기가 읽는 후보와 같아야 한다 —
+# 해석기는 delivery_fee / deliveryFee 둘 다 받는다 (naver_client.
+# _resolve_delivery_fee_with_slot 참조). 다른 정책 키(returnCostReason 등)는
+# 인벤토리가 이미 camelCase 로 등록되어 있으므로 snake_case 별칭이 필요하지
+# 않다 — 해석기도 camelCase 만 본다.
+_POLICY_CONFIG_ALIASES: dict[tuple[str, ...], tuple[tuple[str, ...], ...]] = {
+    ("smartstore_notice_defaults", "delivery_fee"): (
+        ("smartstore_notice_defaults", "delivery_fee"),
+        ("smartstore_notice_defaults", "deliveryFee"),
+    ),
+}
+
 
 def _cfg_value_at(cfg: dict[str, Any], path: tuple[str, ...]) -> Any:
     """config 에서 다단계 키 경로로 값을 읽는다. 없으면 None."""
@@ -881,11 +980,22 @@ def _diagnose_policy_gaps(cfg: dict[str, Any]) -> list[str]:
 
     빈 값(빈 문자열/공백/None/플레이스홀더)을 가진 항목만 담는다.
     외부 API 호출을 하지 않는다 — config 파일 객체만 본다.
+
+    **별칭** (감리 ③): ``_POLICY_CONFIG_ALIASES`` 에 별칭 후보가 등록된 키는
+    어느 별칭에서든 실질값이 있으면 "설정됨" 으로 본다. 판매자가 camelCase
+    ``deliveryFee`` 로 설정했는데 ``delivery_fee`` 만 보고 "미설정" 이라
+    진단하면 등록은 값을 쓰면서 진단만 거짓이 된다.
     """
     gaps: list[str] = []
     for path in _POLICY_CONFIG_KEYS:
-        value = _cfg_value_at(cfg, path)
-        if not _is_policy_value_present(value):
+        aliases = _POLICY_CONFIG_ALIASES.get(path, (path,))
+        found_present = False
+        for alias_path in aliases:
+            value = _cfg_value_at(cfg, alias_path)
+            if _is_policy_value_present(value):
+                found_present = True
+                break
+        if not found_present:
             gaps.append(".".join(path))
     return gaps
 
@@ -1032,10 +1142,21 @@ def _read_existing_policies(
     extracted = _extract_policy_values_from_product(pbody, origin_no)
 
     # 4. config 의 현재 정책값과 비교해 제안/불일치 산출.
+    # 감리 ③: camelCase 별칭이 있는 키(delivery_fee)는 별칭 후보에서
+    # 값을 읽는다 — 판매자가 deliveryFee 로 설정했는데 delivery_fee 만 보고
+    # "미설정" 이라 진단하면 기존 상품 값을 잘못 제안한다.
     suggested: dict[str, dict[str, Any]] = {}
     drift: list[dict[str, Any]] = []
     for cfg_path, item_key in _POLICY_TO_EXTRACTION_KEY:
-        cfg_value = _cfg_value_at(cfg, cfg_path)
+        aliases = _POLICY_CONFIG_ALIASES.get(cfg_path, (cfg_path,))
+        cfg_value: Any = None
+        for alias_path in aliases:
+            v = _cfg_value_at(cfg, alias_path)
+            if _is_policy_value_present(v):
+                cfg_value = v
+                break
+            if v is not None and cfg_value is None:
+                cfg_value = v
         ext = extracted.get(item_key)
         if ext is None:
             # 기존 상품에도 없는 값은 제안하지 않는다 (추정 금지).
@@ -2228,6 +2349,8 @@ def register_product(
     # 승인 과정에서 편집이 없어도 이 변수는 항상 정의되어야 한다 — 아래
     # 재검사 블록에서 무조건 참조하기 때문이다.
     _approval_edits_applied: dict[str, Any] = {}
+    # 감리 ④: top-level 상품 키 편집 초기값. 승인 과정이 아니면 빈 dict.
+    _approval_top_level_edits: dict[str, Any] = {}
     if _require_preview and not preview_confirmed:
         # 로컬 승인 다리가 켜져 있으면 "승인 대기 모드" 로 진입한다 —
         # 사용자가 브라우저에서 [승인] 버튼을 누를 때까지 대기한다.
@@ -2309,18 +2432,23 @@ def register_product(
         try:
             # 포트가 확정되었으므로 미리보기 파일을 갱신한다.
             # 기존 클립보드 편집 기능도 그대로 포함된다.
-            # api_payload(등록 단계 페이로드)는 prepared payload 에 저장되지
-            # 않으므로 여기서는 전달하지 않는다 — 고시 타입/출처 표시 없이
-            # 렌더되지만, 승인 버튼 동작에는 영향이 없다.
             #
             # **조작(브라우저) 모드**로 갱신한다 — 사용자가 이 파일을 브라우저로
             # 열어 [승인] / [수정 후 승인] 버튼을 누르는 자리다. register.prepare_listing
             # 이 보기 전용(패널용)으로 쓴 파일을 여기서 조작 모드로 덮어쓴다.
             # 패널이 아닌 브라우저로 보는 경로이므로 contenteditable·버튼·스크립트가
             # 정상 작동한다. 회귀 금지 — 폼 POST·hidden 토큰 규약은 그대로.
+            #
+            # 감리 ②: 임시 api_payload 를 만들어 넘긴다 — 넘기지 않으면
+            # _collect_notice_rows 가 빈 notice_filled_from_config 를 받아
+            # 설정 유래 N7 필드가 "미제공" 으로 뜬다. 보기 전용 경로는
+            # 설정값을 표시하는데 **사용자가 실제로 보고 승인하는 이 화면만**
+            # 거짓 값이 되는 모순이 생긴다. 기능 목적 자체가 이 화면에 있다.
+            _preview_api_payload = _build_preview_api_payload(_resolved_payload)
             _preview_mod.write_preview_html(
                 _product_key,
                 _resolved_payload,
+                api_payload=_preview_api_payload,
                 approval_token=_approval_token,
                 approval_port=_approval_port,
                 mode="interactive",
@@ -2408,10 +2536,16 @@ def register_product(
         # 필드를 추적해 게이트 통과 후 결정론 재검사를 돌리고, 게이트 라벨을
         # 낮추며 무엇이 미검수인지 명시한다. LLM 검수(카피 품질)는 자동
         # 재호출하지 않는다(비용); 라벨로 드러낸다.
+        #
+        # 감리 ④: delivery_fee 편집은 top-level 상품 키로 가야 한다 —
+        # notice 딕셔너리에 넣으면 해석기가 안 본다 (조용한 무시). 마찬가지로
+        # origin_content·importer·manufacturer 도 top-level 키에서 읽는다.
         _edits = _outcome.decisions.get("edits") if isinstance(_outcome.decisions, dict) else None
         # NOTE: _approval_edits_applied 은 함수 위쪽에서 미리 {} 로 초기화된다.
         # 여기서는 승인 과정의 편집만 추적하도록 다시 비운다.
         _approval_edits_applied = {}
+        # 감리 ④: top-level 상품 키 편집을 모았다가 product dict 구성 때 싣는다.
+        _approval_top_level_edits: dict[str, Any] = {}
         if isinstance(_edits, dict) and _edits:
             _applied = _apply_approval_edits(_edits)
             if _applied.get("name"):
@@ -2425,6 +2559,15 @@ def register_product(
             if _applied.get("notice") is not None:
                 notice = _applied["notice"]
                 _approval_edits_applied["notice"] = notice
+            # 감리 ④: top-level 상품 키 편집 (해석기가 읽는 자리).
+            if _applied.get("delivery_fee") is not None:
+                delivery_fee = _applied["delivery_fee"]
+                _approval_edits_applied["delivery_fee"] = delivery_fee
+            for _tl_key in ("origin_content", "importer", "manufacturer"):
+                _tl_val = _applied.get(_tl_key)
+                if _tl_val:
+                    _approval_top_level_edits[_tl_key] = _tl_val
+                    _approval_edits_applied[_tl_key] = _tl_val
 
         # 승인이 확인되었으므로 preview_confirmed 를 True 로 취급하고 진행.
         preview_confirmed = True
@@ -2696,6 +2839,12 @@ def register_product(
     # 판정할 수 있도록 (기본값 3000 은 _notice_defaults 한 곳에서만 결정).
     if delivery_fee is not None:
         product["delivery_fee"] = int(delivery_fee)
+    # 감리 ④: 승인 편집에서 온 top-level 규제값(origin_content·importer·
+    # manufacturer) 을 상품 dict 에 싣는다 — 해석기가 p.<key> 에서 읽는다.
+    # notice 딕셔너리가 아니라 이 자리에 있어야 승인한 수정이 실제로 반영된다.
+    for _tl_key in ("origin_content", "importer", "manufacturer"):
+        if _approval_top_level_edits.get(_tl_key):
+            product[_tl_key] = _approval_top_level_edits[_tl_key]
     if options:
         product["options"] = options
     if notice is not None:

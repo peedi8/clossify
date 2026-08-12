@@ -488,10 +488,14 @@ def _build_register_product_dict(d, name, category_id, *, resolved_tags=None):
         "stock": int(d.get("stock", 1)),
         "courier": d.get("courier") or "",
     }
-    # delivery_fee: 키가 있을 때만 넣는다 (기본값 3000 은 _notice_defaults
-    # 한 곳에서만 결정 — 키가 없으면 config 폴백이 발동해야 한다).
-    if "delivery_fee" in d:
-        product["delivery_fee"] = int(d.get("delivery_fee"))
+    # delivery_fee: 실질값이 있을 때만 넣는다 (기본값 3000 은 _notice_defaults
+    # 한 곳에서만 결정 — 키가 없거나 빈 값이면 config 폴백이 발동해야 한다).
+    # 빈 선택 필드(None/""/공백)가 컴플라이언스 실파냐 수준의 예외로 둔갑하면
+    # 안 된다 — _resolve_delivery_fee_with_slot 은 None/"" 을 "생략" 으로 본다.
+    # 같은 값을 두 곳이 다르게 보는 것(2라운드 감리 ① 의 재발 방지).
+    raw_fee = d.get("delivery_fee")
+    if raw_fee is not None and str(raw_fee).strip():
+        product["delivery_fee"] = int(raw_fee)
     if d.get("options"):
         product["options"] = d.get("options")
     notice = d.get("notice")
