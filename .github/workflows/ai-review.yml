@@ -92,8 +92,16 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          # original_commit_id 로 센다 — commit_id 를 쓰면 안 된다.
+          # commit_id 는 새 커밋이 올라올 때 코멘트가 여전히 붙는 줄이면
+          # 새 head 로 **굴러간다**(실측 2026-08-12, PR #27: 5건 중 2건이
+          # 7bfdc7d -> dc015d7 로 이동). 그러면 수리 커밋을 밀어넣은 직후에
+          # "이미 리뷰함"으로 판정돼 **재리뷰가 통째로 건너뛰어진다** —
+          # 정작 리뷰가 가장 필요한 순간에. 잡은 success 로 끝나 0건 지적처럼
+          # 보이는 것이 더 나쁘다(실패가 성공처럼 보임).
+          # original_commit_id 는 "어느 커밋을 보고 썼는가"라 움직이지 않는다.
           n="$(gh api "repos/$REPO/pulls/$PR/comments" --paginate \
-                --jq "[.[] | select(.commit_id == \"$HEAD_SHA\")] | length" \
+                --jq "[.[] | select(.original_commit_id == \"$HEAD_SHA\")] | length" \
                | awk '{s+=$1} END {print s+0}')"
           if [ "${n:-0}" -gt 0 ]; then
             echo "done=true" >> "$GITHUB_OUTPUT"
