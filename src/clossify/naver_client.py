@@ -456,6 +456,19 @@ def _notice_defaults(p):
             p.get("exchange_delivery_fee", cfg_notice.get("exchange_delivery_fee")),
             6000,
         ),
+        # 배송비(baseFee) — 상거래 조건이므로 규제값처럼 fail-closed 로
+        # 만들지 않는다. 후보 순서: p.delivery_fee(명시) → config → 3000.
+        # config 키는 delivery_fee 와 camelCase deliveryFee 둘 다 받는다
+        # (기존 _first_value 패턴과 동일). 어디서 왔는지는 보고한다(N7).
+        "delivery_fee": _int_value(
+            _first_value(
+                p.get("delivery_fee"),
+                cfg_notice.get("delivery_fee"),
+                cfg_notice.get("deliveryFee"),
+                default=3000,
+            ),
+            3000,
+        ),
         # 어떤 공통 5필드가 상품 입력이 아닌 config 에서 채워졌는지.
         # build_payload 가 이 값을 페이로드 루트의 notice_filled_from_config
         # 메타에 싣는다(비어있지 않을 때만). 묻지 않고 채워진 값이 조용히
@@ -573,7 +586,7 @@ def _has_text(value) -> bool:
 
 
 def _notice_common_filled_from_config(p, cfg_notice) -> list:
-    """공통 5필드 중 "상품 입력이 아닌 config 에서만 채워진" 필드명 목록.
+    """공통 5필드 + 상품마다 달라야 하는 규제값 중 "config 에서만 채워진" 필드명 목록.
 
     우선순위: **상품 입력 > config > 미설정(묻기)**.
 
@@ -586,9 +599,20 @@ def _notice_common_filled_from_config(p, cfg_notice) -> list:
             사용자가 준 값이 실제 본문에 들어갔는데도 "config 에서 왔다"고
             잘못 보고하게 된다.
     - 상품 입력이 비고 config 에 비어있지 않은 값이 있으면 → "config 에서 채워진"
-      것으로 보고 해당 고시 camelCase 필드명을 목록에 넣는다.
+      것으로 보고 해당 필드명을 목록에 넣는다.
     - config 값이 "" / 공백뿐이면 미설정 취급 — 채워지지 않은 것으로 본다
       (빈 값이 유효 입력으로 둔갑하면 안 된다).
+
+    **N7 확장 — origin_content·importer·manufacturer·delivery_fee 도 보고.**
+
+    이 필드들은 **상품마다 달라야 하는 규제값**이다 (중국산·국내산을 같이 파는
+    판매자, 제조사/수입사가 상품마다 다른 경우). 스토어 서랍(config) 에 기본값을
+    둘 수 있지만, 묻지 않고 조용히 채워지면 **잘못 신고** 위험이 있다. 그래서
+    **차단이 아니라 가시화**로 다룬다 — config 에서 채워졌으면 보고에 등장시켜
+    사용자가 확인하게 한다. 보고명은 내부 키 이름 그대로(``origin_content``·
+    ``importer``·``manufacturer``·``delivery_fee``) 쓴다. ``origin_content`` 를
+    고시 필드명인 ``countryOfOrigin`` 로 바꾸지 않는다 — 내부 키 이름 그대로가
+    사용자에게 덜 헷갈린다.
 
     반환값은 페이로드 빌드 결과 메타(notice_filled_from_config)에 실려
     사용자에게 전달된다 — 묻지 않고 채워진 값이 조용히 딸려가면 잘못 신고된다.
@@ -632,6 +656,73 @@ def _notice_common_filled_from_config(p, cfg_notice) -> list:
             continue
         if any(_has_text(cfg_notice.get(k)) for k in cfg_keys):
             filled.append(notice_field)
+
+    # N7 — 상품마다 달라야 하는 규제값이 config 에서만 채워졌으면 보고.
+    # 차단이 아니라 가시화로 다룬다(잘못 신고 위험).
+    filled.extend(_per_product_filled_from_config(p, cfg_notice, user_bodies))
+    return filled
+
+
+def _per_product_filled_from_config(p, cfg_notice, user_bodies) -> list:
+    """상품마다 달라야 하는 규제값이 config 에서만 채워졌는지 보고 (N7).
+
+    ``origin_content``·``importer``·``manufacturer``·``delivery_fee`` 는
+    상품마다 달라야 하는 규제값/상거래 조건이다. 스토어 서랍(config) 에
+    기본값을 둘 수 있지만, 묻지 않고 조용히 채워지면 잘못 신고 위험이 있다.
+    그래서 **차단이 아니라 가시화**로 다룬다 — 상품 입력에 없고 config 에만
+    있으면 ``notice_filled_from_config`` 목록에 넣어 사용자가 확인하게 한다.
+
+    보고명은 내부 키 이름 그대로 쓴다(``origin_content``·``importer``·
+    ``manufacturer``·``delivery_fee``).
+    """
+    filled: list = []
+
+    # origin_content: _notice_defaults 의 made_in 과 동일한 후보 경로.
+    # 상품 입력: made_in / origin_content (top-level), 고시 본문에 직접 넣은 값.
+    # config: origin_content.
+    if not _has_text(p.get("made_in")) and not _has_text(p.get("origin_content")):
+        if not any(
+            _has_text(b.get(k))
+            for b in user_bodies
+            for k in ("origin_content", "countryOfOrigin", "made_in", "originContent")
+        ):
+            if _has_text(cfg_notice.get("origin_content")):
+                filled.append("origin_content")
+
+    # importer: _notice_defaults 의 importer 와 동일한 후보 경로.
+    if not _has_text(p.get("importer")):
+        if not any(_has_text(b.get("importer")) for b in user_bodies):
+            if _has_text(cfg_notice.get("importer")):
+                filled.append("importer")
+
+    # manufacturer: _seller_manufacturer_default 의 모든 상품 입력 후보를 포함.
+    # seller_name_ko / sellerNameKo / seller_name / sellerName /
+    # shop_name_ko / shopNameKo / shop_name / shopName / nick / nickName
+    # 어느 하나라도 상품 입력에 있으면 명시값으로 본다.
+    _manufacturer_p_keys = (
+        "manufacturer",
+        "seller_name_ko",
+        "sellerNameKo",
+        "seller_name",
+        "sellerName",
+        "shop_name_ko",
+        "shopNameKo",
+        "shop_name",
+        "shopName",
+        "nick",
+        "nickName",
+    )
+    if not any(_has_text(p.get(k)) for k in _manufacturer_p_keys):
+        if not any(_has_text(b.get("manufacturer")) for b in user_bodies):
+            if _has_text(cfg_notice.get("manufacturer")):
+                filled.append("manufacturer")
+
+    # delivery_fee: 상거래 조건이므로 config 폴백이 있지만 보고한다.
+    # 상품 입력에 명시값이 있으면 config 가 채운 게 아니다.
+    if not _has_text(p.get("delivery_fee")):
+        if _has_text(cfg_notice.get("delivery_fee")) or _has_text(cfg_notice.get("deliveryFee")):
+            filled.append("delivery_fee")
+
     return filled
 
 
@@ -2089,7 +2180,7 @@ def build_payload(p, detail_html, images, status="SALE", deferred_notice_fields=
                 "deliveryBundleGroupUsable": False,
                 "deliveryFee": {
                     "deliveryFeeType": "PAID",
-                    "baseFee": int(p.get("delivery_fee", 3000)),
+                    "baseFee": defaults["delivery_fee"],
                     "deliveryFeePayType": "PREPAID",
                 },
                 "claimDeliveryInfo": {
