@@ -28,6 +28,12 @@ clossify = "clossify.mcp_server:main"
 dev = [
     "pytest",
     "ruff==0.6.9",
+    # 1차 방어선(.pre-commit-config.yaml)을 실제로 돌리는 도구.
+    # 이게 dev 의존성에 없어서 설정 파일만 있고 훅이 **한 번도 실행된 적이 없었다**
+    # (2026-08-12 실측: `.git/hooks/pre-commit` 부재). 커밋 직전 gitleaks·ruff-format·
+    # private-key 검사가 전부 무위였다. 설치 후 `pre-commit install` 이 필요하다 —
+    # 아래 README '커밋 전 검증' 참조.
+    "pre-commit",
 ]
 
 [tool.hatch.build.targets.wheel]

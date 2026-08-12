@@ -344,8 +344,22 @@ python scripts/verify_local.py     # 커밋 전 이것만 돌리면 CI 와 같�
 > 이 스크립트와 `.github/workflows/ci.yml` 은 한 쌍이다. 워크플로를 바꾸면
 > 스크립트도 함께 바꾼다(스크립트 상단 주석에 같은 안내가 있다).
 
-pre-commit(gitleaks 등) 설정은 저장소 참고. 자세한 설계·모듈 의존·데이터 자산은
-`docs/ARCHITECTURE.md`, 배경 결정은 `docs/adr/` 참고.
+### 1차 방어선 — `pre-commit install` 을 **한 번은** 해야 한다
+
+`.pre-commit-config.yaml` 은 커밋 직전 gitleaks(평문 키)·ruff-format·개인키 탐지를
+돌리는 설정이다. **설정만으로는 아무 일도 일어나지 않는다** — git 훅을 설치해야 실행된다.
+설치를 빠뜨리면 커밋이 그냥 통과하므로 방어선이 있다고 착각하기 쉽다(실제로 그런 상태였다).
+
+```sh
+pip install -e ".[dev]"     # pre-commit 포함
+pre-commit install          # .git/hooks/pre-commit 생성 — 이걸 해야 돈다
+pre-commit run --all-files  # (선택) 지금 트리 전체에 한 번 돌려보기
+```
+
+훅이 설치됐는지는 `.git/hooks/pre-commit` 파일 존재로 확인한다.
+1차(pre-commit, staged 만)와 2차(CI, 전체 트리)는 한 쌍이며 **둘 다 있어야** 한다.
+
+자세한 설계·모듈 의존·데이터 자산은 `docs/ARCHITECTURE.md`, 배경 결정은 `docs/adr/` 참고.
 
 ## 면책
 
