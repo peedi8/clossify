@@ -106,23 +106,29 @@ def _clear_retry_events():
 
 class TestRetryOnAuthNExpired:
     def test_401_gw_authn_then_200_succeeds(self):
-        """401 + GW.AUTHN 첫 요청, 재시도 시 200 → 성공 반환."""
+        """401 + GW.AUTHN 첫 요청, 재시도 시 200 → 성공 반환.
+
+        WO PR #27 8라운드 ②: ``get_product`` 같은 래퍼에 ``tk=<문자열>`` 을
+        넘기면 **주입 토큰** 으로 간주되어 자동 갱신이 꺼진다. 내부 발급 토큰의
+        재시도를 시험하려면 ``tk=None`` 으로 두고 ``get_token`` 모크가 두 번
+        (최초 발급 + 재발급) 불려야 한다.
+        """
         _clear_retry_events()
         responses = [
             _FakeResponse(401, json_body={"code": "GW.AUTHN", "message": "expired"}),
             _FakeResponse(200, json_body={"ok": True}),
         ]
         req_mock, req_log = _make_request_mock(responses)
-        tok_mock, tok_log = _make_token_mock(["new-token-abc"])
+        tok_mock, tok_log = _make_token_mock(["initial-token", "new-token-abc"])
 
         with mock.patch.object(naver_client.requests, "get", side_effect=req_mock):
             with mock.patch.object(naver_client, "get_token", side_effect=tok_mock):
-                sc, body = naver_client.get_product("test-origin-no", tk="expired-token-xyz")
+                sc, body = naver_client.get_product("test-origin-no")
 
         assert sc == 200, f"재시도 후 200 이어야 함: {sc}"
         assert body == {"ok": True}
-        # 발급(get_token) 은 정확히 1회.
-        assert tok_log["count"] == 1, f"발급 호출 횟수: {tok_log['count']} (예상 1)"
+        # 발급(get_token) 은 정확히 2회 (최초 발급 + 재발급).
+        assert tok_log["count"] == 2, f"발급 호출 횟수: {tok_log['count']} (예상 2 — 최초+재발급)"
         # HTTP 요청은 정확히 2회 (최초 + 재시도).
         assert req_log["count"] == 2, f"HTTP 요청 횟수: {req_log['count']} (예상 2)"
         # 재시도 사실이 기록되었다.
@@ -136,23 +142,29 @@ class TestRetryOnAuthNExpired:
 
 class TestRetryOnlyOnceOnRepeatedAuthN:
     def test_401_gw_authn_twice_retries_only_once(self):
-        """401 + GW.AUTHN 이 재시도에서도 반복 → 재시도 1회만, 실패 전파."""
+        """401 + GW.AUTHN 이 재시도에서도 반복 → 재시도 1회만, 실패 전파.
+
+        WO PR #27 8라운드 ②: 내부 발급 토큰 경로(``tk=None``) 로 시험.
+        ``get_token`` 은 최초 발급 1회 + 재발급 1회 = 2회 불린다.
+        """
         _clear_retry_events()
         responses = [
             _FakeResponse(401, json_body={"code": "GW.AUTHN"}),
             _FakeResponse(401, json_body={"code": "GW.AUTHN"}),
         ]
         req_mock, req_log = _make_request_mock(responses)
-        tok_mock, tok_log = _make_token_mock(["new-token"])
+        tok_mock, tok_log = _make_token_mock(["initial-token", "new-token"])
 
         with mock.patch.object(naver_client.requests, "get", side_effect=req_mock):
             with mock.patch.object(naver_client, "get_token", side_effect=tok_mock):
-                sc, body = naver_client.get_product("test-origin-no", tk="old")
+                sc, body = naver_client.get_product("test-origin-no")
 
         # 두 번째도 401 → 실패 전파.
         assert sc == 401, f"두 번째 401 을 그대로 올려야 함: {sc}"
-        # 발급(get_token) 은 정확히 1회 (재시도는 1회만).
-        assert tok_log["count"] == 1, f"발급 호출 횟수: {tok_log['count']} (예상 1 — 재시도 1회)"
+        # 발급(get_token) 은 정확히 2회 (최초 발급 + 재발급 1회).
+        assert (
+            tok_log["count"] == 2
+        ), f"발급 호출 횟수: {tok_log['count']} (예상 2 — 최초+재발급 1회)"
         # HTTP 요청은 정확히 2회 (최초 + 재시도 1회, 3회 아님).
         assert (
             req_log["count"] == 2
@@ -271,7 +283,12 @@ class TestNoRetryOn403And500:
 
 class TestNoTokenLeakInRetryEvents:
     def test_retry_event_has_no_token_string(self):
-        """재시도 이벤트 기록에 토큰 문자열이 없어야 한다."""
+        """재시도 이벤트 기록에 토큰 문자열이 없어야 한다.
+
+        WO PR #27 8라운드 ②: 내부 발급 토큰 경로(``tk=None``) 로 시험 —
+        ``get_token`` 모크가 비밀 토큰을 반환한다. 주입 토큰 경로면 RuntimeError
+        가 나므로 재시도 이벤트 자체가 생기지 않는다.
+        """
         _clear_retry_events()
         secret_token = "SECRET-TOKEN-DO-NOT-LEAK-12345"
         responses = [
@@ -279,11 +296,11 @@ class TestNoTokenLeakInRetryEvents:
             _FakeResponse(200, json_body={"ok": True}),
         ]
         req_mock, req_log = _make_request_mock(responses)
-        tok_mock, tok_log = _make_token_mock(["new-" + secret_token])
+        tok_mock, tok_log = _make_token_mock([secret_token, "new-" + secret_token])
 
         with mock.patch.object(naver_client.requests, "get", side_effect=req_mock):
             with mock.patch.object(naver_client, "get_token", side_effect=tok_mock):
-                naver_client.get_product("x", tk=secret_token)
+                naver_client.get_product("x")
 
         # 이벤트가 기록되었다.
         assert len(naver_client._AUTHN_RETRY_EVENTS) == 1
@@ -347,16 +364,18 @@ class TestFileUploadRetryPreservesContent:
                 json_body={"images": [{"url": "https://x/a.png"}, {"url": "https://x/b.png"}]},
             )
 
-        tok_mock, tok_log = _make_token_mock(["new-token"])
+        tok_mock, tok_log = _make_token_mock(["initial-token", "new-token"])
 
         with mock.patch.object(naver_client.requests, "post", side_effect=_capture_and_respond):
             with mock.patch.object(naver_client, "get_token", side_effect=tok_mock):
-                urls = naver_client.upload_images([str(fa), str(fb)], tk="expired")
+                urls = naver_client.upload_images([str(fa), str(fb)])
 
         # 재시도가 일어났다 (요청 2회).
         assert len(uploaded_bodies) == 2, f"요청 횟수: {len(uploaded_bodies)} (예상 2)"
-        # 토큰 재발급 1회.
-        assert tok_log["count"] == 1
+        # 토큰 재발급: 최초 발급 1회 + 재발급 1회 = 2회.
+        assert (
+            tok_log["count"] == 2
+        ), f"get_token 호출 횟수: {tok_log['count']} (예상 2 — 최초+재발급)"
         # 핵심: 두 번째 요청의 파일 내용이 1차와 바이트 동일.
         first = uploaded_bodies[0]
         second = uploaded_bodies[1]
@@ -597,21 +616,27 @@ class TestOtherPathsStillRetryOnAuthN:
     """
 
     def test_get_product_still_retries_once_on_401_gw_authn(self):
-        """GET /origin-products/{no} 가 401 GW.AUTHN → 1회 재시도 (요청 2회)."""
+        """GET /origin-products/{no} 가 401 GW.AUTHN → 1회 재시도 (요청 2회).
+
+        WO PR #27 8라운드 ②: 내부 발급 토큰 경로(``tk=None``) 로 시험.
+        ``get_token`` 은 최초 발급 + 재발급 = 2회 불린다.
+        """
         _clear_retry_events()
         responses = [
             _FakeResponse(401, json_body={"code": "GW.AUTHN"}),
             _FakeResponse(200, json_body={"ok": True}),
         ]
         req_mock, req_log = _make_request_mock(responses)
-        tok_mock, tok_log = _make_token_mock(["new-token"])
+        tok_mock, tok_log = _make_token_mock(["initial-token", "new-token"])
 
         with mock.patch.object(naver_client.requests, "get", side_effect=req_mock):
             with mock.patch.object(naver_client, "get_token", side_effect=tok_mock):
-                sc, body = naver_client.get_product("x", tk="expired")
+                sc, body = naver_client.get_product("x")
 
         assert sc == 200
-        assert tok_log["count"] == 1
+        assert (
+            tok_log["count"] == 2
+        ), f"get_token 호출 횟수: {tok_log['count']} (예상 2 — 최초+재발급)"
         assert (
             req_log["count"] == 2
         ), f"GET 요청 횟수: {req_log['count']} (예상 2 — 조회 경로는 여전히 1회 재시도)"
@@ -724,3 +749,149 @@ class TestApiRequestProvenanceComment:
         assert (
             "보장하지 않는다" in doc
         ), "인증 문서가 원 요청 미처리를 보장하지 않는다는 범위 명시가 없음"
+
+
+# --------------------------------------------------------------------------- #
+# 시나리오 13: 주입된 토큰은 자동 갱신하지 않는다 (WO PR #27 8라운드 ②).
+#
+# 호출자가 ``tk=<문자열>`` 로 외부 자격증명에서 받은 토큰을 넘겼는데 만료(401+
+# GW.AUTHN) 되면, ``get_token()`` (``load_config()`` 기반) 으로 갱신하면 **다른
+# 판매자 신원**으로 요청이 나간다. 따라서 주입 토큰은 사유 있는 RuntimeError
+# 를 올리고 재시도하지 않는다. 내부 발급 토큰(``tk=None``) 만 갱신 대상이다.
+# --------------------------------------------------------------------------- #
+
+
+class TestInjectedTokenNoAutoRefresh:
+    """``tk=<문자열>`` 로 주입된 토큰은 401+GW.AUTHN 시 자동 갱신하지 않는다.
+
+    증명 (요청 횟수로):
+      - 주입 토큰 경로(``get_product("x", tk="external")``): HTTP 1회,
+        ``get_token`` 0회, RuntimeError 사유 포함.
+      - 내부 발급 경로(``get_product("x")``): HTTP 2회, ``get_token`` 2회.
+    """
+
+    def test_injected_token_no_retry_raises_with_reason(self):
+        """주입 토큰 → HTTP 1회, get_token 0회, RuntimeError (사유 포함)."""
+        _clear_retry_events()
+        responses = [
+            _FakeResponse(401, json_body={"code": "GW.AUTHN", "message": "expired"}),
+            _FakeResponse(200, json_body={"ok": True}),
+        ]
+        req_mock, req_log = _make_request_mock(responses)
+        tok_mock, tok_log = _make_token_mock(["should-not-be-called"])
+
+        import pytest
+
+        with mock.patch.object(naver_client.requests, "get", side_effect=req_mock):
+            with mock.patch.object(naver_client, "get_token", side_effect=tok_mock):
+                with pytest.raises(RuntimeError) as exc_info:
+                    naver_client.get_product("x", tk="external-credential-token")
+
+        # HTTP 요청은 1회 (재시도 없음).
+        assert (
+            req_log["count"] == 1
+        ), f"주입 토큰 경로 HTTP 요청: {req_log['count']}회 (예상 1 — 재시도 금지)"
+        # get_token 호출 0회 (갱신 안 함).
+        assert (
+            tok_log["count"] == 0
+        ), f"주입 토큰 경로 get_token 호출: {tok_log['count']}회 (예상 0 — 자동 갱신 금지)"
+        # 사유가 메시지에 있다.
+        msg = str(exc_info.value)
+        assert "주입된 토큰" in msg, f"RuntimeError 사유에 '주입된 토큰' 없음: {msg}"
+        assert (
+            "자동 재발급하지 않는다" in msg
+        ), f"RuntimeError 사유에 '자동 재발급하지 않는다' 없음: {msg}"
+        # 재시도 이벤트 없음.
+        assert len(naver_client._AUTHN_RETRY_EVENTS) == 0
+
+    def test_internal_token_still_retries_once(self):
+        """내부 발급 토큰(``tk=None``) → HTTP 2회, get_token 2회 (최초+재발급)."""
+        _clear_retry_events()
+        responses = [
+            _FakeResponse(401, json_body={"code": "GW.AUTHN"}),
+            _FakeResponse(200, json_body={"ok": True}),
+        ]
+        req_mock, req_log = _make_request_mock(responses)
+        tok_mock, tok_log = _make_token_mock(["initial", "refreshed"])
+
+        with mock.patch.object(naver_client.requests, "get", side_effect=req_mock):
+            with mock.patch.object(naver_client, "get_token", side_effect=tok_mock):
+                sc, body = naver_client.get_product("x")
+
+        assert sc == 200
+        # 대조군: 내부 경로는 재시도한다.
+        assert (
+            req_log["count"] == 2
+        ), f"내부 토큰 경로 HTTP 요청: {req_log['count']}회 (예상 2 — 재시도 1회)"
+        assert (
+            tok_log["count"] == 2
+        ), f"내부 토큰 경로 get_token 호출: {tok_log['count']}회 (예상 2 — 최초+재발급)"
+        assert len(naver_client._AUTHN_RETRY_EVENTS) == 1
+
+
+# --------------------------------------------------------------------------- #
+# 시나리오 14: 단조 증가 카운터 ``_AUTHN_RETRY_COUNT`` (WO PR #27 8라운드 ①).
+#
+# ``_AUTHN_RETRY_EVENTS`` 가 ``deque(maxlen=1000)`` 이라 가득 차면 ``len()``
+# 이 안 변한다. ``mcp_server`` 의 삭제 404 예외 판정이 ``len()`` 에 의존하면
+# 포화 시점부터 영구히 "재시도 없었음"으로 잘못 판정한다. 단조 증가 카운터는
+# 버퍼 크기와 무관하게 매 재시도마다 올라간다.
+# --------------------------------------------------------------------------- #
+
+
+class TestRetryCounterMonotonic:
+    """``_AUTHN_RETRY_COUNT`` 가 재시도마다 단조 증가하고, 버퍼 포화와 무관하다."""
+
+    def test_counter_starts_at_zero_and_increments(self):
+        """재시도 1회 → 카운터 1 증가. clear/reset 시 0."""
+        _clear_retry_events()
+        naver_client._AUTHN_RETRY_COUNT = 0
+        responses = [
+            _FakeResponse(401, json_body={"code": "GW.AUTHN"}),
+            _FakeResponse(200, json_body={"ok": True}),
+        ]
+        req_mock, req_log = _make_request_mock(responses)
+        tok_mock, tok_log = _make_token_mock(["initial", "new"])
+
+        with mock.patch.object(naver_client.requests, "get", side_effect=req_mock):
+            with mock.patch.object(naver_client, "get_token", side_effect=tok_mock):
+                naver_client.get_product("x")
+
+        assert (
+            naver_client._AUTHN_RETRY_COUNT == 1
+        ), f"재시도 1회 후 카운터: {naver_client._AUTHN_RETRY_COUNT} (예상 1)"
+
+    def test_counter_increments_even_when_buffer_full(self):
+        """버퍼가 ``maxlen`` 까리 찬 상태에서도 카운터는 증가한다.
+
+        이것이 핵심: ``len(_AUTHN_RETRY_EVENTS)`` 는 포화 시 변하지 않지만,
+        ``_AUTHN_RETRY_COUNT`` 는 버퍼 크기와 무관하게 올라간다.
+        """
+        _clear_retry_events()
+        naver_client._AUTHN_RETRY_COUNT = 0
+        maxlen = naver_client._AUTHN_RETRY_EVENTS_MAXLEN
+        # 버퍼를 가득 채운다.
+        for i in range(maxlen):
+            naver_client._AUTHN_RETRY_EVENTS.append({"url": f"prep/{i}", "retried": True})
+        len_before = len(naver_client._AUTHN_RETRY_EVENTS)
+        assert len_before == maxlen, "전제: 버퍼가 가득 참"
+
+        responses = [
+            _FakeResponse(401, json_body={"code": "GW.AUTHN"}),
+            _FakeResponse(200, json_body={"ok": True}),
+        ]
+        req_mock, req_log = _make_request_mock(responses)
+        tok_mock, tok_log = _make_token_mock(["initial", "new"])
+
+        with mock.patch.object(naver_client.requests, "get", side_effect=req_mock):
+            with mock.patch.object(naver_client, "get_token", side_effect=tok_mock):
+                naver_client.get_product("x")
+
+        # 카운터는 증가했다.
+        assert (
+            naver_client._AUTHN_RETRY_COUNT == 1
+        ), f"버퍼 포화 상태 재시도 후 카운터: {naver_client._AUTHN_RETRY_COUNT} (예상 1)"
+        # ``len()`` 은 포화 상태라 여전히 maxlen (변하지 않음).
+        assert len(naver_client._AUTHN_RETRY_EVENTS) == maxlen, (
+            "버퍼는 포화 상태로 ``len()`` 불변 — " "이것이 ``len()`` 대신 카운터를 쓰는 이유다."
+        )

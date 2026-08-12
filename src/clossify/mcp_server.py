@@ -3409,13 +3409,27 @@ def delete_product(
     #
     # **고른 방향 ⓑ**: 재시도 후 "이미 없음"(404) 은 **삭제 성공**으로 인정한다.
     # DELETE 는 HTTP 멱등(RFC 7231 §4.2.2) 이다 — 최종 상태(삭제됨)가 같으므로
-    # 404 를 성공으로 보는 것은 안전하다. 단 **실패 모드**가 있다: "원래 없던
-    # 상품을 지우려 한 경우"와 "방금 지운 경우"를 구별 못 한다. 이 도구는
-    # ``confirm=True`` 게이트를 통과한 명시적 호출이므로, 원래 없던 상품을
-    # 지우려는 경우의 위해가 낮다(이미 목표 상태 달성).
+    # 404 를 성공으로 보는 것은 안전하다.
     #
-    # 증명: 재시도가 일어났는지 ``_AUTHN_RETRY_EVENTS`` 길이 변화로 감지한다.
-    _retry_count_before = len(naver_client._AUTHN_RETRY_EVENTS)
+    # **이 판단이 못 가리는 것 (범위 명시, WO PR #27 8라운드 ④)**:
+    #   - 404 성공 예외는 **"재시도가 일어났다"** 는 전제 아래서만 켜진다.
+    #     재시도 없이 처음부터 404 가 온 경우는 성공으로 인정하지 **않는다**
+    #     → "원래 없던 상품 번호를 지우려 한" 호출이 성공으로 둔갑하는 것을 막는다.
+    #   - 단, "첫 DELETE 가 서버에서 성공했는데 응답만 401+GW.AUTHN 으로 와서
+    #     재시도했더니 404" 인 경우와 "첫 DELETE 부터 401 이라 재시도했더니 404"
+    #     인 경우를 **본 도구는 구별하지 못한다**. 두 경우 모두 404-성공으로 처리된다.
+    #     이 구별 불능은 **수용한 위험**이다 — 두 경우 모두 최종 상태(원격에 없음)
+    #     는 같으므로, 로컬 기록 정리 관점에서 위해가 동일하다(이미 목표 상태 달성).
+    #   - 이 도구는 ``confirm=True`` 게이트를 통과한 명시적 호출이므로, 원래 없던
+    #     상품을 지우려는 경우의 위해가 낮다(이미 목표 상태 달성).
+    #
+    # 증명: 재시도가 일어났는지 **단조 증가 카운터**(``_AUTHN_RETRY_COUNT``)
+    # 변화로 감지한다. 과거엔 ``len(_AUTHN_RETRY_EVENTS)`` 로 판정했으나,
+    # 그 버퍼는 ``deque(maxlen=1000)`` 이라 **가득 차면 ``len()`` 이 안
+    # 변한다** — 그 시점부터 영구히 "재시도 없었음"으로 잘못 판정했다
+    # (WO PR #27 8라운드 ①). 단조 카운터는 버퍼 크기와 무관하게 매
+    # 재시도마다 올라가므로 포화 상태에서도 정확하다.
+    _retry_count_before = naver_client._AUTHN_RETRY_COUNT
     try:
         status_code, body = naver_client.delete_origin_product(normalized_no)
     except Exception as exc:  # _sanitize_error 로 민감 정보 마스킹.
@@ -3430,8 +3444,9 @@ def delete_product(
     ok = isinstance(status_code, int) and 200 <= status_code < 300
     if not ok:
         # 비 2xx — 하지만 재시도 후 "이미 없음"(404) 이면 삭제 성공으로 인정.
-        # ``_AUTHN_RETRY_EVENTS`` 에 재시도 기록이 새로 추가됐는지로 판정한다.
-        _retry_happened = len(naver_client._AUTHN_RETRY_EVENTS) > _retry_count_before
+        # 단조 증가 카운터가 바뀌었는지로 "재시도가 있었나"를 판정한다.
+        # ``len(_AUTHN_RETRY_EVENTS)`` 는 deque 포화 시 변하지 않아 쓸 수 없다.
+        _retry_happened = _retry_count_before < naver_client._AUTHN_RETRY_COUNT
         if _retry_happened and status_code == 404:
             # 첫 DELETE 가 성공했고 재시도가 404 를 받은 경우 — 멱등 성공.
             # 로컬 기록 정리로 넘어간다. ``ok`` 를 True 로 바꾼다.

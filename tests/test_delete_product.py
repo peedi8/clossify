@@ -297,16 +297,23 @@ class TestDeleteRetryIdempotency:
 
         시나리오:
           1. ``delete_product(confirm=True)`` 호출.
-          2. ``delete_origin_product`` 모크: ``_AUTHN_RETRY_EVENTS`` 에 1행
-             추가(재시도 발생 시뮬레이션) 후 404 반환.
+          2. ``delete_origin_product`` 모크: ``_AUTHN_RETRY_COUNT`` 를 1 증가
+             (재시도 발생 시뮬레이션) 후 404 반환.
           3. ``delete_product`` 는 재시도 후 404 를 멱등 성공으로 인정해야 한다.
+
+        WO PR #27 8라운드 ①: ``mcp_server`` 는 ``_AUTHN_RETRY_EVENTS`` 의
+        길이가 아니라 **단조 증가 카운터**(``_AUTHN_RETRY_COUNT``) 로 재시도
+        여부를 판정한다 — ``deque(maxlen=1000)`` 이 포화되면 ``len()`` 이 안
+        변하기 때문이다.
         """
         monkeypatch.delenv("COMMERCE_DRY_RUN", raising=False)
-        # 테스트 간 격리 — 재시도 이벤트 버퍼 비움.
+        # 테스트 간 격리 — 재시도 이벤트 버퍼·카운터 리셋.
         naver_client._AUTHN_RETRY_EVENTS.clear()
+        naver_client._AUTHN_RETRY_COUNT = 0
 
         def _fake_delete_with_retry(origin_product_no, tk=None):
-            # 재시도가 일어났음을 시뮬레이션 — 1행 추가.
+            # 재시도가 일어났음을 시뮬레이션 — 카운터 1 증가 (mcp_server 가 읽는 신호).
+            naver_client._AUTHN_RETRY_COUNT += 1
             naver_client._AUTHN_RETRY_EVENTS.append(
                 {"url": f"delete/{origin_product_no}", "retried": True}
             )
@@ -330,14 +337,15 @@ class TestDeleteRetryIdempotency:
     def test_404_without_retry_is_still_failure(self, isolated_prepared_dir, monkeypatch):
         """재시도 없는 404 → ``ok=False`` (원래 없던 상품을 지우려 한 경우).
 
-        ``_AUTHN_RETRY_EVENTS`` 에 변화가 없으면 재시도가 일어나지 않은 것이다.
+        ``_AUTHN_RETRY_COUNT`` 에 변화가 없으면 재시도가 일어나지 않은 것이다.
         이때 404 는 "애초에 존재하지 않았음" 이므로 여전히 실패로 보고한다.
         """
         monkeypatch.delenv("COMMERCE_DRY_RUN", raising=False)
         naver_client._AUTHN_RETRY_EVENTS.clear()
+        naver_client._AUTHN_RETRY_COUNT = 0
 
         def _fake_delete_no_retry(origin_product_no, tk=None):
-            # 재시도 이벤트 추가 없이 404 반환.
+            # 재시도 이벤트·카운터 추가 없이 404 반환.
             return 404, {"code": "NOT_FOUND", "message": "product not found"}
 
         monkeypatch.setattr(naver_client, "delete_origin_product", _fake_delete_no_retry)
@@ -356,8 +364,10 @@ class TestDeleteRetryIdempotency:
         """
         monkeypatch.delenv("COMMERCE_DRY_RUN", raising=False)
         naver_client._AUTHN_RETRY_EVENTS.clear()
+        naver_client._AUTHN_RETRY_COUNT = 0
 
         def _fake_delete_500_with_retry(origin_product_no, tk=None):
+            naver_client._AUTHN_RETRY_COUNT += 1
             naver_client._AUTHN_RETRY_EVENTS.append(
                 {"url": f"delete/{origin_product_no}", "retried": True}
             )
