@@ -31,6 +31,8 @@ from __future__ import annotations
 import html
 import json
 import os
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 from typing import Any
 
 from mcp.server import MCPServer
@@ -42,8 +44,22 @@ from . import notice_labels as _notice_labels
 from . import register as _register_mod
 from . import requirements as _requirements_mod
 
+
+def _resolve_version() -> str:
+    """설치 메타데이터에서 패키지 버전을 읽는다.
+
+    ``importlib.metadata.version("clossify")`` 로 빌드 메타데이터를 조회한다.
+    조회에 실패하면(예: 패키지가 설치되지 않은 개발 환경) 안전한 폴백
+    빈 문자열을 반환한다 — 예외로 서버가 죽으면 안 된다(N8).
+    """
+    try:
+        return _pkg_version("clossify")
+    except PackageNotFoundError:
+        return ""
+
+
 # 서버 인스턴스 — 클라이언트 LLM이 discover 하는 도구들의 컨테이너.
-mcp = MCPServer("clossify")
+mcp = MCPServer("clossify", version=_resolve_version())
 
 # 설정 파일 경로 — naver_client.config_path() 의 단일 진실 공급원을 따른다.
 # (CLOSSIFY_CONFIG 환경변수 오버라이드 포함)

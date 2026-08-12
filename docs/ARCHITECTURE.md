@@ -11,13 +11,15 @@
 ```text
                           mcp_server  (MCP 도구, 최상위 어댑터)
                                |
-       +-----------+-----------+-----------+
-       |           |           |           |
-   register    qa_agents   naver_client   (지연: category_meta, images)
-       |           |
+       +-----------+-----------+-----------+-----------+
+       |           |           |           |           |
+   register    qa_agents   naver_client  requirements  (지연: category_meta, images)
+       |           |                        |
        |        common ──(지연)──> naver_client.load_config
-       |        text_props
-       |        (지연: category_meta, agent_calls)
+       |        text_props               (순수 함수 — 네트워크·LLM·파일쓰기 0회)
+       |        (지연: category_meta, agent_calls)  category, category_meta,
+       |                                      qa_agents, listing_templates,
+       |                                      notice_labels (모듈 최상위 import)
        |
    common ──(지연)──> naver_client.load_config
    qa_agents
@@ -26,6 +28,9 @@
 naver_client        외부 API 클라이언트. common 을 import 하지 않고
                     자체 load_config/resolve_config_path 를 보유한다.
 images             → naver_client
+requirements       → category, category_meta, listing_templates,
+                      notice_labels, qa_agents (읽기 전용 호출 — 순수 함수)
+notice_labels      → common  (아래층 라벨 모듈)
 agent_calls        → common, copywriting
 copywriting        → common, keyword_volume, seo, text_props
 detail_render      → common, templates, text_props (지연: qa_agents)
@@ -51,11 +56,13 @@ text_props         순수 리터럴/정규식 (의존 없음)
 
 | 모듈 | 역할 |
 |------|------|
-| `mcp_server` | stdio MCP 서버. 7개 도구 노출(`check_config`, `upload_images`, `register_product`, `get_product`, `delete_product`, `prepare_listing`, `submit_reviews`). 검증 sanitization, 컴플라이언스 게이트 회선 |
+| `mcp_server` | stdio MCP 서버. **8개 도구** 노출(`check_config`, `upload_images`, `register_product`, `get_product`, `delete_product`, `prepare_listing`, `submit_reviews`, `manage_products`). 검증 sanitization, 컴플라이언스 게이트 회선. 도구 목록은 서버에서 직접 뽑는다: `python -c "import asyncio,sys; sys.path.insert(0,'src'); from clossify import mcp_server; print(sorted(t.name for t in asyncio.run(mcp_server.mcp.list_tools())))"` |
 | `naver_client` | 네이버 커머스 API 인증·페이로드 빌드·등록·조회·삭제·이미지 업로드 |
 | `images` | 이미지 입력 정규화. 로컬 가드(`validate_local_image`), SSRF 방어 외부 URL fetch(`fetch_external_image`), 통합 진입점(`attach_images`) |
 | `qa_agents` | 3분할 QA(이미지/카피/컴플라이언스) 결정론 검사 + 집계 + 등록 게이트(`qa_gate`) |
 | `register` | prepared payload 저장/로드, 등록 오케스트레이션. `prepare_listing`이 `detail_render.render_detail_html` 로 상세 HTML 을 조립한다. 이미지 입력은 `images.attach_images` 로 외부 URL fetch( SSRF 가드 적용) 와 로컬 파일 업로드를 수행한다 |
+| `requirements` | 거부 시점 진단(`diagnose`). **순수 함수** — 네트워크·LLM·파일쓰기 0회, 읽기 전용 데이터만. 법적 신고값·카테고리를 확정하지 않고 후보·필요사항만 돌려준다 |
+| `notice_labels` | 고시 필드명 → 한국어 라벨/사유 매핑(아래층 모듈). `data/notice_field_labels.json` 이 단일 진실 공급원. `requirements`·`mcp_server` 가 이 모듈에서 라벨을 읽는다 |
 | `agent_calls` | 클라이언트 LLM 위임 디스크립터(llm_hint) 생성(naming, qa_copy) |
 | `category_meta` | `data/category_meta.json` 로더. KC 필요 여부·예외 플래그·경로 조회 |
 | `category` | 카테고리 분류 보조. `common`/`text_props`(모듈 로드)·`category_meta`(지연) 에만 의존하는 독립 leaf |
