@@ -280,5 +280,97 @@ class TestRegistrationRecordRemoved:
         assert result["error"] is None
 
 
+# ============================================================================
+# (f) WO PR #27 6라운드 ② — DELETE 재시도 후 404 멱등 성공.
+#
+# ``delete_origin_product`` 는 ``allow_retry=True`` 로 401+GW.AUTHN 시 1회
+# 재시도한다. 첫 DELETE 가 서버에서는 성공했는데 게이트웨이 응답만 401 로
+# 왔을 수 있다. 재시도는 "이미 없음"(404) 을 받고, ``_api_request`` 는 그 두
+# 번째 응답을 돌려준다. 원격은 지워졌는데 "삭제 실패"로 보고하면 로컬·원격
+# 상태가 어긋난다 — 재시도 후 404 는 멱등 성공으로 인정한다.
+# ============================================================================
+class TestDeleteRetryIdempotency:
+    """재시도 후 404 = 멱등 성공, 재시도 없는 404 = 여전히 실패."""
+
+    def test_404_after_retry_is_success(self, isolated_prepared_dir, monkeypatch):
+        """재시도 후 404 → ``ok=True`` (첫 DELETE 성공, 재시도가 404 수신).
+
+        시나리오:
+          1. ``delete_product(confirm=True)`` 호출.
+          2. ``delete_origin_product`` 모크: ``_AUTHN_RETRY_EVENTS`` 에 1행
+             추가(재시도 발생 시뮬레이션) 후 404 반환.
+          3. ``delete_product`` 는 재시도 후 404 를 멱등 성공으로 인정해야 한다.
+        """
+        monkeypatch.delenv("COMMERCE_DRY_RUN", raising=False)
+        # 테스트 간 격리 — 재시도 이벤트 버퍼 비움.
+        naver_client._AUTHN_RETRY_EVENTS.clear()
+
+        def _fake_delete_with_retry(origin_product_no, tk=None):
+            # 재시도가 일어났음을 시뮬레이션 — 1행 추가.
+            naver_client._AUTHN_RETRY_EVENTS.append(
+                {"url": f"delete/{origin_product_no}", "retried": True}
+            )
+            # 재시도 결과로 404 수신 (첫 DELETE 가 성공했으므로 이미 없음).
+            return 404, {"code": "NOT_FOUND", "message": "product not found"}
+
+        monkeypatch.setattr(naver_client, "delete_origin_product", _fake_delete_with_retry)
+
+        result = mcp_server.delete_product("12345", confirm=True)
+
+        assert result["ok"] is True, (
+            "재시도 후 404 는 멱등 성공이어야 한다 — 첫 DELETE 가 서버에서 "
+            "성공했고 재시도가 '이미 없음'을 받은 경우다. ok=False 로 보고하면 "
+            "로컬·원격 상태가 어긋난다(원격은 지워졌는데 로컬은 실패로 기록)."
+        )
+        assert result["status_code"] == 404, (
+            "status_code 는 실제 응답(404) 을 그대로 보고한다 — 멱등 성공이지만 "
+            "원격 응답이 404 였음을 투명하게 남긴다."
+        )
+
+    def test_404_without_retry_is_still_failure(self, isolated_prepared_dir, monkeypatch):
+        """재시도 없는 404 → ``ok=False`` (원래 없던 상품을 지우려 한 경우).
+
+        ``_AUTHN_RETRY_EVENTS`` 에 변화가 없으면 재시도가 일어나지 않은 것이다.
+        이때 404 는 "애초에 존재하지 않았음" 이므로 여전히 실패로 보고한다.
+        """
+        monkeypatch.delenv("COMMERCE_DRY_RUN", raising=False)
+        naver_client._AUTHN_RETRY_EVENTS.clear()
+
+        def _fake_delete_no_retry(origin_product_no, tk=None):
+            # 재시도 이벤트 추가 없이 404 반환.
+            return 404, {"code": "NOT_FOUND", "message": "product not found"}
+
+        monkeypatch.setattr(naver_client, "delete_origin_product", _fake_delete_no_retry)
+
+        result = mcp_server.delete_product("12345", confirm=True)
+
+        assert result["ok"] is False, (
+            "재시도 없는 404 는 여전히 실패다 — '원래 없던 상품'과 '방금 지운 "
+            "상품'을 구별할 수 없으므로, 재시도가 있을 때만 멱등 성공으로 인정한다."
+        )
+
+    def test_500_after_retry_is_still_failure(self, isolated_prepared_dir, monkeypatch):
+        """재시도 후 500 → ``ok=False`` (404 가 아닌 비 2xx 는 멱등 성공 아님).
+
+        재시도가 일어나도 500 은 서버 오류 — 삭제 성공으로 간주할 수 없다.
+        """
+        monkeypatch.delenv("COMMERCE_DRY_RUN", raising=False)
+        naver_client._AUTHN_RETRY_EVENTS.clear()
+
+        def _fake_delete_500_with_retry(origin_product_no, tk=None):
+            naver_client._AUTHN_RETRY_EVENTS.append(
+                {"url": f"delete/{origin_product_no}", "retried": True}
+            )
+            return 500, {"code": "INTERNAL", "message": "server error"}
+
+        monkeypatch.setattr(naver_client, "delete_origin_product", _fake_delete_500_with_retry)
+
+        result = mcp_server.delete_product("12345", confirm=True)
+
+        assert (
+            result["ok"] is False
+        ), "재시도 후 500 은 여전히 실패다 — 멱등 성공 인정은 404 에 한한다."
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])

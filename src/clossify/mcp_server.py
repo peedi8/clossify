@@ -3399,6 +3399,23 @@ def delete_product(
         }
 
     # 3) 네이버 API 호출. 예외는 sanitized 에러로 변환(get_product 규약).
+    #
+    # **삭제 재시도 멱등성 (WO PR #27 6라운드 ②)**: ``delete_origin_product`` 는
+    # ``allow_retry=True`` 로 401+``GW.AUTHN`` 시 1회 재시도한다. 이때 첫 DELETE
+    # 가 서버에서는 **성공했는데** 게이트웨이 응답만 401 로 왔을 수 있다.
+    # 재시도는 "이미 없음"(404 등) 을 받고, ``_api_request`` 는 그 두 번째
+    # 응답을 돌려준다. 원격은 지워졌는데 "삭제 실패"로 보고하면 로컬·원격
+    # 상태가 어긋난다.
+    #
+    # **고른 방향 ⓑ**: 재시도 후 "이미 없음"(404) 은 **삭제 성공**으로 인정한다.
+    # DELETE 는 HTTP 멱등(RFC 7231 §4.2.2) 이다 — 최종 상태(삭제됨)가 같으므로
+    # 404 를 성공으로 보는 것은 안전하다. 단 **실패 모드**가 있다: "원래 없던
+    # 상품을 지우려 한 경우"와 "방금 지운 경우"를 구별 못 한다. 이 도구는
+    # ``confirm=True`` 게이트를 통과한 명시적 호출이므로, 원래 없던 상품을
+    # 지우려는 경우의 위해가 낮다(이미 목표 상태 달성).
+    #
+    # 증명: 재시도가 일어났는지 ``_AUTHN_RETRY_EVENTS`` 길이 변화로 감지한다.
+    _retry_count_before = len(naver_client._AUTHN_RETRY_EVENTS)
     try:
         status_code, body = naver_client.delete_origin_product(normalized_no)
     except Exception as exc:  # _sanitize_error 로 민감 정보 마스킹.
@@ -3411,6 +3428,16 @@ def delete_product(
         }
 
     ok = isinstance(status_code, int) and 200 <= status_code < 300
+    if not ok:
+        # 비 2xx — 하지만 재시도 후 "이미 없음"(404) 이면 삭제 성공으로 인정.
+        # ``_AUTHN_RETRY_EVENTS`` 에 재시도 기록이 새로 추가됐는지로 판정한다.
+        _retry_happened = len(naver_client._AUTHN_RETRY_EVENTS) > _retry_count_before
+        if _retry_happened and status_code == 404:
+            # 첫 DELETE 가 성공했고 재시도가 404 를 받은 경우 — 멱등 성공.
+            # 로컬 기록 정리로 넘어간다. ``ok`` 를 True 로 바꾼다.
+            ok = True
+        # 그 외의 비 2xx (400·403·500…) 또는 재시도 없는 404 는 여전히 실패.
+
     if not ok:
         # 비 2xx — 조용히 삼키지 않고 실패로 보고.
         return {

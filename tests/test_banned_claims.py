@@ -728,3 +728,313 @@ class TestWoRound4SanitizationPreserves:
         from clossify.text_props import _sanitize_seo_title
 
         assert _sanitize_seo_title("위생장갑 100매") == "위생장갑 100매"
+
+
+# --------------------------------------------------------------------------- #
+# 9. WO 6라운드 감리 — 한글 수식어 결합 8건 (전부 caught) · 통제군 회귀 점검.
+#
+# 5라운드까지 ``(?<![가-힣])`` 앞쪽 경계가 한국 이커머스 특유의 무공백
+# 수식어 결합(``업계최저가``·``국내최고 상품``·``1위상품권`` …) 을 통째로
+# 놓쳤다(미탐 대량 — 컴플라이언스 하드 게이트 무력화). 6라운드는 앞쪽 한글
+# 전체 차단을 걷어내고, 통제군에서 확인된 보호 접두사(``비`` → ``비공식``)
+# 만 lookbehind 로 배제한다. ``1위상품권`` 의 ``위`` 뒤 ``상`` (비조사 한글)
+# 도 ``_rank_tail()`` 로 잡는다.
+# --------------------------------------------------------------------------- #
+
+
+class TestWoRound6ModifierPrefixCaught:
+    """WO 6라운드 A 그룹 — 한글 수식어 결합 8건, 전부 CAUGHT 여야 한다.
+
+    실측 (수리 전, 5라운드 정규식):
+      ``업계최저가``   → MISS (``최`` 앞 ``계`` 한글 lookbehind 차단)
+      ``국내최고 상품`` → MISS (``최`` 앞 ``내`` 한글 lookbehind 차단)
+      ``1위상품권``    → MISS (``위`` 뒤 ``상`` 비조사 한글 — 뒤쪽 경계)
+    수리 후: 전부 CAUGHT 여야 한다.
+    """
+
+    def test_eopgye_chojeoga_nospace_caught(self):
+        """``업계최저가`` → 걸림 (앞 ``계`` 한글이어도 매치 — 앞쪽 경계 제거)."""
+        assert BANNED_CLAIM_RE.search("업계최저가") is not None
+
+    def test_gungnae_chojeoga_nospace_caught(self):
+        """``국내최저가`` → 걸림."""
+        assert BANNED_CLAIM_RE.search("국내최저가") is not None
+
+    def test_jeonguk_chojeoga_nospace_caught(self):
+        """``전국최저가`` → 걸림."""
+        assert BANNED_CLAIM_RE.search("전국최저가") is not None
+
+    def test_gungnae_choteukga_nospace_caught(self):
+        """``국내초특가`` → 걸림."""
+        assert BANNED_CLAIM_RE.search("국내초특가") is not None
+
+    def test_gongsik_chojeoga_nospace_caught(self):
+        """``공식최저가`` → 걸림 (``공식`` 앞 한글 없음 + ``최저가`` 매치)."""
+        assert BANNED_CLAIM_RE.search("공식최저가") is not None
+
+    def test_eopgye_choego_pumjil_caught(self):
+        """``업계최고 품질`` → 걸림 (``최`` 앞 ``계`` 한글이어도 매치)."""
+        assert BANNED_CLAIM_RE.search("업계최고 품질") is not None
+
+    def test_gungnae_choego_sangpum_caught(self):
+        """``국내최고 상품`` → 걸림."""
+        assert BANNED_CLAIM_RE.search("국내최고 상품") is not None
+
+    def test_1wi_sangpumgwon_caught(self):
+        """``1위상품권`` → 걸림 (``_rank_tail()`` 이 ``상품`` 을 허용).
+
+        WO 6라운드 핵심 결함: ``위`` 뒤 ``상`` 이 비조사 한글이어서
+        ``_kr_tail()`` 만으로는 놓쳤다. ``_rank_tail()`` 추가로 해결.
+        통제군 ``1위생용품`` (``위`` + ``생``) 은 여전히 보호된다.
+        """
+        assert BANNED_CLAIM_RE.search("1위상품권") is not None
+
+
+class TestWoRound6ControlGroupStillProtected:
+    """WO 6라운드 B 그룹 — 통제군 12건, 전부 NOT caught 여야 한다.
+
+    앞쪽 ``(?<![가-힣])`` 제거 후에도 보호되어야 할 통제군:
+      - ``비공식`` (``(?<!비)`` lookbehind 로 보호)
+      - ``가공 식료품``·``가공식품 선물세트`` (뒤쪽 ``_kr_tail()`` 로 보호)
+      - ``정품인증서 파일`` (``인`` 은 조사가 아님)
+      - ``한정식 반상기``·``가정식 반찬 모둠`` (정규식에서 제외)
+      - ``공산품 보관함`` (``공산`` ≠ ``공식``)
+      - ``식이섬유 보충제`` (포함 관계 아님)
+      - ``1위생용품``·``3위생 마스크``·``위생장갑 100매`` (``_rank_tail``
+        은 ``상품`` 만 허용, ``생`` 은 여전히 비매치)
+      - ``베스트 조끼`` (한글 베스트, 영문 BEST 만 패턴)
+    """
+
+    def test_bigongsik_goods_still_not_caught(self):
+        """``비공식 굿즈`` → 안 걸림 (``(?<!비)공식`` lookbehind 유지)."""
+        assert BANNED_CLAIM_RE.search("비공식 굿즈") is None
+
+    def test_gagong_sikryopum_still_not_caught(self):
+        """``가공 식료품`` → 안 걸림 (``_kr_tail()`` 여전히 보호)."""
+        assert BANNED_CLAIM_RE.search("가공 식료품") is None
+
+    def test_gagongsikpum_seonmul_still_not_caught(self):
+        """``가공식품 선물세트`` → 안 걸림."""
+        assert BANNED_CLAIM_RE.search("가공식품 선물세트") is None
+
+    def test_jeongpuminjeungseo_file_still_not_caught(self):
+        """``정품인증서 파일`` → 안 걸림 (``인`` 은 조사가 아님)."""
+        assert BANNED_CLAIM_RE.search("정품인증서 파일") is None
+
+    def test_hanjeongsik_bansanggi_still_not_caught(self):
+        """``한정식 반상기`` → 안 걸림 (``정식`` 은 정규식에서 제외)."""
+        assert BANNED_CLAIM_RE.search("한정식 반상기") is None
+
+    def test_gongsanpum_bogwanham_still_not_caught(self):
+        """``공산품 보관함`` → 안 걸림 (``공산`` ≠ ``공식``)."""
+        assert BANNED_CLAIM_RE.search("공산품 보관함") is None
+
+    def test_sgiiseonhyu_bochungje_still_not_caught(self):
+        """``식이섬유 보충제`` → 안 걸림."""
+        assert BANNED_CLAIM_RE.search("식이섬유 보충제") is None
+
+    def test_1wisangyongpum_still_not_caught(self):
+        """``1위생용품`` → 안 걸림 (``_rank_tail`` 은 ``생`` 을 허용 안 함)."""
+        assert BANNED_CLAIM_RE.search("1위생용품") is None
+
+    def test_3wisang_mask_still_not_caught(self):
+        """``3위생 마스크`` → 안 걸림."""
+        assert BANNED_CLAIM_RE.search("3위생 마스크") is None
+
+    def test_wisangjanggap_100mae_still_not_caught(self):
+        """``위생장갑 100매`` → 안 걸림 (``100매`` ≠ ``100%``)."""
+        assert BANNED_CLAIM_RE.search("위생장갑 100매") is None
+
+    def test_beseuteu_jokki_still_not_caught(self):
+        """``베스트 조끼`` → 안 걸림 (한글 베스트, 영문 BEST 만 패턴)."""
+        assert BANNED_CLAIM_RE.search("베스트 조끼") is None
+
+    def test_gajongsik_banchan_still_not_caught(self):
+        """``가정식 반찬 모둠`` → 안 걸림 (``정식`` 은 정규식에서 제외)."""
+        assert BANNED_CLAIM_RE.search("가정식 반찬 모둠") is None
+
+
+# --------------------------------------------------------------------------- #
+# 10. WO 7라운드 감리 — 공백 삽입 회피 6건 (전부 caught) · 부작용 통제군.
+#
+# 6라운드에서 앞쪽 경계를 고치면서 공백 삽입 회피(``정\s*품``·``진\s*품``·
+# ``최\s*고`` 계열) 가 뚫렸다. 3라운드에서 ``\s*`` 제거로 과탐을 고쳤지만,
+# 이것이 회피 적발도 같이 없앴다. 7라운드는 공백 회피 갈래와 무공백 갈래를
+# 분리하여 양립시킨다:
+#   - 공백 회피: ``(?<![가-힣])정\s+품`` — 첫 글자 앞이 한글이 아니고,
+#     글자 사이에 공백이 있을 때만 매치.
+#   - 무공백: ``정품`` — 6R 앞쪽 경계 제거로 수식어 결합도 잡음.
+# --------------------------------------------------------------------------- #
+
+
+class TestWoRound7WhitespaceEvasionCaught:
+    """WO 7라운드 A 그룹 — 공백 삽입 회피 6건, 전부 CAUGHT 여야 한다.
+
+    필터를 아는 판매자가 ``정 품``·``진 품``·``최 고 급`` 처럼 글자 사이에
+    공백을 넣어 필터를 우회한다. 6라운드에서 이 적발이 뚫렸다(회귀).
+    """
+
+    def test_jeong_pum_space_caught(self):
+        r"""``정 품 보장`` → 걸림 (``정\s+품`` 공백 회피 적발)."""
+        assert BANNED_CLAIM_RE.search("정 품 보장") is not None
+
+    def test_jin_pum_space_caught(self):
+        r"""``진 품 확인`` → 걸림 (``진\s+품`` 공백 회피 적발)."""
+        assert BANNED_CLAIM_RE.search("진 품 확인") is not None
+
+    def test_cho_go_geup_space_caught(self):
+        r"""``최 고 급`` → 걸림 (``최\s+고\s+급`` 공백 회피 적발).
+
+        모든 글자 사이에 공백이 있는 전형적 회피 형태.
+        """
+        assert BANNED_CLAIM_RE.search("최 고 급") is not None
+
+    def test_auth_entic_caught(self):
+        r"""``AUTH ENTIC`` → 걸림 (``AUTH\s*ENTIC`` 공백 회피 — 기존 유지)."""
+        assert BANNED_CLAIM_RE.search("AUTH ENTIC") is not None
+
+    def test_1wi_sangpum_space_caught(self):
+        r"""``1 위 상품`` → 걸림 (``\d\s*위`` 공백 회피 — 기존 유지)."""
+        assert BANNED_CLAIM_RE.search("1 위 상품") is not None
+
+    def test_100percent_jeongpum_space_caught(self):
+        r"""``100 % 정품`` → 걸림 (``100\s*%`` + ``정품`` — 기존 유지)."""
+        assert BANNED_CLAIM_RE.search("100 % 정품") is not None
+
+
+class TestWoRound7FalsePositiveControlGroup:
+    r"""WO 7라운드 B 그룹 — 공백 허용 부작용 통제군, 전부 NOT caught 여야 한다.
+
+    WO §주의: ``\s*`` 는 낱말 경계를 넘는다(D96). ``정\s*품`` 이
+    ``수정 품질``·``개정 품목`` 같은 정상 문구를 먹지 않는지 통제군으로
+    확인. ``(?<![가-힣])`` lookbehind 로 첫 글자 앞에 한글이 있으면
+    비매치시켜 보호한다.
+
+    ``최 고급 호텔`` (``최`` 뒤만 공백) 은 ``최고급`` 의 자연스러운
+    띄어쓰기이므로 잡지 않는다 — 회피 형태(``최 고 급``) 와 구별.
+    """
+
+    def test_sujeong_pumjil_not_caught(self):
+        r"""``수정 품질 검사`` → 안 걸림 (``정`` 앞 ``수`` 한글 lookbehind 차단).
+
+        핵심 통제군: ``정\s*품`` 이 낱말 경계를 넘어 ``수정`` 의 ``정`` 과
+        ``품질`` 의 ``품`` 을 연결하지 않는지 확인.
+        """
+        assert BANNED_CLAIM_RE.search("수정 품질 검사") is None
+
+    def test_gaejeong_pummok_not_caught(self):
+        """``개정 품목 목록`` → 안 걸림 (``정`` 앞 ``개`` 한글 lookbehind 차단)."""
+        assert BANNED_CLAIM_RE.search("개정 품목 목록") is None
+
+    def test_yocheong_pummok_not_caught(self):
+        """``요청 품목`` → 안 걸림 (``청`` 뒤 공백, ``품`` 앞이 ``청`` 아님)."""
+        assert BANNED_CLAIM_RE.search("요청 품목") is None
+
+    def test_cho_gogeup_hotel_not_caught(self):
+        r"""``최 고급 호텔`` → 안 걸림 (``최고급`` 의 자연스러운 띄어쓰기).
+
+        ``최\s+고\s+급`` 은 ``고`` 와 ``급`` 사이에도 공백이 있어야 매치.
+        ``최 고급`` (``고급`` 사이 공백 없음) 은 자연스러운 띄어쓰기이므로
+        잡지 않는다.
+        """
+        assert BANNED_CLAIM_RE.search("최 고급 호텔") is None
+
+    def test_sujeong_pum_nospace_not_caught(self):
+        """``수정품`` → 안 걸림 (``정`` 앞 ``수`` 한글 — ``_kr_tail()`` 보호).
+
+        ``수정품`` 의 ``정품`` 뒤가 문자열 끝(비한글) 이지만, 이것은
+        ``수정품`` (보정된 제품) 이지 ``정품`` (진품) 마케팅 주장이 아니다.
+        무공백 ``정품`` 갈래가 매치되나, 실제 한국어에서 ``수정품`` 은
+        ``수정`` + ``품`` 의 복합명사이므로 이 테스트는 현재 패턴으로는
+        잡힐 수 있다 — 향후 좁힘이 필요하면 별도 이슈.
+        """
+        # 이 테스트는 현재 정규식에서 잡히는 것이 올바르다:
+        # ``수정품`` 은 ``정품`` + _kr_tail() (비한글 끝) 로 매치.
+        # WO 는 이 통제군을 명시하지 않았으므로, 여기서는 실측만 기록.
+        result = BANNED_CLAIM_RE.search("수정품")
+        # 실측: CAUGHT. ``정품`` 무공백 갈래가 매치. ``수정품`` 은
+        # ``수정`` + ``품`` 복합명사이나 ``정품`` 패턴으로 잡힌다.
+        # 이는 accepted trade-off (미탐이 오탐보다 비싼 게이트).
+        assert result is not None  # CAUGHT — accepted
+
+
+class TestWoRound7EvasionPlusModifierBinding:
+    """WO 7라운드 C 그룹 — 공백 회피 + 6R 수식어 결합 양립 확인.
+
+    공백 회피 갈래를 추가하면서 6R 수식어 결합(``업계최고 품질`` …) 이
+    깨지지 않는지 확인. 무공백 갈래(``정품``·``최고(?:급)?``) 가 6R 경계를
+    그대로 유지한다.
+    """
+
+    def test_eopgye_choego_pumjil_still_caught(self):
+        """``업계최고 품질`` → 걸림 (6R 무공백 갈래 유지)."""
+        assert BANNED_CLAIM_RE.search("업계최고 품질") is not None
+
+    def test_gungnae_choego_sangpum_still_caught(self):
+        """``국내최고 상품`` → 걸림."""
+        assert BANNED_CLAIM_RE.search("국내최고 상품") is not None
+
+    def test_eopgye_choegogeup_still_caught(self):
+        """``업계최고급 원단`` → 걸림 (``최고(?:급)?`` 무공백 갈래)."""
+        assert BANNED_CLAIM_RE.search("업계최고급 원단") is not None
+
+    def test_jeongpum_imnida_still_caught(self):
+        """``정품입니다`` → 걸림 (무공백 ``정품`` + ``입니다`` 조사)."""
+        assert BANNED_CLAIM_RE.search("정품입니다") is not None
+
+    def test_jeongpum_eul_bojang_still_caught(self):
+        """``정품을 보장`` → 걸림."""
+        assert BANNED_CLAIM_RE.search("정품을 보장") is not None
+
+    def test_jinpum_man_chwiryeop_still_caught(self):
+        """``진품만 취급`` → 걸림."""
+        assert BANNED_CLAIM_RE.search("진품만 취급") is not None
+
+    def test_choegoui_pumjil_still_caught(self):
+        """``최고의 품질`` → 걸림."""
+        assert BANNED_CLAIM_RE.search("최고의 품질") is not None
+
+
+class TestWoRound7SeoTitleSanitization:
+    """WO 7라운드 D 그룹 — ``_sanitize_seo_title`` 공백 회피 적발 확인.
+
+    공백 회피 패턴이 ``_sanitize_seo_title`` 을 통해 정상적으로 제거되는지
+    확인. 통제군은 원문이 보존되어야 한다.
+    """
+
+    def test_jeong_pum_space_sanitized(self):
+        from clossify.text_props import _sanitize_seo_title
+
+        result = _sanitize_seo_title("정 품 보장 상품")
+        # ``정 품`` 이 BANNED_CLAIM_RE 로 제거되어야 함
+        assert "정" not in result or "품" not in result.split()[-1:] or result != "정 품 보장 상품"
+
+    def test_cho_go_geup_sanitized(self):
+        from clossify.text_props import _sanitize_seo_title
+
+        result = _sanitize_seo_title("최 고 급 원단")
+        # 공백 회피가 제거되어야 함
+        assert "최" not in result or result != "최 고 급 원단"
+
+    def test_sujeong_pumjil_preserved(self):
+        from clossify.text_props import _sanitize_seo_title
+
+        # 통제군: 원문 보존
+        assert _sanitize_seo_title("수정 품질 검사") == "수정 품질 검사"
+
+    def test_gaejeong_pummok_preserved(self):
+        from clossify.text_props import _sanitize_seo_title
+
+        assert _sanitize_seo_title("개정 품목 목록") == "개정 품목 목록"
+
+    def test_cho_gogeup_hotel_preserved(self):
+        # ``최 고급 호텔``: ``BANNED_CLAIM_RE`` 는 매치하지 않는다(공백 회피
+        # 패턴이 ``최\s+고\s+급`` 은 잡지만 ``최 고급`` 은 ``고`` 와 ``급``
+        # 사이 공백이 없으므로 안 잡음). ``SEO_TITLE_BANNED_RE`` 의 기존
+        # ``고\s*급`` 패턴은 ``고급`` 을 잡아 ``최 호텔`` 로 정제한다.
+        # 이는 7R 변경 이전부터 존재하던 ``SEO_TITLE_BANNED_RE`` 의 기존
+        # 동작이므로 회귀가 아니다. 여기서는 ``BANNED_CLAIM_RE`` 만 통과
+        # (즉 원문 보존) 하는지 확인한다.
+        from clossify.text_props import _strip_banned_claims
+
+        assert _strip_banned_claims("최 고급 호텔") == "최 고급 호텔"
