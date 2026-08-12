@@ -153,7 +153,7 @@ class TestOutgoingRequestBody:
         built = _build_payload(_make_product(display="ON"))
         captured: list = []
 
-        def _fake_post(payload, tk):
+        def _fake_post(payload, tk, **kwargs):
             captured.append(payload)
             return 200, {"originProductNo": "TEST-1"}
 
@@ -181,7 +181,7 @@ class TestOutgoingRequestBody:
         built["_kcWarning"] = "테스트 경고"
         captured: list = []
 
-        def _fake_post(payload, tk):
+        def _fake_post(payload, tk, **kwargs):
             captured.append(payload)
             return 200, {"originProductNo": "TEST-2"}
 

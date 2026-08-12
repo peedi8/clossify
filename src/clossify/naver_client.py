@@ -1105,7 +1105,7 @@ def _h(tk, json_ct=True):
 # 이 지점 하나에서 토큰을 1회 재발급하고 요청을 1회 재시도한다.
 # - 재시도는 정확히 1회. 두 번째 실패는 그대로 올린다(무한 재시도 금지).
 # - 401 만으로 재시도하지 않는다 — 본문 ``code == "GW.AUTHN"`` 을 함께 본다.
-# - 본문이 JSON 이 아니거나 ``code`` 가 없으면 재시도하지 않는다.
+# - 본문이 JSON 이 아니거거나 ``code`` 가 없으면 재시도하지 않는다.
 # - 토큰·시크릿·서명 값은 절대 남기지 않는다(비밀값 로그 유출 금지).
 #
 # 10곳의 API 호출부가 이 지점을 경유한다(중복 방지). 기존 호출부 시그니처는
@@ -1117,6 +1117,36 @@ _AUTHN_RETRY_EVENTS: list[dict] = []
 
 # 게이트웨이 인증만료 코드 (네이버 문서 고정값).
 _GW_AUTHN_CODE = "GW.AUTHN"
+
+
+class _TokenRef:
+    """한 **논리적 작업** 안에서 토큰을 들고 다니는 변경 가능한 홀더.
+
+    네이버 상품 등록(``register_product``) 은 한 작업이 여러 API 요청으로
+    이뤄진다(첫 POST → 제한태그 응답 → 태그 제거 후 재시도 → 전체 제거
+    재시도). ``_api_request`` 안에서 401+``GW.AUTHN`` 시 재발급한 토큰이
+    **지역 변수로 끝나면** 뒤따르는 요청들이 다시 만료된 토큰을 써 매번
+    확정적으로 한 번 더 401 을 맞고 토큰을 또 발급한다. 토큰 엔드포인트가
+    흔들리거나 제한되면 등록이 불필요하게 실패한다.
+
+    본 홀더는 작업 단위로 토큰을 들고 다니기 위한 최소한의 장치다.
+    **전역 캐시가 아니다** — 작업이 끝나면 홀더도 같이 버린다. 토큰 만료
+    시점 관리가 딸려오는 전역 캐시는 이 작업의 범위 밖이다.
+
+    ``_api_request`` 에 ``tk_ref`` 로 넘기면:
+      - 최초 요청은 ``tk_ref.value`` 토큰으로 나간다.
+      - 401+``GW.AUTHN`` 재발급 시 ``get_token()`` 결과를 ``tk_ref.value``
+        에 **다시 쓴다** → 같은 작업 안의 뒤따르는 요청들은 새 토큰으로
+        나간다(401 재발생 없음).
+
+    단일 요청 호출부(``get_product`` 등)는 기존대로 ``tk=`` 문자열만 넘기고
+    ``_TokenRef`` 를 쓰지 않는다 — 거기에는 전파 문제가 없다.
+    """
+
+    __slots__ = ("value",)
+
+    def __init__(self, value):
+        self.value = value
 
 
 def _is_authn_expired_response(response) -> bool:
@@ -1141,6 +1171,46 @@ def _is_authn_expired_response(response) -> bool:
 _SUPPORTED_METHODS = frozenset({"GET", "POST", "PUT", "DELETE"})
 
 
+def _extract_file_spec(entry):
+    """``requests`` 멀티파트 ``files`` 의 한 항목에서 ``(filename, file_obj[, mime])``
+    튜플을 안전하게 꺼낸다.
+
+    ``requests`` 는 ``files`` 를 두 가지 표준 형태로 받는다:
+
+      1. **리스트형**: ``[(field_name, (filename, file_obj, [mime])), ...]``
+         → 각 원소는 ``(field_name, file_tuple)`` 2-튜플.
+      2. **dict형**: ``{field_name: (filename, file_obj, [mime])}``
+         → ``.values()`` 로 꺼낸 항목이 **file_tuple 자체** 다.
+
+    이 함수는 두 형태를 구분한다. ``entry`` 가 2-튜플이고 첫 원소가 문자열
+    (field_name) 이며 둘째 원소가 tuple/list 인 경우 → 리스트형 으로 보고
+    ``entry[1]`` 을 반환한다. 그 외에는 ``entry`` 자체를 file_tuple 으로
+    본다(dict형 또는 ``requests`` 가 허용하는 ``bytes``/``str`` 단일값).
+
+    단순 ``bytes``/``str`` 값(``{"f": b"..."}`` 형태)은 file_tuple 이 아닌
+    그 값 자체를 반환한다 — 호출자는 이를 다시 isinstance 검사로 걸러낸다.
+
+    Args:
+        entry: ``files.values()`` (dict형) 또는 ``files`` 직접 순회 (리스트형)
+            의 개별 항목.
+
+    Returns:
+        ``(filename, file_obj[, mime])`` 튜플, 또는 단순 ``bytes``/``str`` 값,
+        또는 그 외 식별 불가 형태.
+    """
+    # 리스트형: (field_name, (filename, file_obj, [mime]))
+    # field_name 은 항상 문자열. file_tuple 은 tuple/list.
+    if (
+        isinstance(entry, tuple | list)
+        and len(entry) == 2
+        and isinstance(entry[0], str)
+        and isinstance(entry[1], tuple | list)
+    ):
+        return entry[1]
+    # dict형(file_tuple 자체) 또는 단순 bytes/str 값.
+    return entry
+
+
 def _rewind_files_for_retry(kwargs) -> bool:
     """``kwargs["files"]`` 안의 모든 파일 스트림을 ``seek(0)`` 으로 되감는다.
 
@@ -1162,15 +1232,25 @@ def _rewind_files_for_retry(kwargs) -> bool:
     files = kwargs.get("files")
     if not files:
         return True
-    # dict 형태도 허용 — values() 로 순회.
+    # requests 의 ``files`` 는 두 가지 표준 형태를 받는다(둘 다 널리 쓰인다):
+    #
+    #   1. 리스트형: ``[(field_name, (filename, file_obj, [mime])), ...]``
+    #      → 각 원소는 ``(field_name, file_tuple)``. ``upload_images`` 가 쓰는 형태.
+    #   2. dict형: ``{field_name: (filename, file_obj, [mime])}``
+    #      → ``.values()`` 는 **이미 file_tuple 자체**를 내놓는다.
+    #
+    # 이전 구현은 두 형태를 동일한 ``entry`` 로 취급해 ``entry[1]`` 을
+    # ``file_spec`` 으로 썼다 — 리스트형에서는 ``(filename, file_obj)`` 가
+    # 나오지만, dict형에서는 **스트림 자체** 가 나온다. 뒤따르는 튜플/리스트
+    # 검사가 스트림을 건너뛰어 ``True`` 를 반환 → 되감기가 일어나지 않은 채
+    # 재시도가 0바이트 본문을 보냈다(T3, 머지 차단급).
+    #
+    # 아래는 dict 값(file_tuple 자체) 과 리스트 항목 ``(field_name, file_tuple)``
+    # 을 구분한다. ``bytes``/``str`` 만 들어 있는 단순 형태(``{"f": b"..."}``
+    # 또는 ``[(field_name, b"...")]``)도 안전하게 건너뛴다.
     iterable = files.values() if isinstance(files, dict) else files
     for entry in iterable:
-        # requests files 형식: (field_name, (filename, file_obj, [mime]))
-        # entry 자체가 (field_name, file_tuple) 이므로 file_tuple 을 꺼낸다.
-        if isinstance(entry, tuple | list) and len(entry) >= 2:
-            file_spec = entry[1]
-        else:
-            continue
+        file_spec = _extract_file_spec(entry)
         # file_spec: (filename, file_obj) 또는 (filename, file_obj, mime)
         if not isinstance(file_spec, tuple | list) or len(file_spec) < 2:
             continue
@@ -1189,7 +1269,7 @@ def _rewind_files_for_retry(kwargs) -> bool:
     return True
 
 
-def _api_request(method, url, *, tk, header_builder, **kwargs):
+def _api_request(method, url, *, tk, header_builder, tk_ref=None, **kwargs):
     """``requests.<verb>`` 로 위임하는 공통 API 호출 지점.
 
     ``method`` 에 따라 ``requests.get`` / ``requests.post`` / ``requests.put`` /
@@ -1205,12 +1285,22 @@ def _api_request(method, url, *, tk, header_builder, **kwargs):
     되감을 수 없는 스트림이 섞이면 **재시도를 포기하고 원 401 응답을 그대로
     반환**한다 — 빈 바이트로 재시도하는 것(0바이트 이미지 업로드)보다 낫다.
 
+    **토큰 전파(작업 단위)**: ``tk_ref`` 로 :class:`_TokenRef` 를 넘기면,
+    401+``GW.AUTHN`` 재발급 시 새 토큰을 ``tk_ref.value`` 에 **다시 쓴다**.
+    같은 논리적 작업(예: ``register_product`` 의 다중 POST 루프) 안의
+    뒤따르는 요청들이 재발급된 토큰으로 나간다 — 매번 401 을 다시 맞고
+    토큰을 또 발급하는 비효율·실패 원인이 사라진다. ``tk_ref`` 를 생략하면
+    기존 동작(재발급 토큰이 이 호출 안에서만 쓰임)을 유지한다.
+
     Args:
         method: HTTP 메서드 문자열 (``"GET"``·``"POST"``·``"PUT"``·``"DELETE"``).
         url: 전체 URL.
         tk: 현재 액세스 토큰.
         header_builder: ``tk`` 를 받아 헤더 dict 를 반환하는 호출 가능 객체
             (``_h`` 의 부분 적용). 토큰 재발급 시 새 토큰으로 재생성한다.
+        tk_ref: 작업 단위 토큰 홀더(:class:`_TokenRef`) 또는 ``None``.
+            ``None`` 이 아니면 재발급한 토큰을 이 홀더에 다시 써서 같은
+            작업의 뒤따르는 요청들이 새 토큰으로 나가게 한다.
         **kwargs: 위임 함수에 전달할 추가 인자(``data``·``timeout``·…).
             ``headers`` 는 ``header_builder`` 가 생성하므로 넘기지 않는다.
 
@@ -1233,6 +1323,11 @@ def _api_request(method, url, *, tk, header_builder, **kwargs):
     # 토큰 재발급 1회 + 재시도 1회.
     # 재시도도 같은 위임 함수(verb)를 탄다 — 두 번째 호출도 시험 패치에 잡혀야 한다.
     new_tk = get_token()
+    # 작업 단위 토큰 전파: tk_ref 가 있으면 새 토큰을 다시 써서 같은 작업의
+    # 뒤따르는 요청들이 새 토큰으로 나가게 한다. 이게 없으면 register_product
+    # 같은 다중 POST 작업에서 매번 401 을 다시 맞고 get_token 을 또 부른다.
+    if tk_ref is not None:
+        tk_ref.value = new_tk
     _AUTHN_RETRY_EVENTS.append(
         {
             "url": url,
@@ -1294,12 +1389,13 @@ def _json_or_text_response(response):
     return response.text
 
 
-def _post_product_payload(payload, tk):
+def _post_product_payload(payload, tk, *, tk_ref=None):
     r = _api_request(
         "POST",
         BASE + "/external/v2/products",
         tk=tk,
         header_builder=lambda t: _h(t),
+        tk_ref=tk_ref,
         data=json.dumps(payload).encode("utf-8"),
         timeout=60,
     )
@@ -1573,9 +1669,14 @@ def register_product(payload, tk=None):
         }
 
     tk = tk or get_token()
+    # 작업 단위 토큰 홀더 — 한 번의 논리적 등록 작업이 여러 POST 로 이뤄지므로,
+    # ``_api_request`` 안에서 401+``GW.AUTHN`` 재발급한 토큰을 같은 작업의
+    # 뒤따르는 POST 들이 이어받게 한다. 전역 캐시가 아니다 — 이 함수가
+    # 반환하면 홀더도 같이 버린다. 전역 캐시는 만료 관리가 딸려와 범위 밖.
+    tk_ref = _TokenRef(tk)
     last_sc, last_body = None, None
     for attempt_no in range(MAX_RESTRICTED_SELLER_TAG_RETRIES + 1):
-        sc, body = _post_product_payload(working_payload, tk)
+        sc, body = _post_product_payload(working_payload, tk_ref.value, tk_ref=tk_ref)
         last_sc, last_body = sc, body
         if not _is_restricted_seller_tags_response(sc, body):
             return sc, _attach_seller_tag_autostrip_meta(body, meta)
@@ -1607,7 +1708,7 @@ def register_product(payload, tk=None):
         meta["attempts"].append(
             {"attempt": len(meta["attempts"]) + 1, "removed": cleared, "action": "clear_all"}
         )
-        sc, body = _post_product_payload(working_payload, tk)
+        sc, body = _post_product_payload(working_payload, tk_ref.value, tk_ref=tk_ref)
         return sc, _attach_seller_tag_autostrip_meta(body, meta)
     return last_sc, _attach_seller_tag_autostrip_meta(last_body, meta)
 

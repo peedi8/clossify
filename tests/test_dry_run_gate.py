@@ -294,14 +294,14 @@ class TestDryRunMarkerFalseWhenUnset:
         )
         captured: list = []
 
-        def _fake_post(payload, tk):
+        def _fake_post(payload, tk, **kwargs):
             captured.append(payload)
             return 200, {"originProductNo": "TEST-1"}
 
         monkeypatch.setattr(naver_client, "get_token", lambda: "t")
 
         # _post_product_payload 가 (status_code, body) 튜플을 반환하도록 래핑.
-        def _post_wrapper(payload, tk):
+        def _post_wrapper(payload, tk, **kwargs):
             return _fake_post(payload, tk)
 
         monkeypatch.setattr(naver_client, "_post_product_payload", _post_wrapper)

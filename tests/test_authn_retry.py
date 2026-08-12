@@ -436,3 +436,186 @@ class TestNonSeekableStreamNoRetry:
         assert r.status_code == 401
         # 재시도 이벤트 없음.
         assert len(naver_client._AUTHN_RETRY_EVENTS) == 0
+
+
+# --------------------------------------------------------------------------- #
+# 시나리오 9: dict형 ``files`` 도 되감는다 (회귀: 머지 차단급).
+#
+# ``requests`` 는 ``files`` 를 두 표준 형태로 받는다:
+#   - 리스트형 ``[(field_name, (filename, fobj, mime)), ...]``  ← 기존 시험
+#   - dict형 ``{field_name: (filename, fobj, mime)}``           ← 본 시험
+# 이전 구현은 dict형 ``.values()`` 가 내놓는 ``(filename, fobj, mime)`` 튜플을
+# ``(field_name, file_tuple)`` 로 착각해 ``file_spec = entry[1]`` (= fobj) 을
+# 취했다. 뒤따르는 튜플/리스트 검사가 fobj 를 건너뛰어 ``True`` 를 반환 →
+# 되감기가 일어나지 않은 채 재시도가 0바이트 본문을 보냈다.
+# --------------------------------------------------------------------------- #
+
+
+class TestDictFormFilesRewind:
+    """dict형 ``files`` 에서도 401+GW.AUTHN 재시도 시 파일 스트림이
+    ``seek(0)`` 으로 되감아지는지 검증한다.
+
+    1차 요청과 2차(재시도) 요청이 **동일한 바이트** 를 받아야 한다.
+    리스트형 기존 시험(시나리오 7)과 동일한 내용의 대조군이지만 ``files``
+    를 dict형으로 넣는다.
+    """
+
+    def test_dict_form_files_rewound_content_identical(self):
+        _clear_retry_events()
+        content_a = b"\x89PNG\r\n\x1a\n" + b"alpha-image-payload" * 50
+        content_b = b"\x89PNG\r\n\x1a\n" + b"beta-image-payload--" * 50
+
+        import io
+
+        s_a = io.BytesIO(content_a)
+        s_b = io.BytesIO(content_b)
+        files = {
+            "image": ("a.png", s_a, "image/png"),
+            "logo": ("b.png", s_b, "image/png"),
+        }
+
+        uploaded_bodies: list[dict[str, bytes]] = []
+
+        def _capture_and_respond(url, **kwargs):
+            files_kw = kwargs.get("files", {})
+            captured = {}
+            # requests 가 multipart 바디를 만드는 방식 — file_tuple.read().
+            # dict형: values() 가 (filename, fobj, mime) 튜플을 내놓는다.
+            for key, file_tuple in files_kw.items():
+                fname = file_tuple[0]
+                fobj = file_tuple[1]
+                captured[f"{key}/{fname}"] = fobj.read()
+            uploaded_bodies.append(captured)
+            if len(uploaded_bodies) == 1:
+                return _FakeResponse(401, json_body={"code": "GW.AUTHN"})
+            return _FakeResponse(
+                200,
+                json_body={"images": [{"url": "https://x/a.png"}, {"url": "https://x/b.png"}]},
+            )
+
+        tok_mock, tok_log = _make_token_mock(["new-token"])
+
+        with mock.patch.object(naver_client.requests, "post", side_effect=_capture_and_respond):
+            with mock.patch.object(naver_client, "get_token", side_effect=tok_mock):
+                r = naver_client._api_request(
+                    "POST",
+                    "https://api.example.com/upload",
+                    tk="expired",
+                    header_builder=lambda t: {"Authorization": f"Bearer {t}"},
+                    files=files,
+                    timeout=30,
+                )
+
+        # 재시도가 일어났다 (요청 2회).
+        assert (
+            len(uploaded_bodies) == 2
+        ), f"요청 횟수: {len(uploaded_bodies)} (예상 2 — dict형도 되감아야 함)"
+        # 토큰 재발급 1회.
+        assert tok_log["count"] == 1
+        # 핵심: 2차 요청의 파일 내용이 1차와 바이트 동일 (되감기 확인).
+        first = uploaded_bodies[0]
+        second = uploaded_bodies[1]
+        assert set(first.keys()) == set(
+            second.keys()
+        ), f"파일 키 집합 불일치: {set(first)} vs {set(second)}"
+        for k in first:
+            assert first[k] == second[k], (
+                f"재시도 파일 내용 불일치: {k} — "
+                f"1차 {len(first[k])}바이트, 2차 {len(second[k])}바이트 "
+                f"(dict형 되감기 결함)"
+            )
+            assert len(first[k]) > 0, f"1차 파일이 비어있음: {k}"
+            assert len(second[k]) > 0, f"2차 파일이 비어있음: {k} (0바이트 재시도 회귀)"
+        # 최종 응답 200.
+        assert r.status_code == 200
+
+
+# --------------------------------------------------------------------------- #
+# 시나리오 10: ``register_product`` 다중 POST 재시도 시 토큰 1회 발급 고정.
+#
+# ``register_product`` 는 한 논리적 등록 작업이 여러 POST 로 이뤄진다
+# (첫 POST → 제한태그 응답 → 태그 제거 후 재시도 → 전체 제거 재시도).
+# ``_api_request`` 안에서 재발급한 토큰이 지역 변수로 끝나면, 다음 POST 가
+# 다시 만료된 토큰을 써 401 을 한 번 더 맞고 토큰을 또 발급한다.
+# 본 시험은 **등록 작업 전체에서 get_token 호출이 정확히 1회** 임을 고정한다.
+# --------------------------------------------------------------------------- #
+
+
+class TestRegisterProductTokenIssuedOnceAcrossRetries:
+    """``register_product`` 가 여러 번 재시도하더라도 토큰 발급은 1회로
+    그치는지 검증한다.
+
+    시나리오:
+      - 첫 POST: 401 GW.AUTHN → 토큰 재발급 → 재시도 → 400 제한태그 응답.
+      - 두 번째 POST (태그 제거 후): 새 토큰으로 나가야 함 — 401 다시 없음.
+      - 세 번째 POST (전체 제거 후): 새 토큰으로 나가야 함 — 401 다시 없음.
+    """
+
+    def test_register_product_issues_token_once(self):
+        _clear_retry_events()
+
+        # 제한태그 응답 본문 (``invalidInputs`` 형식 — ``_is_restricted_seller_tags_response``).
+        restricted_body = {
+            "code": "BAD_REQUEST",
+            "invalidInputs": [
+                {"type": "Restricted.sellerTags", "message": "(제한태그1)"},
+            ],
+        }
+
+        post_calls = {"n": 0}
+
+        def _mock_post(url, **kwargs):
+            post_calls["n"] += 1
+            # _api_request 는 내부적으로 requests.post 를 두 번 부를 수 있다.
+            # 호출 패턴 (올바른 전파 시):
+            #   1: POST#1 첫 시도 (만료 토큰) -> 401
+            #   2: POST#1 재시도 (새 토큰)   -> 400 제한태그
+            #   3: POST#2 첫 시도 (새 토큰)   -> 400 제한태그
+            #   4: POST#2 재시도             -> (루프 내, 401 아님)
+            #   ... 이하 생략 ...
+            # 버그(전파 안 됨) 시:
+            #   1: POST#1 만료 -> 401, 2: POST#1 새 토큰 -> 400 제한태그,
+            #   3: POST#2 만료 -> 401, 4: POST#2 새 토큰 -> 400, ... 매번 401.
+            headers = kwargs.get("headers", {})
+            auth = headers.get("Authorization", "")
+            # "expired" 토큰이면 401 GW.AUTHN, "fresh" 토큰이면 단계별 응답.
+            if "expired" in auth:
+                return _FakeResponse(401, json_body={"code": "GW.AUTHN"})
+            # fresh 토큰 — fresh 호출 순서로 단계 판별.
+            if not hasattr(_mock_post, "_fresh"):
+                _mock_post._fresh = 0
+            _mock_post._fresh += 1
+            if _mock_post._fresh <= 2:
+                # 첫 두 번의 fresh POST: 제한태그 응답.
+                r = _FakeResponse(400, json_body=restricted_body)
+                # _json_or_text_response 가 content-type 으로 JSON 여부를 판별하므로
+                # content-type 헤더를 명시적으로 설정한다.
+                r.headers = {"content-type": "application/json"}
+                return r
+            # 세 번째 fresh POST: 성공.
+            r = _FakeResponse(200, json_body={"originProductNo": "1", "channelProductNo": "2"})
+            r.headers = {"content-type": "application/json"}
+            return r
+
+        tok_mock, tok_log = _make_token_mock(["fresh-token"])
+
+        payload = {
+            "originProduct": {
+                "deliveryInfo": {"deliveryCompany": "CJGLS"},
+                "images": {"representativeImage": {"url": "https://x/y.jpg"}},
+                "detailAttribute": {"seoInfo": {"sellerTags": [{"text": "제한태그1"}]}},
+            }
+        }
+
+        with mock.patch.object(naver_client.requests, "post", side_effect=_mock_post):
+            with mock.patch.object(naver_client, "get_token", side_effect=tok_mock):
+                sc, body = naver_client.register_product(payload, tk="expired")
+
+        # 핵심 단정: get_token 호출은 등록 작업 전체에서 정확히 1회.
+        # (여러 POST 가 있더라도 첫 401 에서 재발급한 토큰이 이어져야 한다.)
+        assert tok_log["count"] == 1, (
+            f"get_token 호출 횟수: {tok_log['count']} (예상 1) — "
+            f"재발급 토큰이 뒤따르는 POST 로 이어지지 않음"
+        )
+        # 등록은 결국 성공한다.
+        assert sc == 200, f"최종 상태코드: {sc}"

@@ -102,7 +102,7 @@ def _register_with_dry_run_off(*, notice_cfg=None, product_notice=None, monkeypa
     monkeypatch.delenv("COMMERCE_DRY_RUN", raising=False)
     captured: dict = {"payload": None, "calls": 0}
 
-    def _fake_post(payload, tk):
+    def _fake_post(payload, tk, **kwargs):
         captured["payload"] = copy.deepcopy(payload)
         captured["calls"] += 1
         return 200, {"originProductNo": "TEST-ORIGIN-1"}
@@ -316,7 +316,7 @@ class TestNoInternalMetaOnTheWire:
         monkeypatch.delenv("COMMERCE_DRY_RUN", raising=False)
         captured: dict = {"payload": None, "calls": 0}
 
-        def _fake_post(payload, tk):
+        def _fake_post(payload, tk, **kwargs):
             captured["payload"] = copy.deepcopy(payload)
             captured["calls"] += 1
             return 200, {"originProductNo": "X"}
