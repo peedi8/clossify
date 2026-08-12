@@ -13,6 +13,7 @@
 
 import base64
 import copy
+import io
 import json
 import os
 import re
@@ -1107,8 +1108,10 @@ def _h(tk, json_ct=True):
 # - 본문이 JSON 이 아니거나 ``code`` 가 없으면 재시도하지 않는다.
 # - 토큰·시크릿·서명 값은 절대 남기지 않는다(비밀값 로그 유출 금지).
 #
-# 11곳의 API 호출부가 이 지점을 경유한다(중복 방지). 기존 호출부 시그니처는
+# 10곳의 API 호출부가 이 지점을 경유한다(중복 방지). 기존 호출부 시그니처는
 # 유지된다 — 헬퍼가 응답을 그대로 돌려주고, 호출부가 기존 방식으로 소비한다.
+# (호출부 세기: ``grep -c "_api_request(" naver_client.py`` 결과에서 정의부
+# ``def _api_request(`` 1건을 뺀 값. 이 주석에 명령을 적어 낡은 숫자를 방지한다.)
 # ---------------------------------------------------------------------------
 _AUTHN_RETRY_EVENTS: list[dict] = []
 
@@ -1138,6 +1141,54 @@ def _is_authn_expired_response(response) -> bool:
 _SUPPORTED_METHODS = frozenset({"GET", "POST", "PUT", "DELETE"})
 
 
+def _rewind_files_for_retry(kwargs) -> bool:
+    """``kwargs["files"]`` 안의 모든 파일 스트림을 ``seek(0)`` 으로 되감는다.
+
+    ``requests`` 는 멀티파트 바디를 만들 때 각 파일 객체를 ``read()`` 한다.
+    첫 요청이 끝나면 핸들은 EOF 다. 같은 ``files`` 로 재시도하면 **0바이트** 가
+    올라간다. 이 함수는 재시도 직전에 모든 핸들을 되감아 바디를 다시 만들 수
+    있게 한다.
+
+    ``files`` 구조는 ``requests`` 의 multipart 형식을 따른다:
+    ``[(field_name, (filename, file_obj, mime)), ...]`` 또는
+    ``{field_name: (filename, file_obj, mime), ...}``. ``file_obj`` 자리가
+    ``bytes`` 인 경우는 되감을 필요가 없다(불변).
+
+    되감을 수 없는 스트림(``seek`` 불가·``seek`` 실패)이 하나라도 있으면
+    **False** 를 반환한다 — 호출자는 이 경우 **재시도하지 않고** 원 응답을
+    그대로 반환해야 한다(빈 본문으로 재시도하는 것보다 낫다).
+    ``files`` 가 없거나 비어 있으면 True (되감을 것 없음 — 재시도 가능).
+    """
+    files = kwargs.get("files")
+    if not files:
+        return True
+    # dict 형태도 허용 — values() 로 순회.
+    iterable = files.values() if isinstance(files, dict) else files
+    for entry in iterable:
+        # requests files 형식: (field_name, (filename, file_obj, [mime]))
+        # entry 자체가 (field_name, file_tuple) 이므로 file_tuple 을 꺼낸다.
+        if isinstance(entry, tuple | list) and len(entry) >= 2:
+            file_spec = entry[1]
+        else:
+            continue
+        # file_spec: (filename, file_obj) 또는 (filename, file_obj, mime)
+        if not isinstance(file_spec, tuple | list) or len(file_spec) < 2:
+            continue
+        file_obj = file_spec[1]
+        # bytes/str 은 불변 — 매 요청마다 새로 읽혀도 같은 내용.
+        if isinstance(file_obj, bytes | str):
+            continue
+        # file-like 객체 — seek 가 있어야 되감을 수 있다.
+        seek = getattr(file_obj, "seek", None)
+        if seek is None:
+            return False
+        try:
+            seek(0)
+        except (OSError, ValueError, io.UnsupportedOperation):
+            return False
+    return True
+
+
 def _api_request(method, url, *, tk, header_builder, **kwargs):
     """``requests.<verb>`` 로 위임하는 공통 API 호출 지점.
 
@@ -1148,6 +1199,11 @@ def _api_request(method, url, *, tk, header_builder, **kwargs):
     401 + ``GW.AUTHN`` 시 토큰을 1회 재발급(``get_token()``) 하고 요청을
     1회 재시도한다. 재시도도 같은 위임 함수를 탄다. 그 외(403·500·401-타코드·
     JSON아님)는 그대로 반환한다.
+
+    **파일 업로드 재시도**: ``files`` 가 포함된 경우, 재시도 직전에
+    ``_rewind_files_for_retry`` 로 모든 파일 스트림을 ``seek(0)`` 되감는다.
+    되감을 수 없는 스트림이 섞이면 **재시도를 포기하고 원 401 응답을 그대로
+    반환**한다 — 빈 바이트로 재시도하는 것(0바이트 이미지 업로드)보다 낫다.
 
     Args:
         method: HTTP 메서드 문자열 (``"GET"``·``"POST"``·``"PUT"``·``"DELETE"``).
@@ -1170,7 +1226,11 @@ def _api_request(method, url, *, tk, header_builder, **kwargs):
     r = verb(url, **kwargs)
     if not _is_authn_expired_response(r):
         return r
-    # 401 + GW.AUTHN — 토큰 재발급 1회 + 재시도 1회.
+    # 401 + GW.AUTHN — 파일 스트림을 되감을 수 없으면 재시도를 포기한다.
+    # 빈 본문(0바이트 이미지) 으로 재시도하는 것을 절대 허용하지 않는다.
+    if not _rewind_files_for_retry(kwargs):
+        return r
+    # 토큰 재발급 1회 + 재시도 1회.
     # 재시도도 같은 위임 함수(verb)를 탄다 — 두 번째 호출도 시험 패치에 잡혀야 한다.
     new_tk = get_token()
     _AUTHN_RETRY_EVENTS.append(

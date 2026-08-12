@@ -58,6 +58,10 @@ class _FakeResponse:
     def text(self):
         return self._text
 
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise Exception(f"HTTP {self.status_code}")
+
 
 def _make_request_mock(responses):
     """``requests.get`` (또는 다른 verb) 를 대체하는 mock 을 만든다.
@@ -290,3 +294,145 @@ class TestNoTokenLeakInRetryEvents:
         serialized = json.dumps(event, ensure_ascii=False)
         assert secret_token not in serialized, f"재시도 이벤트에 토큰 문자열이 누출됨: {serialized}"
         assert "new-" + secret_token not in serialized
+
+
+# --------------------------------------------------------------------------- #
+# 시나리오 7: 파일 업로드 재시도 — 두 번째 요청의 파일 내용이 1차와 바이트 동일.
+# (회귀: 재시도가 이미지를 0바이트로 올리는 결함 — 머지 차단급)
+# --------------------------------------------------------------------------- #
+
+
+class TestFileUploadRetryPreservesContent:
+    """``upload_images`` 경로의 401+GW.AUTHN 재시도가 파일을 0바이트로 올리는
+    결함(T3, 머지 차단급) 의 회귀 시험.
+
+    ``requests`` 는 멀티파트 바디를 만들 때 각 파일 객체를 ``read()`` 한다.
+    첫 요청이 끝나면 핸들은 EOF 다. 재시도 직전에 ``seek(0)`` 으로 되감지
+    않으면 두 번째 요청은 **빈 바이트** 를 올린다.
+    """
+
+    def test_retry_rewinds_file_streams_content_identical(self, tmp_path):
+        """실제 임시 파일 2개 → 1차 401+GW.AUTHN → 재시도.
+
+        두 번째 요청이 받은 파일 내용이 1차와 **바이트 단위로 동일** 한지 확인.
+        길이만 보지 말고 내용을 대조한다.
+        """
+        _clear_retry_events()
+        # 실제 임시 파일 2개 생성 — 서로 다른 내용.
+        content_a = b"\x89PNG\r\n\x1a\n" + b"alpha-image-payload" * 50
+        content_b = b"\x89PNG\r\n\x1a\n" + b"beta-image-payload--" * 50
+        fa = tmp_path / "a.png"
+        fb = tmp_path / "b.png"
+        fa.write_bytes(content_a)
+        fb.write_bytes(content_b)
+
+        # 매 요청마다 files 안의 파일 핸들을 read() 하여 캡처.
+        uploaded_bodies: list[dict[str, bytes]] = []
+
+        def _capture_and_respond(url, **kwargs):
+            files = kwargs.get("files", [])
+            captured = {}
+            for entry in files:
+                file_tuple = entry[1]
+                fname = file_tuple[0]
+                fobj = file_tuple[1]
+                data = fobj.read()  # requests 가 multipart 바디를 만드는 방식
+                captured[fname] = data
+            uploaded_bodies.append(captured)
+            # 1차 호출(인덱스 0) 은 401, 이후는 200.
+            if len(uploaded_bodies) == 1:
+                return _FakeResponse(401, json_body={"code": "GW.AUTHN"})
+            return _FakeResponse(
+                200,
+                json_body={"images": [{"url": "https://x/a.png"}, {"url": "https://x/b.png"}]},
+            )
+
+        tok_mock, tok_log = _make_token_mock(["new-token"])
+
+        with mock.patch.object(naver_client.requests, "post", side_effect=_capture_and_respond):
+            with mock.patch.object(naver_client, "get_token", side_effect=tok_mock):
+                urls = naver_client.upload_images([str(fa), str(fb)], tk="expired")
+
+        # 재시도가 일어났다 (요청 2회).
+        assert len(uploaded_bodies) == 2, f"요청 횟수: {len(uploaded_bodies)} (예상 2)"
+        # 토큰 재발급 1회.
+        assert tok_log["count"] == 1
+        # 핵심: 두 번째 요청의 파일 내용이 1차와 바이트 동일.
+        first = uploaded_bodies[0]
+        second = uploaded_bodies[1]
+        assert set(first.keys()) == set(second.keys()), "파일명 집합이 다름"
+        for fname in first:
+            assert first[fname] == second[fname], (
+                f"재시도 파일 내용 불일치: {fname} — "
+                f"1차 {len(first[fname])}바이트, 2차 {len(second[fname])}바이트 "
+                f"(0바이트 이미지 회귀)"
+            )
+        # 내용이 실제로 비어있지 않음 (길이 0이면 seek 후에도 빈 것).
+        for fname in first:
+            assert len(first[fname]) > 0, f"1차 파일이 비어있음: {fname}"
+            assert len(second[fname]) > 0, f"2차 파일이 비어있음: {fname}"
+        # 반환값 확인.
+        assert urls == ["https://x/a.png", "https://x/b.png"]
+
+
+# --------------------------------------------------------------------------- #
+# 시나리오 8: 되감기 불가 스트림 → 재시도 포기, 원 401 응답 그대로 반환.
+# --------------------------------------------------------------------------- #
+
+
+class TestNonSeekableStreamNoRetry:
+    """되감을 수 없는 스트림이 섞이면 재시도하지 않고 원 응답을 반환한다.
+
+    빈 본문으로 재시도하는 것(0바이트)보다 낫기 때문이다.
+    """
+
+    def test_non_seekable_stream_no_retry_returns_original_401(self):
+        _clear_retry_events()
+
+        class _UnseekableStream:
+            """``seek`` 를 시도하면 ``OSError`` 를 일으키는 가짜 스트림."""
+
+            def __init__(self, data):
+                self._data = data
+                self._pos = 0
+
+            def read(self, size=-1):
+                if size < 0:
+                    chunk = self._data[self._pos :]
+                else:
+                    chunk = self._data[self._pos : self._pos + size]
+                self._pos += len(chunk)
+                return chunk
+
+            def seek(self, offset, whence=0):
+                raise OSError("unsupport seek operation")
+
+        stream = _UnseekableStream(b"payload-data")
+        files = [("imageFiles", ("x.png", stream, "image/png"))]
+        call_count = {"n": 0}
+
+        def _mock_post(url, **kwargs):
+            call_count["n"] += 1
+            return _FakeResponse(401, json_body={"code": "GW.AUTHN"})
+
+        tok_mock, tok_log = _make_token_mock(["new-token"])
+
+        with mock.patch.object(naver_client.requests, "post", side_effect=_mock_post):
+            with mock.patch.object(naver_client, "get_token", side_effect=tok_mock):
+                r = naver_client._api_request(
+                    "POST",
+                    "https://api.example.com/upload",
+                    tk="expired",
+                    header_builder=lambda t: {"Authorization": f"Bearer {t}"},
+                    files=files,
+                    timeout=30,
+                )
+
+        # 재시도 안 함 — 요청 1회만.
+        assert call_count["n"] == 1, f"요청 횟수: {call_count['n']} (예상 1 — 재시도 포기)"
+        # 토큰 재발급 안 함.
+        assert tok_log["count"] == 0
+        # 원 401 응답이 그대로 반환됨.
+        assert r.status_code == 401
+        # 재시도 이벤트 없음.
+        assert len(naver_client._AUTHN_RETRY_EVENTS) == 0

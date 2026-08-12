@@ -216,3 +216,99 @@ class TestSingleRegexDefinition:
         from clossify import qa_agents, text_props
 
         assert qa_agents.BANNED_CLAIM_RE is text_props.BANNED_CLAIM_RE
+
+
+# --------------------------------------------------------------------------- #
+# 5. 감리 실측표 고정 — 순위 양성 5건 · 음성 6건 · BEST 양성 3건·음성 3건.
+# (PR #27 감리: 무공백 순위 주장과 BEST상품 이 빠져나가던 결함)
+# --------------------------------------------------------------------------- #
+
+
+class TestRankPositiveAuditedTable:
+    """순위 정규식 양성 5건 — 감리 실측표 그대로 고정.
+
+    ``\\d\\s*위(?![가-힣])`` 로 전환한 후 무공백 순위 주장을 전부 잡아야 한다.
+    """
+
+    def test_eopgye_1wi_nospace_caught(self):
+        """업계1위 브랜드 → 걸림 (구 패턴은 놓쳤던 것)."""
+        assert BANNED_CLAIM_RE.search("업계1위 브랜드") is not None
+
+    def test_gungnae_1wi_nospace_caught(self):
+        """국내1위 제품 → 걸림."""
+        assert BANNED_CLAIM_RE.search("국내1위 제품") is not None
+
+    def test_pammae_1wi_nospace_caught(self):
+        """판매1위 상품 → 걸림."""
+        assert BANNED_CLAIM_RE.search("판매1위 상품") is not None
+
+    def test_eopgye_1wi_space_caught(self):
+        """업계 1위 → 걸림 (구 패턴도 잡았던 것 — 회귀 확인)."""
+        assert BANNED_CLAIM_RE.search("업계 1위") is not None
+
+    def test_naver_3wi_caught(self):
+        """네이버 3위 → 걸림."""
+        assert BANNED_CLAIM_RE.search("네이버 3위") is not None
+
+
+class TestRankNegativeAuditedTable:
+    """순위 정규식 음성 6건 — 감리 실측표 그대로 고정.
+
+    정상어(위생·위생용품·상위/하위) 와 혼동되는 표현은 잡지 않아야 한다.
+    """
+
+    def test_3wisang_not_caught(self):
+        """3위생 마스크 → 안 걸림 (위생 정상어 보호)."""
+        assert BANNED_CLAIM_RE.search("3위생 마스크") is None
+
+    def test_1wisangyongpum_not_caught(self):
+        """1위생용품 → 안 걸림 (위생용품 정상어 보호)."""
+        assert BANNED_CLAIM_RE.search("1위생용품") is None
+
+    def test_wisangjanggap_not_caught(self):
+        """위생장갑 100매 → 안 걸림."""
+        assert BANNED_CLAIM_RE.search("위생장갑 100매") is None
+
+    def test_sangwi_10percent_not_caught(self):
+        """상위 10% 등급 → 안 걸림 (상위 정상어)."""
+        assert BANNED_CLAIM_RE.search("상위 10% 등급") is None
+
+    def test_hawi_hohwan_not_caught(self):
+        """하위호환 케이블 → 안 걸림 (하위호환 정상어)."""
+        assert BANNED_CLAIM_RE.search("하위호환 케이블") is None
+
+    def test_35wiskijan_not_caught(self):
+        """35위스키잔 → 안 걸림 (위스키 정상어)."""
+        assert BANNED_CLAIM_RE.search("35위스키잔") is None
+
+
+class TestBestAuditedTable:
+    """BEST 정규식 감리 실측표 — 양성 3건 · 음성 3건.
+
+    ``\\bBEST\\b`` 는 Python 이 한글을 단어문자로 취급하여 ``BEST상품`` 에서
+    경계가 안 생겼다. ``(?<![A-Za-z0-9])BEST(?![A-Za-z0-9])`` 로 교체.
+    """
+
+    def test_BEST_sangpum_caught(self):
+        """BEST상품 (무공백) → 걸림 (구 \\b 패턴은 놓쳤던 것)."""
+        assert BANNED_CLAIM_RE.search("BEST상품") is not None
+
+    def test_BEST_space_caught(self):
+        """BEST 상품 → 걸림."""
+        assert BANNED_CLAIM_RE.search("BEST 상품") is not None
+
+    def test_best_lowercase_caught(self):
+        """best 아이템 → 걸림 (IGNORECASE)."""
+        assert BANNED_CLAIM_RE.search("best 아이템") is not None
+
+    def test_BESTSELLER_not_caught(self):
+        """BESTSELLER 목록 → 안 걸림 (BEST 접두사가 아닌 단어)."""
+        assert BANNED_CLAIM_RE.search("BESTSELLER 목록") is None
+
+    def test_SKU_BEST01_not_caught(self):
+        """SKU-BEST01 코드 → 안 걸림 (품목코드 안의 BEST)."""
+        assert BANNED_CLAIM_RE.search("SKU-BEST01 코드") is None
+
+    def test_korean_beseuteu_not_caught(self):
+        """베스트 조끼 → 안 걸림 (한글 베스트, 조끼 카테고리 충돌)."""
+        assert BANNED_CLAIM_RE.search("베스트 조끼") is None
