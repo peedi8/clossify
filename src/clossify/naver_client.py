@@ -12,6 +12,7 @@
 """
 
 import base64
+import collections
 import copy
 import io
 import json
@@ -1112,8 +1113,20 @@ def _h(tk, json_ct=True):
 # 유지된다 — 헬퍼가 응답을 그대로 돌려주고, 호출부가 기존 방식으로 소비한다.
 # (호출부 세기: ``grep -c "_api_request(" naver_client.py`` 결과에서 정의부
 # ``def _api_request(`` 1건을 뺀 값. 이 주석에 명령을 적어 낡은 숫자를 방지한다.)
+#
+# **버퍼 상한(3라운드 감리)**: ``mcp_server`` 처럼 오래 떠 있는 프로세스에서
+# 토큰 만료가 반복되면 ``_AUTHN_RETRY_EVENTS`` 가 무한히 자란다(운영 코드에
+# 비우는 곳이 없었다). 상한 있는 ``collections.deque(maxlen=...)`` 로 바꿔
+# 가장 오래된 이벤트부터 자동으로 밀려난다. ``len()``/``[i]``/``.clear()``
+# 등 시험이 쓰는 인터페이스는 list 와 동일하므로 기존 소비처가 깨지지 않는다.
+# ``_AUTHN_RETRY_EVENTS_MAXLEN`` — 재시도 1회당 1행이 쌓이므로, 등록 작업
+# 하나(``register_product``) 의 다중 POST 안에서는 최대 수 건이다.
+# ``mcp_server`` 가 하루 수백 건의 상품을 등록해도 수천 건을 넘지 않는다.
+# 1000은 넉넉한 진단 예산이면서 메모리 부담은 무시할 만한 값이다(행당
+# 수십 바이트).
 # ---------------------------------------------------------------------------
-_AUTHN_RETRY_EVENTS: list[dict] = []
+_AUTHN_RETRY_EVENTS_MAXLEN = 1000
+_AUTHN_RETRY_EVENTS: collections.deque[dict] = collections.deque(maxlen=_AUTHN_RETRY_EVENTS_MAXLEN)
 
 # 게이트웨이 인증만료 코드 (네이버 문서 고정값).
 _GW_AUTHN_CODE = "GW.AUTHN"
@@ -1279,6 +1292,16 @@ def _api_request(method, url, *, tk, header_builder, tk_ref=None, **kwargs):
     401 + ``GW.AUTHN`` 시 토큰을 1회 재발급(``get_token()``) 하고 요청을
     1회 재시도한다. 재시도도 같은 위임 함수를 탄다. 그 외(403·500·401-타코드·
     JSON아님)는 그대로 반환한다.
+
+    **재시도 안전 전제(근거)**: ``register_product``(생성)·``update_product``·
+    ``delete_origin_product`` 같은 되돌리기 어려운 동작도 이 함수를 경유한다.
+    401 + ``GW.AUTHN`` 일 때 재시도가 안전하려면 *"원 요청은 서버에서 처리되지
+    않았다"* 는 전제가 성립해야 한다. 이 전제는 근거가 있다: 네이버 커머스
+    인증 문서(``docs_auth.txt`` §"API 인증 실패 후 재시도") 가 게이트웨이 인증
+    실패를 401 + ``GW.AUTHN`` 으로 규정하고, **그 경우 토큰 재발급 후
+    재호출(fallback) 을 권장**한다. 즉 재시도는 문서가 권장하는 경로이며,
+    게이트웨이가 인증 단계에서 차단했으므로 원 요청은 도달하지 않았다. (동작은
+    이 주석 추가 외에 변경하지 않는다.)
 
     **파일 업로드 재시도**: ``files`` 가 포함된 경우, 재시도 직전에
     ``_rewind_files_for_retry`` 로 모든 파일 스트림을 ``seek(0)`` 되감는다.

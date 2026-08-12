@@ -619,3 +619,105 @@ class TestRegisterProductTokenIssuedOnceAcrossRetries:
         )
         # 등록은 결국 성공한다.
         assert sc == 200, f"최종 상태코드: {sc}"
+
+
+# --------------------------------------------------------------------------- #
+# 시나리오 11: ``_AUTHN_RETRY_EVENTS`` 버퍼 상한 — ``collections.deque(maxlen=...)``.
+# (WO PR #27 3라운드 감리 — 무한 자라는 버퍼)
+#
+# 두 감리가 같이 지적: ``_AUTHN_RETRY_EVENTS`` 는 모듈 전역 리스트인데
+# 운영 코드에서 비우거나 상한을 두는 곳이 없었다. ``mcp_server`` 처럼
+# 오래 떠 있는 프로세스에서 토큰 만료가 반복되면 계속 자란다.
+# --------------------------------------------------------------------------- #
+
+
+class TestRetryEventsBufferIsBounded:
+    """``_AUTHN_RETRY_EVENTS`` 가 상한 있는 ``deque`` 로 무한히 자라지 않는가.
+
+    WO 3라운드 감리: ``mcp_server`` 같은 장기 프로세스에서 토큰 만료가
+    반복되면 ``_AUTHN_RETRY_EVENTS`` 가 무한히 자라는 결함. 상한 있는
+    ``collections.deque(maxlen=...)`` 로 바꿔 가장 오래된 이벤트부터
+    밀려나게 한다. 기존 소비처(``len()``/``[i]``/``.clear()``) 가 깨지지 않는지도
+    함께 검증한다.
+    """
+
+    def test_buffer_is_deque_with_maxlen(self):
+        """``_AUTHN_RETRY_EVENTS`` 는 ``deque`` 이고 ``maxlen`` 이 양수다."""
+        import collections
+
+        buf = naver_client._AUTHN_RETRY_EVENTS
+        assert isinstance(
+            buf, collections.deque
+        ), f"_AUTHN_RETRY_EVENTS 타입: {type(buf).__name__} (예상 deque)"
+        assert buf.maxlen is not None, "maxlen 이 None (무한) 이면 안 됨"
+        assert buf.maxlen > 0, f"maxlen: {buf.maxlen} (양수여야 함)"
+
+    def test_buffer_drops_oldest_when_full(self):
+        """maxlen 초과 시 가장 오래된 이벤트가 밀려난다.
+
+        회귀: 구현이 list 였을 때는 무한히 자랐다.
+        """
+        _clear_retry_events()
+        maxlen = naver_client._AUTHN_RETRY_EVENTS_MAXLEN
+        # maxlen 보다 많은 이벤트를 직접 append 한다(모듈 전역 deque).
+        for i in range(maxlen + 50):
+            naver_client._AUTHN_RETRY_EVENTS.append(
+                {"url": f"https://x/{i}", "method": "GET", "retried": True}
+            )
+        # 길이는 maxlen 이하여야 한다.
+        assert (
+            len(naver_client._AUTHN_RETRY_EVENTS) == maxlen
+        ), f"길이: {len(naver_client._AUTHN_RETRY_EVENTS)} (예상 {maxlen})"
+        # 가장 오래된 이벤트는 밀려났다.
+        first_kept = naver_client._AUTHN_RETRY_EVENTS[0]
+        assert (
+            first_kept["url"] == "https://x/50"
+        ), f"가장 오래된 이벤트가 밀려나지 않음: {first_kept}"
+
+    def test_buffer_list_interfaces_preserved(self):
+        """``len()``·``[i]``·``.clear()`` 등 list 호환 인터페이스가 동작한다.
+
+        기존 소비처(시험) 가 deque 전환 후에도 깨지지 않아야 한다.
+        """
+        _clear_retry_events()
+        naver_client._AUTHN_RETRY_EVENTS.append({"url": "https://x/1", "retried": True})
+        naver_client._AUTHN_RETRY_EVENTS.append({"url": "https://x/2", "retried": True})
+        # len() 호환.
+        assert len(naver_client._AUTHN_RETRY_EVENTS) == 2
+        # 인덱스 접근 호환.
+        assert naver_client._AUTHN_RETRY_EVENTS[0]["url"] == "https://x/1"
+        assert naver_client._AUTHN_RETRY_EVENTS[-1]["url"] == "https://x/2"
+        # 순회 호환.
+        urls = [e["url"] for e in naver_client._AUTHN_RETRY_EVENTS]
+        assert urls == ["https://x/1", "https://x/2"]
+        # clear() 호환.
+        naver_client._AUTHN_RETRY_EVENTS.clear()
+        assert len(naver_client._AUTHN_RETRY_EVENTS) == 0
+
+
+# --------------------------------------------------------------------------- #
+# 시나리오 12: ``_api_request`` docstring 의 재시도 안전 전제 출처 명시.
+# (WO PR #27 3라운드 감리 — 근거 없는 전제로 읽히지 않게)
+# --------------------------------------------------------------------------- #
+
+
+class TestApiRequestProvenanceComment:
+    """``_api_request`` 가 재시도 안전 전제의 근거 문서명을 docstring 에
+    명시하는가.
+
+    WO 3라운드 ④: 되돌리기 어려운 동작(``register_product`` 등) 도 이 함수를
+    경유한다. 안전하려면 *"401 GW.AUTHN 이면 원 요청은 서버에서 처리되지
+    않았다"* 는 전제가 성립해야 하는데, diff 안에 근거가 없었다.
+    네이버 인증 문서(``docs_auth.txt``) 가 fallback 을 권장하므로 그 출처를
+    주석에 남긴다.
+    """
+
+    def test_docstring_names_source_document(self):
+        """docstring 이 ``docs_auth.txt`` 와 ``GW.AUTHN`` 을 함께 언급한다."""
+        import inspect
+
+        doc = inspect.getdoc(naver_client._api_request) or ""
+        assert "GW.AUTHN" in doc, "GW.AUTHN 이 docstring 에 없음"
+        assert (
+            "docs_auth.txt" in doc
+        ), "출처 문서명(docs_auth.txt) 이 docstring 에 없음 — 근거 없는 전제로 읽힘"

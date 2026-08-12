@@ -13,12 +13,18 @@
   4. 정규식은 text_props.py 한 곳에만 정의(중복 정의 금지).
 
 과탐 위험 실측(스캔 결과):
-  - ``공식`` 단독 → ``가공식품`` 오탐 → ``(?!품)`` 로 좁힘.
+  - ``공식`` 단독 → ``가공식품``·``비공식`` 오탐 → ``(?!품)`` 룩어헤드는
+    한계가 있어(비공식 굿즈 를 못 막음) WO 3라운드에서 한글 경계
+    ``(?<![가-힣])공식(?![가-힣])`` 로 전면 교체.
   - ``베스트`` (한글) → 조끼(vest) 카테고리 충돌 → 한글 ``베스트`` 는 제외,
     영문 ``BEST`` 만 추가.
   - ``정식`` → ``한정식``·``가정식``·``정식 도시락`` 등 정상 식품 상품명과
     구별 불가 → 정규식에서 제외(과탐 철회).
   - 숫자+위 → ``3위생`` 오탐 → 경계 lookaround 로 좁힘.
+  - ``\\s*`` 갈래가 낱말 사이를 건너뛰어 ``가공 식료품`` 의 ``공 식``,
+    ``최저 가지색`` 의 ``최저 가`` 를 잡는 과탐 → WO 3라운드에서 한 낱말은
+    ``\\s*`` 제거 + 경계. 복합형(``초 특가``·``국내 유일``·``세계 최초``) 은
+    ``\\s*`` 유지 + 경계.
 """
 
 from __future__ import annotations
@@ -108,10 +114,15 @@ class TestNormalSentencesNotCaught:
     """
 
     def test_gongsik_lookahead_blocks_gongshik_pum(self):
-        """가공식품(테스트 픽스처 실제 productName) → 안 걸림 (공식(?!품))."""
+        """가공식품(테스트 픽스처 실제 productName) → 안 걸림.
+
+        경계 ``(?<![가-힣])공식(?![가-힣])`` 로 바꾼 뒤 ``가공식품`` 의
+        ``공식`` 앞 ``가``·뒤 ``품`` 이 한글이어서 자연스럽게 비매치한다.
+        예전 ``(?!품)`` lookahead 는 경계로 충분해져 제거되었다.
+        """
         assert (
             BANNED_CLAIM_RE.search("테스트 가공식품") is None
-        ), "가공식품 이 공식 패턴에 걸리면 안 됨 (공식(?!품) 룩어헤드 확인)"
+        ), "가공식품 이 공식 패턴에 걸리면 안 됨 (한글 경계 확인)"
 
     def test_chuksan_gagongsikpum_not_caught(self):
         """축산가공식품 (category_meta 실제 카테고리명) → 안 걸림."""
@@ -132,15 +143,16 @@ class TestNormalSentencesNotCaught:
         assert BANNED_CLAIM_RE.search("도자기 화병 인테리어 소품") is None
         assert BANNED_CLAIM_RE.search("면 50% 혼용 티셔츠") is None
 
-    def test_gongsik_normal_usage_not_in_sikpum(self):
-        """공식 + 품 이 아닌 정상 조합 — 실제로는 과장 의미로 걸려야 함.
+    def test_gongsik_with_suffix_not_caught(self):
+        """``공식적으로`` (공식 + 적 접미사) → 안 걸림.
 
-        이 테스트는 ``공식적으로`` 같은 정상 단어가 잡히는 것을 확인한다 —
-        ``공식`` 단어 자체가 마케팅 과장 맥락에서 자주 쓰이므로 규칙문서가
-        금지한다. 단 ``가공식품`` 예외는 유지한다.
+        한국어는 조사·접미사가 띄어쓰기 없이 붙는다 — ``공식적으로`` 는
+        ``공식`` 의 부사형이지 단독 마케팅 주장이 아니다. 경계
+        ``(?<![가-힣])공식(?![가-힣])`` 는 뒤의 ``적`` (한글) 을 보고
+        비매치한다. 이는 N86/T3 와 같은 원칙이다. WO 3라운드 금지 목록의
+        ``공식 판매처`` (공백 분리) 만 잡는다.
         """
-        # 공식적으로 는 걸린다 — 의도적 (공식 이 단어 자체가 단정표현).
-        assert BANNED_CLAIM_RE.search("공식적으로 인증받은") is not None
+        assert BANNED_CLAIM_RE.search("공식적으로 인증받은") is None
 
     def test_jeongsik_not_caught(self):
         """정식 → 안 걸림 (정규식에서 제외 — 정상 식품 상품명과 구별 불가)."""
@@ -162,7 +174,8 @@ class TestNormalSentencesNotCaught:
         """3위생 마스크 대형 → 안 걸림 (\\d\\s*위 좁힘 확인).
 
         ``3위생`` 이 ``\\d\\s*위`` 패턴에 걸리지 않아야 한다.
-        ``(?<![가-힣0-9])\\d\\s*위(?![가-힣])`` 로 좁혼 결과 확인.
+        ``\\d\\s*위(?![가-힣])`` 로 좁혼 결과 확인 — ``위`` 뒤 ``생`` 이
+        한글이면 비매치.
         """
         assert BANNED_CLAIM_RE.search("3위생 마스크 대형") is None
         assert BANNED_CLAIM_RE.search("위생장갑 100매") is None
@@ -312,3 +325,194 @@ class TestBestAuditedTable:
     def test_korean_beseuteu_not_caught(self):
         """베스트 조끼 → 안 걸림 (한글 베스트, 조끼 카테고리 충돌)."""
         assert BANNED_CLAIM_RE.search("베스트 조끼") is None
+
+
+# --------------------------------------------------------------------------- #
+# 6. WO 3라운드 감리 — 통제군 8건 (전부 NOT caught) · 금지 9건 (전부 caught).
+#
+# 두 증상의 같은 뿌리: ``BANNED_CLAIM_RE`` 에 한글 경계가 없었다.
+#   - ``비공식 굿즈`` 안의 ``공식`` 이 잡혀 등록이 하드 차단 + 제목 훼손.
+#   - ``\s*`` 가 낱말 사이를 건너뛰어 ``가공 식료품`` 의 ``공 식`` 을 잡음.
+# 한글 경계 ``(?<![가-힣])...(?![가-힣])`` + 한 낱말의 ``\s*`` 제거로 고쳤다.
+# --------------------------------------------------------------------------- #
+
+
+class TestWoRound3ControlGroupNotCaught:
+    """WO 3라운드 통제군 8건 — 한글 경계 수리 후 전부 안 걸려야 한다.
+
+    실측 (수리 전):
+      ``비공식 굿즈``        → ``공식`` CAUGHT (FAIL)
+      ``가공 식료품``        → ``공 식`` CAUGHT (FAIL, \\s* 과탐)
+      ``정품인증서 파일``    → ``정품`` CAUGHT (FAIL)
+      ``수산 가공 식자재``   → ``공 식`` CAUGHT (FAIL)
+    수리 후: 전부 NOT caught 여야 한다. 원문 보존도 함께 검증한다.
+    """
+
+    def test_bigongsik_goods_not_caught(self):
+        """``비공식 굿즈`` → 안 걸림 (한글 경계로 ``공식`` 앞 ``비`` 차단)."""
+        assert BANNED_CLAIM_RE.search("비공식 굿즈") is None
+
+    def test_bigongsik_fanart_poster_not_caught(self):
+        """``비공식 팬아트 포스터`` → 안 걸림."""
+        assert BANNED_CLAIM_RE.search("비공식 팬아트 포스터") is None
+
+    def test_gagong_sikryopum_not_caught(self):
+        """``가공 식료품`` → 안 걸림 (\\s* 제거로 ``공 식`` 과탐 차단)."""
+        assert BANNED_CLAIM_RE.search("가공 식료품") is None
+
+    def test_susan_gagong_sikjajae_not_caught(self):
+        """``수산 가공 식자재`` → 안 걸림."""
+        assert BANNED_CLAIM_RE.search("수산 가공 식자재") is None
+
+    def test_gagongsikpum_seonmul_not_caught(self):
+        """``가공식품 선물세트`` → 안 걸림 (``공식`` 뒤 ``품`` 한글)."""
+        assert BANNED_CLAIM_RE.search("가공식품 선물세트") is None
+
+    def test_sgiiseonhyu_bochungje_not_caught(self):
+        """``식이섬유 보충제`` → 안 걸림."""
+        assert BANNED_CLAIM_RE.search("식이섬유 보충제") is None
+
+    def test_gongsanpum_bogwanham_not_caught(self):
+        """``공산품 보관함`` → 안 걸림 (``공산`` 은 ``공식`` 이 아님)."""
+        assert BANNED_CLAIM_RE.search("공산품 보관함") is None
+
+    def test_jeongpuminjeungseo_file_not_caught(self):
+        """``정품인증서 파일`` → 안 걸림 (한글 경계로 ``정품`` 뒤 ``인`` 차단).
+
+        WO §1 이 건을 명시적으로 확인하라고 지시했다 — ``정\\s*품`` 이
+        ``정품인증서`` 를 먹는지.
+        """
+        assert BANNED_CLAIM_RE.search("정품인증서 파일") is None
+
+
+class TestWoRound3BannedGroupCaught:
+    """WO 3라운드 금지군 9건 — 한글 경계 수리 후에도 전부 잡혀야 한다."""
+
+    def test_gongsik_pamaecheo_caught(self):
+        """``공식 판매처`` → 걸림 (공백 분리 — 마케팅 수식어)."""
+        assert BANNED_CLAIM_RE.search("공식 판매처") is not None
+
+    def test_100percent_jeongpum_caught(self):
+        """``100% 정품`` → 걸림 (``100%`` + ``정품``)."""
+        assert BANNED_CLAIM_RE.search("100% 정품") is not None
+
+    def test_choegogeup_ondan_caught(self):
+        """``최고급 원단`` → 걸림."""
+        assert BANNED_CLAIM_RE.search("최고급 원단") is not None
+
+    def test_chojeoga_bojang_caught(self):
+        """``최저가 보장`` → 걸림."""
+        assert BANNED_CLAIM_RE.search("최저가 보장") is not None
+
+    def test_gungnae_yuil_caught(self):
+        """``국내 유일`` → 걸림."""
+        assert BANNED_CLAIM_RE.search("국내 유일") is not None
+
+    def test_segye_choiso_caught(self):
+        """``세계 최초`` → 걸림."""
+        assert BANNED_CLAIM_RE.search("세계 최초") is not None
+
+    def test_mujeogeon_manjeok_caught(self):
+        """``무조건 만족`` → 걸림."""
+        assert BANNED_CLAIM_RE.search("무조건 만족") is not None
+
+    def test_eopgye_1wi_caught(self):
+        """``업계 1위`` → 걸림."""
+        assert BANNED_CLAIM_RE.search("업계 1위") is not None
+
+    def test_BEST_sangpum_caught(self):
+        """``BEST상품`` → 걸림."""
+        assert BANNED_CLAIM_RE.search("BEST상품") is not None
+
+
+class TestWoRound3SanitizationPreserves:
+    """WO 3라운드 통제군 정제 결과 — 원문 보존.
+
+    ``_sanitize_seo_title`` 은 ``BANNED_CLAIM_RE`` 를 먼저 sub 한다. 경계
+    수리 후 통제군은 원문 그대로 나와야 한다.
+    """
+
+    def test_bigongsik_goods_preserved(self):
+        from clossify.text_props import _sanitize_seo_title
+
+        assert _sanitize_seo_title("비공식 굿즈") == "비공식 굿즈"
+
+    def test_gagong_sikryopum_preserved(self):
+        from clossify.text_props import _sanitize_seo_title
+
+        assert _sanitize_seo_title("가공 식료품") == "가공 식료품"
+
+    def test_jeongpuminjeungseo_preserved(self):
+        from clossify.text_props import _sanitize_seo_title
+
+        assert _sanitize_seo_title("정품인증서 파일") == "정품인증서 파일"
+
+
+# --------------------------------------------------------------------------- #
+# 7. WO 3라운드 — ``\\s*`` 갈래 통제군 판정표.
+#
+# WO §1: "눈으로 훑지 마라(직전 라운드에서 그 방식이 틀렸다)" — 각 \\s* 갈래를
+# 통제군으로 돌려 판정한다. 한 낱말은 ``\\s*`` 제거, 복합형은 ``\\s*`` 유지 +
+# 경계.
+# --------------------------------------------------------------------------- #
+
+
+class TestWoRound3SstarBranchAudit:
+    """``\\s*`` 갈래별 통제군 판정표.
+
+    각 갈래 / 통제군 / 조치:
+      ``100\\s*%``       | ``100매`` (수량) 안 걸림          | 유지 (``%`` 앵커)
+      ``AUTH\\s*ENTIC``  | 영문 전용, 한글 위험 없음         | 유지
+      ``정\\s*품``       | ``정품인증서`` 과탐               | ``\\s*`` 제거 + 경계
+      ``진\\s*품``       | ``진품감정사`` 과탐               | ``\\s*`` 제거 + 경계
+      ``공\\s*식(?!품)`` | ``가공 식료품`` · ``비공식`` 과탐 | ``\\s*`` 제거 + 경계 + ``(?!품)`` 제거
+      ``\\d\\s*위``      | ``3위생`` 정상어 보호             | 유지 (이미 경계)
+      ``최저\\s*가``     | ``최저 가지색`` 의 ``가`` 과탐    | ``\\s*`` 제거 + 경계
+      ``초\\s*특가``     | ``초 특별 솔루션`` 안 걸림        | ``\\s*`` 유지 + 경계
+      ``국내\\s*유일``   | ``국내 유기농 일반`` 안 걸림      | ``\\s*`` 유지 + 경계
+      ``세계\\s*최초``   | ``세계 최저 초콜릿`` 안 걸림      | ``\\s*`` 유지 + 경계
+    """
+
+    def test_100sstar_percent_no_quantity_overtap(self):
+        """``100\\s*%`` — ``위생장갑 100매`` 안 걸림 (``%`` 없음)."""
+        assert BANNED_CLAIM_RE.search("위생장갑 100매") is None
+
+    def test_jeongsstar_pum_juminjeungseo_not_caught(self):
+        """``정\\s*품`` (구) → ``정품인증서 파일`` 과탐. 수리 후 안 걸림."""
+        assert BANNED_CLAIM_RE.search("정품인증서 파일") is None
+
+    def test_jinsstar_pum_jinjeung_not_caught(self):
+        """``진\\s*품`` (구) → ``진품감정사`` 과탐 위험. 수리 후 안 걸림."""
+        assert BANNED_CLAIM_RE.search("진품감정사") is None
+
+    def test_gongsstar_sik_bigongsik_not_caught(self):
+        """``공\\s*식`` (구) → ``비공식 굿즈`` 과탐. 수리 후 안 걸림."""
+        assert BANNED_CLAIM_RE.search("비공식 굿즈") is None
+
+    def test_gongsstar_sik_gagong_sikryopum_not_caught(self):
+        """``공\\s*식`` (구) → ``가공 식료품`` 의 ``공 식`` 과탐. 수리 후 안 걸림."""
+        assert BANNED_CLAIM_RE.search("가공 식료품") is None
+
+    def test_dsstar_wi_3wisang_not_caught(self):
+        """``\\d\\s*위`` — ``3위생 마스크`` 안 걸림 (``위`` 뒤 ``생`` 한글)."""
+        assert BANNED_CLAIM_RE.search("3위생 마스크") is None
+
+    def test_chojeosstar_ga_gajisaek_not_caught(self):
+        """``최저\\s*가`` (구) → ``최저 가지색`` 의 ``가`` 과탐. 수리 후 안 걸림.
+
+        ``최저가(?![가-힣])`` 로 바꾸어 ``최저 가지색`` 의 분리된 ``가`` 를
+        안 잡는다.
+        """
+        assert BANNED_CLAIM_RE.search("최저 가지색 액자") is None
+
+    def test_chosstar_teukga_cho_teukbyeol_not_caught(self):
+        """``초\\s*특가`` (유지) — ``초 특별 솔루션`` 안 걸림 (``특`` 뒤 ``가`` 아님)."""
+        assert BANNED_CLAIM_RE.search("초 특별 솔루션") is None
+
+    def test_gungnaesstar_yuil_yuginong_not_caught(self):
+        """``국내\\s*유일`` (유지) — ``국내 유기농 일반`` 안 걸림 (``유일`` 아님)."""
+        assert BANNED_CLAIM_RE.search("국내 유기농 일반") is None
+
+    def test_segyesstar_choiso_chojeo_not_caught(self):
+        """``세계\\s*최초`` (유지) — ``세계 최저 초콜릿`` 안 걸림 (``최초`` 아님)."""
+        assert BANNED_CLAIM_RE.search("세계 최저 초콜릿") is None
