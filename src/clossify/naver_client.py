@@ -1282,26 +1282,41 @@ def _rewind_files_for_retry(kwargs) -> bool:
     return True
 
 
-def _api_request(method, url, *, tk, header_builder, tk_ref=None, **kwargs):
+def _api_request(method, url, *, tk, header_builder, tk_ref=None, allow_retry=False, **kwargs):
     """``requests.<verb>`` 로 위임하는 공통 API 호출 지점.
 
     ``method`` 에 따라 ``requests.get`` / ``requests.post`` / ``requests.put`` /
     ``requests.delete`` 로 위임한다(런타임 ``getattr`` 조회). 이 위임은
     기존 시험이 감시하던 호출 표면을 유지하기 위함이다.
 
-    401 + ``GW.AUTHN`` 시 토큰을 1회 재발급(``get_token()``) 하고 요청을
-    1회 재시도한다. 재시도도 같은 위임 함수를 탄다. 그 외(403·500·401-타코드·
-    JSON아님)는 그대로 반환한다.
+    401 + ``GW.AUTHN`` **이고** ``allow_retry=True`` 일 때만 토큰을
+    1회 재발급(``get_token()``) 하고 요청을 1회 재시도한다. 재시도도 같은
+    위임 함수를 탄다. 그 외(403·500·401-타코드·JSON아님·``allow_retry=False``)
+    는 그대로 반환한다.
 
-    **재시도 안전 전제(근거)**: ``register_product``(생성)·``update_product``·
-    ``delete_origin_product`` 같은 되돌리기 어려운 동작도 이 함수를 경유한다.
-    401 + ``GW.AUTHN`` 일 때 재시도가 안전하려면 *"원 요청은 서버에서 처리되지
-    않았다"* 는 전제가 성립해야 한다. 이 전제는 근거가 있다: 네이버 커머스
-    인증 문서(``docs_auth.txt`` §"API 인증 실패 후 재시도") 가 게이트웨이 인증
-    실패를 401 + ``GW.AUTHN`` 으로 규정하고, **그 경우 토큰 재발급 후
-    재호출(fallback) 을 권장**한다. 즉 재시도는 문서가 권장하는 경로이며,
-    게이트웨이가 인증 단계에서 차단했으므로 원 요청은 도달하지 않았다. (동작은
-    이 주석 추가 외에 변경하지 않는다.)
+    **``allow_retry`` 기본값은 ``False`` (재시도 안 함)** 이 안전하다.
+    재시도는 **명시적으로 안전하다고 판단한 호출부만** ``allow_retry=True``
+    로 켠다. 되돌리기 어려운 요청(상품 신규 등록 POST) 이 기본값으로
+    재시도되는 일이 없도록 기본을 닫아둔다.
+
+    **재시도 안전 전제(근거) — 네이버 커머스API 인증 문서(공개 문서) 원문**:
+
+      "API 요청 및 응답을 정상적으로 수신하는 중 API 응답에 401 HTTP 상태
+       코드와 함께 게이트웨이 서버 오류 코드 ``GW.AUTHN`` 이 포함되어 있다면
+       인증 토큰이 만료되었을 가능성이 높습니다. … 인증 토큰 발급 요청 API 를
+       재호출하여 인증 토큰을 재발급받는 fallback 처리를 권장합니다."
+
+    위 문서는 **재발급 후 재호출을 권장할 뿐**, 원 요청이 서버에서
+    처리되지 않았음을 **보장하지 않는다**. 즉 게이트웨이가 인증 단계에서
+    잘랐다면 원 요청은 백엔드에 도달하지 않았을 것이지만, 우리는 그것을
+    증명할 수 없다. 따라서:
+
+    - **상품 신규 등록 POST(``_post_product_payload``)**: ``allow_retry``
+      를 끄지 않는다(기본값 ``False``). 401+``GW.AUTHN`` 을 받으면 재시도
+      없이 호출자에게 올린다 — 중복 상품이 라이브 마켓에 올라가는 위험을
+      감수할 이유가 없다.
+    - **그 외 경로(조회·이미지 업로드·태그 추천·수정·삭제)**: 각 호출부에서
+      ``allow_retry=True`` 로 켠다. 이유는 각 호출부 주석에 한 줄씩 적는다.
 
     **파일 업로드 재시도**: ``files`` 가 포함된 경우, 재시도 직전에
     ``_rewind_files_for_retry`` 로 모든 파일 스트림을 ``seek(0)`` 되감는다.
@@ -1324,6 +1339,8 @@ def _api_request(method, url, *, tk, header_builder, tk_ref=None, **kwargs):
         tk_ref: 작업 단위 토큰 홀더(:class:`_TokenRef`) 또는 ``None``.
             ``None`` 이 아니면 재발급한 토큰을 이 홀더에 다시 써서 같은
             작업의 뒤따르는 요청들이 새 토큰으로 나가게 한다.
+        allow_retry: 401+``GW.AUTHN`` 시 재시도 허용 여부. 기본값 ``False``
+            (안전 쪽). 명시적으로 ``True`` 를 넘긴 호출부만 재시도한다.
         **kwargs: 위임 함수에 전달할 추가 인자(``data``·``timeout``·…).
             ``headers`` 는 ``header_builder`` 가 생성하므로 넘기지 않는다.
 
@@ -1339,7 +1356,11 @@ def _api_request(method, url, *, tk, header_builder, tk_ref=None, **kwargs):
     r = verb(url, **kwargs)
     if not _is_authn_expired_response(r):
         return r
-    # 401 + GW.AUTHN — 파일 스트림을 되감을 수 없으면 재시도를 포기한다.
+    # 401 + GW.AUTHN 이지만 allow_retry=False → 재시도하지 않고 원 응답 반환.
+    # 생성 POST 등 되돌리기 어려운 요청은 여기서 멈춘다.
+    if not allow_retry:
+        return r
+    # 파일 스트림을 되감을 수 없으면 재시도를 포기한다.
     # 빈 본문(0바이트 이미지) 으로 재시도하는 것을 절대 허용하지 않는다.
     if not _rewind_files_for_retry(kwargs):
         return r
@@ -1388,11 +1409,15 @@ def upload_images(paths, tk=None):
             fh = open(p, "rb")
             opened_files.append(fh)
             files.append(("imageFiles", (os.path.basename(p), fh, _guess_image_mime(p))))
+        # 재시도 안전: 이미지 업로드는 중복 피해가 없다 — 같은 이미지를
+        # 두 번 올려도 스토리지에 사본이 하나 더 생길 뿐 상품 데이터가
+        # 변하지 않는다(반환된 URL 만 달라질 수 있고 호출자가 최종 것을 쓴다).
         r = _api_request(
             "POST",
             BASE + "/external/v1/product-images/upload",
             tk=tk,
             header_builder=lambda t: _h(t, False),
+            allow_retry=True,
             files=files,
             timeout=120,
         )
@@ -1413,12 +1438,21 @@ def _json_or_text_response(response):
 
 
 def _post_product_payload(payload, tk, *, tk_ref=None):
+    # **재시도하지 않는다** — 상품 신규 등록(POST /external/v2/products).
+    # 401+GW.AUTHN 을 받으면 재시도 없이 (status_code, body) 를 올려보낸다.
+    # 이유: 게이트웨이가 인증 단계에서 잘랐다면 원 요청은 백엔드에
+    # 도달하지 않았을 것이지만, 우리는 그것을 증명할 수 없다. 증명 못 하는
+    # 전제 위에서 중복 상품이 라이브 마켓에 올라가는 위험을 감수할 이유가
+    # 없다(인증 문서는 재호출을 권장할 뿐, 원 요청 미처리를 보장하지 않는다).
+    # allow_retry 를 명시적으로 False 로 적는다 — 기본값에 의존하지 않고
+    # 의도를 소스에서 읽을 수 있게 한다.
     r = _api_request(
         "POST",
         BASE + "/external/v2/products",
         tk=tk,
         header_builder=lambda t: _h(t),
         tk_ref=tk_ref,
+        allow_retry=False,
         data=json.dumps(payload).encode("utf-8"),
         timeout=60,
     )
@@ -1745,11 +1779,14 @@ def seller_tag_autostrip_meta(body):
 def update_product(channel_no, payload, tk=None):
     """PUT /external/v2/products/channel-products/{channelNo}."""
     tk = tk or get_token()
+    # 재시도 안전: 수정(PUT)은 멱등이다 — 같은 페이로드를 두 번 PUT 해도
+    # 최종 상태가 같다(덮어쓰기). 중복 생성이 일어나지 않는다.
     r = _api_request(
         "PUT",
         BASE + f"/external/v2/products/channel-products/{channel_no}",
         tk=tk,
         header_builder=lambda t: _h(t),
+        allow_retry=True,
         data=json.dumps(payload).encode("utf-8"),
         timeout=60,
     )
@@ -1758,11 +1795,13 @@ def update_product(channel_no, payload, tk=None):
 
 def get_product(origin_no, tk=None):
     tk = tk or get_token()
+    # 재시도 안전: 조회(GET)는 부수효과가 없다 — 두 번 읽어도 데이터가 변하지 않는다.
     r = _api_request(
         "GET",
         BASE + f"/external/v2/products/origin-products/{origin_no}",
         tk=tk,
         header_builder=lambda t: _h(t, False),
+        allow_retry=True,
         timeout=20,
     )
     return r.status_code, (r.json() if r.status_code == 200 else r.text)
@@ -1780,11 +1819,13 @@ def delete_origin_product(origin_product_no, tk=None):
     호출자(mcp_server)가 입력 검증·확인·로컬 기록 정리를 담당한다.
     """
     tk = tk or get_token()
+    # 재시도 안전: 삭제(DELETE)는 멱등이다 — 두 번 삭제해도 최종 상태(삭제됨)가 같다.
     r = _api_request(
         "DELETE",
         BASE + f"/external/v2/products/origin-products/{origin_product_no}",
         tk=tk,
         header_builder=lambda t: _h(t, False),
+        allow_retry=True,
         timeout=20,
     )
     return r.status_code, _json_or_text_response(r)
@@ -1818,11 +1859,13 @@ def search_products(page: int = 1, size: int = 10, tk=None):
         API 호출 래퍼다 — 값을 해석·변환·추정하지 않는다.
     """
     tk = tk or get_token()
+    # 재시도 안전: 상품 검색(POST /search)은 조회다 — 부수효과가 없고 중복 피해가 없다.
     r = _api_request(
         "POST",
         BASE + "/external/v1/products/search",
         tk=tk,
         header_builder=lambda t: _h(t),
+        allow_retry=True,
         data=json.dumps({"page": int(page), "size": int(size)}).encode("utf-8"),
         timeout=20,
     )
@@ -1870,11 +1913,13 @@ def fetch_product_inspections(page: int = 1, size: int = 100, tk=None):
         p_int, s_int = 1, 100
     params["page"] = p_int
     params["size"] = s_int
+    # 재시도 안전: 검수 목록 조회(GET)는 부수효과가 없다 — 중복 피해가 없다.
     r = _api_request(
         "GET",
         BASE + "/external/v1/product-inspections/channel-products",
         tk=tk,
         header_builder=lambda t: _h(t, False),
+        allow_retry=True,
         params=params,
         timeout=20,
     )
@@ -1906,11 +1951,13 @@ def recommend_tags(keyword, tk=None):
         ``[{"code": int, "text": str}, ...]``. 실패 시 body 는 응답 본문.
     """
     tk = tk or get_token()
+    # 재시도 안전: 추천 태그 조회(GET)는 부수효과가 없다 — 중복 피해가 없다.
     r = _api_request(
         "GET",
         BASE + "/external/v2/tags/recommend-tags",
         tk=tk,
         header_builder=lambda t: _h(t, False),
+        allow_retry=True,
         params={"keyword": str(keyword or "")},
         timeout=20,
     )
@@ -1944,11 +1991,13 @@ def get_category_attributes(category_id, tk=None):
     """
     tk = tk or get_token()
     # [가정] 쿼리 파라미터명 categoryId — 문서 실측 전 관례 추정.
+    # 재시도 안전: 카테고리 속성 조회(GET)는 부수효과가 없다 — 중복 피해가 없다.
     r = _api_request(
         "GET",
         BASE + "/v1/product-attributes/attributes",
         tk=tk,
         header_builder=lambda t: _h(t, False),
+        allow_retry=True,
         params={"categoryId": str(category_id or "")},
         timeout=20,
     )
@@ -1989,11 +2038,13 @@ def restricted_tags(tags, tk=None):
         # 쉼표 연결 — 실측 계약. None/빈 값은 빈 문자열로(400 유도).
         joined = ",".join(str(t or "").strip() for t in tags if str(t or "").strip())
     tk = tk or get_token()
+    # 재시도 안전: 제한 태그 조회(GET)는 부수효과가 없다 — 중복 피해가 없다.
     r = _api_request(
         "GET",
         BASE + "/external/v2/tags/restricted-tags",
         tk=tk,
         header_builder=lambda t: _h(t, False),
+        allow_retry=True,
         params={"tags": joined},
         timeout=20,
     )

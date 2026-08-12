@@ -424,6 +424,7 @@ class TestNonSeekableStreamNoRetry:
                     "https://api.example.com/upload",
                     tk="expired",
                     header_builder=lambda t: {"Authorization": f"Bearer {t}"},
+                    allow_retry=True,
                     files=files,
                     timeout=30,
                 )
@@ -502,6 +503,7 @@ class TestDictFormFilesRewind:
                     "https://api.example.com/upload",
                     tk="expired",
                     header_builder=lambda t: {"Authorization": f"Bearer {t}"},
+                    allow_retry=True,
                     files=files,
                     timeout=30,
                 )
@@ -531,94 +533,89 @@ class TestDictFormFilesRewind:
 
 
 # --------------------------------------------------------------------------- #
-# 시나리오 10: ``register_product`` 다중 POST 재시도 시 토큰 1회 발급 고정.
+# 시나리오 10: 상품 등록 POST 는 401+GW.AUTHN 에서 재시도하지 않는다.
 #
-# ``register_product`` 는 한 논리적 등록 작업이 여러 POST 로 이뤄진다
-# (첫 POST → 제한태그 응답 → 태그 제거 후 재시도 → 전체 제거 재시도).
-# ``_api_request`` 안에서 재발급한 토큰이 지역 변수로 끝나면, 다음 POST 가
-# 다시 만료된 토큰을 써 401 을 한 번 더 맞고 토큰을 또 발급한다.
-# 본 시험은 **등록 작업 전체에서 get_token 호출이 정확히 1회** 임을 고정한다.
+# ``_post_product_payload`` 가 타는 POST /external/v2/products 는 상품 신규 생성이다.
+# 게이트웨이가 인증 단계에서 잘랐다면 원 요청은 도달하지 않았겠지만, 우리는
+# 그것을 증명할 수 없다. 증명 못 하는 전제 위에서 중복 상품이 라이브 마켓에
+# 올라가는 위험을 감수할 이유가 없다 — POST 생성 경로는 재시도하지 않는다.
 # --------------------------------------------------------------------------- #
 
 
-class TestRegisterProductTokenIssuedOnceAcrossRetries:
-    """``register_product`` 가 여러 번 재시도하더라도 토큰 발급은 1회로
-    그치는지 검증한다.
+class TestPostProductPayloadNoRetryOnAuthN:
+    """상품 신규 등록 POST(``_post_product_payload``)는 401+GW.AUTHN 에서
+    재시도하지 않는다.
 
-    시나리오:
-      - 첫 POST: 401 GW.AUTHN → 토큰 재발급 → 재시도 → 400 제한태그 응답.
-      - 두 번째 POST (태그 제거 후): 새 토큰으로 나가야 함 — 401 다시 없음.
-      - 세 번째 POST (전체 제거 후): 새 토큰으로 나가야 함 — 401 다시 없음.
+    WO PR #27 5라운드 ①: ``_api_request`` 의 ``allow_retry`` 기본값이
+    ``False`` 이고, ``_post_product_payload`` 는 이를 명시적으로 ``False``
+    로 넘긴다. 401+GW.AUTHN 을 받으면 재시도 없이 원 응답을 올린다.
+    호출 카운터로 이를 증명한다: HTTP 요청 1회, ``get_token`` 0회.
     """
 
-    def test_register_product_issues_token_once(self):
+    def test_post_product_payload_does_not_retry_on_401_gw_authn(self):
+        """POST /external/v2/products 가 401 GW.AUTHN → 재시도 없음 (요청 1회)."""
         _clear_retry_events()
-
-        # 제한태그 응답 본문 (``invalidInputs`` 형식 — ``_is_restricted_seller_tags_response``).
-        restricted_body = {
-            "code": "BAD_REQUEST",
-            "invalidInputs": [
-                {"type": "Restricted.sellerTags", "message": "(제한태그1)"},
-            ],
-        }
-
-        post_calls = {"n": 0}
+        call_count = {"n": 0}
 
         def _mock_post(url, **kwargs):
-            post_calls["n"] += 1
-            # _api_request 는 내부적으로 requests.post 를 두 번 부를 수 있다.
-            # 호출 패턴 (올바른 전파 시):
-            #   1: POST#1 첫 시도 (만료 토큰) -> 401
-            #   2: POST#1 재시도 (새 토큰)   -> 400 제한태그
-            #   3: POST#2 첫 시도 (새 토큰)   -> 400 제한태그
-            #   4: POST#2 재시도             -> (루프 내, 401 아님)
-            #   ... 이하 생략 ...
-            # 버그(전파 안 됨) 시:
-            #   1: POST#1 만료 -> 401, 2: POST#1 새 토큰 -> 400 제한태그,
-            #   3: POST#2 만료 -> 401, 4: POST#2 새 토큰 -> 400, ... 매번 401.
-            headers = kwargs.get("headers", {})
-            auth = headers.get("Authorization", "")
-            # "expired" 토큰이면 401 GW.AUTHN, "fresh" 토큰이면 단계별 응답.
-            if "expired" in auth:
-                return _FakeResponse(401, json_body={"code": "GW.AUTHN"})
-            # fresh 토큰 — fresh 호출 순서로 단계 판별.
-            if not hasattr(_mock_post, "_fresh"):
-                _mock_post._fresh = 0
-            _mock_post._fresh += 1
-            if _mock_post._fresh <= 2:
-                # 첫 두 번의 fresh POST: 제한태그 응답.
-                r = _FakeResponse(400, json_body=restricted_body)
-                # _json_or_text_response 가 content-type 으로 JSON 여부를 판별하므로
-                # content-type 헤더를 명시적으로 설정한다.
-                r.headers = {"content-type": "application/json"}
-                return r
-            # 세 번째 fresh POST: 성공.
-            r = _FakeResponse(200, json_body={"originProductNo": "1", "channelProductNo": "2"})
-            r.headers = {"content-type": "application/json"}
-            return r
+            call_count["n"] += 1
+            return _FakeResponse(401, json_body={"code": "GW.AUTHN"})
 
-        tok_mock, tok_log = _make_token_mock(["fresh-token"])
-
-        payload = {
-            "originProduct": {
-                "deliveryInfo": {"deliveryCompany": "CJGLS"},
-                "images": {"representativeImage": {"url": "https://x/y.jpg"}},
-                "detailAttribute": {"seoInfo": {"sellerTags": [{"text": "제한태그1"}]}},
-            }
-        }
+        tok_mock, tok_log = _make_token_mock(["should-not-be-called"])
 
         with mock.patch.object(naver_client.requests, "post", side_effect=_mock_post):
             with mock.patch.object(naver_client, "get_token", side_effect=tok_mock):
-                sc, body = naver_client.register_product(payload, tk="expired")
+                sc, body = naver_client._post_product_payload(
+                    {"originProduct": {}}, tk="expired-token"
+                )
 
-        # 핵심 단정: get_token 호출은 등록 작업 전체에서 정확히 1회.
-        # (여러 POST 가 있더라도 첫 401 에서 재발급한 토큰이 이어져야 한다.)
-        assert tok_log["count"] == 1, (
-            f"get_token 호출 횟수: {tok_log['count']} (예상 1) — "
-            f"재발급 토큰이 뒤따르는 POST 로 이어지지 않음"
-        )
-        # 등록은 결국 성공한다.
-        assert sc == 200, f"최종 상태코드: {sc}"
+        # HTTP 요청은 정확히 1회 (재시도 없음).
+        assert (
+            call_count["n"] == 1
+        ), f"POST /products 요청 횟수: {call_count['n']} (예상 1 — 생성 POST 는 재시도 안 함)"
+        # 토큰 재발급 0회.
+        assert (
+            tok_log["count"] == 0
+        ), f"get_token 호출 횟수: {tok_log['count']} (예상 0 — 생성 POST 는 재시도 안 함)"
+        # 401 을 그대로 올린다.
+        assert sc == 401
+        # 재시도 이벤트 없음.
+        assert len(naver_client._AUTHN_RETRY_EVENTS) == 0
+
+
+# --------------------------------------------------------------------------- #
+# 시나리오 10b: 나머지 경로는 여전히 401+GW.AUTHN 에서 1회 재시도한다.
+# --------------------------------------------------------------------------- #
+
+
+class TestOtherPathsStillRetryOnAuthN:
+    """조회·이미지 업로드·수정·삭제 경로는 ``allow_retry=True`` 로
+    401+GW.AUTHN 시 1회 재시도한다.
+
+    WO PR #27 5라운드 ①: 생성 POST 만 재시도에서 빼고, 나머지 안전 경로는
+    현행 유지. ``get_product`` 로 대표 케이스를 증명한다.
+    """
+
+    def test_get_product_still_retries_once_on_401_gw_authn(self):
+        """GET /origin-products/{no} 가 401 GW.AUTHN → 1회 재시도 (요청 2회)."""
+        _clear_retry_events()
+        responses = [
+            _FakeResponse(401, json_body={"code": "GW.AUTHN"}),
+            _FakeResponse(200, json_body={"ok": True}),
+        ]
+        req_mock, req_log = _make_request_mock(responses)
+        tok_mock, tok_log = _make_token_mock(["new-token"])
+
+        with mock.patch.object(naver_client.requests, "get", side_effect=req_mock):
+            with mock.patch.object(naver_client, "get_token", side_effect=tok_mock):
+                sc, body = naver_client.get_product("x", tk="expired")
+
+        assert sc == 200
+        assert tok_log["count"] == 1
+        assert (
+            req_log["count"] == 2
+        ), f"GET 요청 횟수: {req_log['count']} (예상 2 — 조회 경로는 여전히 1회 재시도)"
+        assert len(naver_client._AUTHN_RETRY_EVENTS) == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -702,22 +699,28 @@ class TestRetryEventsBufferIsBounded:
 
 
 class TestApiRequestProvenanceComment:
-    """``_api_request`` 가 재시도 안전 전제의 근거 문서명을 docstring 에
-    명시하는가.
+    """``_api_request`` 가 재시도 안전 전제의 근거를 docstring 에 명시하는가.
 
-    WO 3라운드 ④: 되돌리기 어려운 동작(``register_product`` 등) 도 이 함수를
+    WO PR #27 5라운드 ②: 되돌리기 어려운 동작(``register_product`` 등) 도 이 함수를
     경유한다. 안전하려면 *"401 GW.AUTHN 이면 원 요청은 서버에서 처리되지
-    않았다"* 는 전제가 성립해야 하는데, diff 안에 근거가 없었다.
-    네이버 인증 문서(``docs_auth.txt``) 가 fallback 을 권장하므로 그 출처를
-    주석에 남긴다.
+    않았다"* 는 전제가 성립해야 하는데, 이 전제의 근거를 문서 원문 인용으로
+    남긴다. 파일명만 적지 않고, 공개 문서의 원문 문구를 직접 인용하며,
+    그 문서가 보장하지 않는 것(원 요청 미처리 보장 없음)도 함께 적는다.
     """
 
-    def test_docstring_names_source_document(self):
-        """docstring 이 ``docs_auth.txt`` 와 ``GW.AUTHN`` 을 함께 언급한다."""
+    def test_docstring_quotes_public_auth_document(self):
+        """docstring 이 공개 문서 원문과 GW.AUTHN 을 함께 인용한다.
+
+        WO PR #27 5라운드 ②: 비공개 경로(``docs_auth.txt``)를 가리키지 않고,
+        네이버 커머스API 인증 문서(공개 문서)의 원문 문구를 직접 인용한다.
+        """
         import inspect
 
         doc = inspect.getdoc(naver_client._api_request) or ""
         assert "GW.AUTHN" in doc, "GW.AUTHN 이 docstring 에 없음"
+        # 공개 문서 원문 인용 — "재발급받는 fallback 처리를 권장합니다" 문구.
+        assert "fallback" in doc, "인증 문서 원문(fallback 권장)이 인용되지 않음"
+        # 문서가 보장하지 않는 것도 함께 명시되어야 한다.
         assert (
-            "docs_auth.txt" in doc
-        ), "출처 문서명(docs_auth.txt) 이 docstring 에 없음 — 근거 없는 전제로 읽힘"
+            "보장하지 않는다" in doc
+        ), "인증 문서가 원 요청 미처리를 보장하지 않는다는 범위 명시가 없음"
