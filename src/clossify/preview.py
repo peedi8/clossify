@@ -215,35 +215,59 @@ def _collect_notice_rows(
             top_value: Any = None
             for tk in top_keys:
                 cv = product.get(tk)
-                # 숫자 0 (무료배송) 은 유효한 명시값으로 본다.
-                if cv is None:
+                # **감리 (6라운드)**: 자리표시자 판정은 해석기의 단일 진실 공급원
+                # (``naver_client._has_text``) 을 그대로 호출한다 — 새 판정 함수를
+                # 만들면 같은 결함이 다섯 번째로 재발한다.
+                # 참고: ``_has_text(int 0)`` 은 ``False`` 를 반환하는 기존 한계가
+                # 있으므로, 숫자(int/float, bool 제외) 는 유효한 명시값으로 본다
+                # (배송비 0 = 무료배송). 숫자는 자리표시자 토큰이 될 수 없다.
+                if isinstance(cv, bool):
+                    # bool 은 int 서브클래스지만 배송비·규제값으로 불리언은 입력
+                    # 오류다 — 유효하지 않은 것으로 본다.
                     continue
-                if isinstance(cv, str) and not cv.strip():
-                    continue
-                top_value = cv
-                break
+                if isinstance(cv, int | float):
+                    top_value = cv
+                    break
+                if naver_client._has_text(cv):
+                    top_value = cv
+                    break
             if top_value is not None:
                 _add(field, top_value, "사용자 입력")
                 continue
         if field in user_body:
-            # 감리 ⑧ (4라운드): 고시 본문에 사용자가 넣은 값과 config 유래 값이
-            # 같은 필드에 겹칠 때 출처를 갈라 표시한다. 과거에는 무조건
-            # "사용자 입력" 으로 그려서, config 도 같은 필드에 값을 가지고 있다는
-            # 사실이 묻혔다 — 중첩 고시값과 설정 유래를 구분 안 하는 결함.
-            _src = "사용자 입력 (설정에도 있음)" if field in cfg_filled else "사용자 입력"
-            _add(field, user_body[field], _src)
-        elif field in cfg_filled:
+            # **감리 (6라운드)**: ``user_body`` 의 값이 자리표시자(TBD/TODO/
+            # REPLACE_WITH_...) 이면 "사용자 입력" 으로 받아들이지 않는다 —
+            # 해석기(``_first_value``/``_has_text``)가 같은 자리표시자를
+            # 건너뛰고 config 폴백으로 가기 때문에, 미리보기도 같은 판정으로
+            # 건너뛴다. ``naver_client._has_text`` 를 호출한다 (판정 두 벌 금지).
+            uv = user_body[field]
+            if naver_client._has_text(uv):
+                # 감리 ⑧ (4라운드): 고시 본문에 사용자가 넣은 값과 config 유래 값이
+                # 같은 필드에 겹칠 때 출처를 갈라 표시한다. 과거에는 무조건
+                # "사용자 입력" 으로 그려서, config 도 같은 필드에 값을 가지고 있다는
+                # 사실이 묻혔다 — 중첩 고시값과 설정 유래를 구분 안 하는 결함.
+                _src = "사용자 입력 (설정에도 있음)" if field in cfg_filled else "사용자 입력"
+                _add(field, uv, _src)
+                continue
+            # 자리표시자면 폴백으로 — 아래 cfg_filled 분기로 넘어간다.
+        if field in cfg_filled:
             # config 에서 값을 읽는다. 별칭이 있으면 별칭 키도 확인.
             cfg_keys = _cfg_key_aliases.get(field, (field,))
             cfg_value = None
             for ck in cfg_keys:
                 cv = cfg_notice.get(ck)
-                if cv is not None and str(cv).strip():
-                    # 감리 ⑦ (4라운드): 자리표시자(REPLACE_WITH_...)를 실질값으로
-                    # 본다 — 해석기(_resolve_delivery_fee_with_slot 등)가 같은
-                    # 판정으로 건너뛴다. 판정 두 벌 금지 (2라운드 교훈).
-                    if "REPLACE_WITH_" in str(cv):
-                        continue
+                # **감리 (6라운드)**: 자리표시자 판정을 해석기의 단일 진실 공급원
+                # (``naver_client._has_text``) 에 위임한다. 과거에는 ``REPLACE_WITH_``
+                # 접두사만 하드코딩으로 걸렀으나, TBD/TODO/해당없음 등
+                # ``qa_agents._is_placeholder_value`` 토큰은 잡지 못해 판정이
+                # 어긋났다. 판정을 새로 만들지 않고 해석기가 쓰는 것을 호출한다.
+                # 숫자(int/float, bool 제외) 는 자리표시자가 될 수 없으므로 유효.
+                if isinstance(cv, bool):
+                    continue
+                if isinstance(cv, int | float):
+                    cfg_value = cv
+                    break
+                if naver_client._has_text(cv):
                     cfg_value = cv
                     break
             if cfg_value is not None:
