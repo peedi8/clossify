@@ -616,7 +616,7 @@ def _notice_defaults(p):
         # 배송비(baseFee) — 상거래 조건이므로 규제값처럼 fail-closed 로
         # 만들지 않는다. 후보 순서: p.delivery_fee(명시) → config → 3000.
         # config 키는 delivery_fee 와 camelCase deliveryFee 둘 다 받는다
-        # (기존 _first_value 패턴과 동일). 어디서 왔는지는 보고한다(N7).
+        # (기존 _first_value 패턴과 동일). 어디서 왔는지는 보고한다(설정 유래 규제값).
         # **값이 있는데 숫자가 아니면 오류** (조용한 폴백 금지). 누락(값 없음)
         # → 3000 유지. 어느 자리(상품 입력 / 설정)인지 오류 메시지에 적는다.
         "delivery_fee": _resolve_delivery_fee(p, cfg_notice),
@@ -763,7 +763,7 @@ def _notice_common_filled_from_config(p, cfg_notice) -> list:
     - config 값이 "" / 공백뿐이면 미설정 취급 — 채워지지 않은 것으로 본다
       (빈 값이 유효 입력으로 둔갑하면 안 된다).
 
-    **N7 확장 — origin_content·importer·manufacturer·delivery_fee 도 보고.**
+    **설정 유래 규제값 확장 — origin_content·importer·manufacturer·delivery_fee 도 보고.**
 
     이 필드들은 **상품마다 달라야 하는 규제값**이다 (중국산·국내산을 같이 파는
     판매자, 제조사/수입사가 상품마다 다른 경우). 스토어 서랍(config) 에 기본값을
@@ -817,14 +817,14 @@ def _notice_common_filled_from_config(p, cfg_notice) -> list:
         if any(_has_text(cfg_notice.get(k)) for k in cfg_keys):
             filled.append(notice_field)
 
-    # N7 — 상품마다 달라야 하는 규제값이 config 에서만 채워졌으면 보고.
+    # 설정 유래 규제값 — 상품마다 달라야 하는 규제값이 config 에서만 채워졌으면 보고.
     # 차단이 아니라 가시화로 다룬다(잘못 신고 위험).
     filled.extend(_per_product_filled_from_config(p, cfg_notice, user_bodies))
     return filled
 
 
 def _per_product_filled_from_config(p, cfg_notice, user_bodies) -> list:
-    """상품마다 달라야 하는 규제값이 config 에서만 채워졌는지 보고 (N7).
+    """상품마다 달라야 하는 규제값이 config 에서만 채워졌는지 보고 (설정 유래 규제값).
 
     ``origin_content``·``importer``·``manufacturer``·``delivery_fee`` 는
     상품마다 달라야 하는 규제값/상거래 조건이다. 스토어 서랍(config) 에

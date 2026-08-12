@@ -205,7 +205,7 @@ class TestPlaceholderNotSentAsRegulatoryValue:
 # =========================================================================== #
 # ② 준비한 manufacturer/importer 가 다른 입력을 전부 명시해도 복원된다.
 #
-# N7 복원이 _needs_any 블록 밖에서 수행되는지 확인.
+# 설정 유래 보고 복원이 _needs_any 블록 밖에서 수행되는지 확인.
 # =========================================================================== #
 
 
@@ -347,7 +347,7 @@ def _setup_round5_gate(monkeypatch, capturing_build=None):
 
 
 class TestN7RestoredIndependentOfNeedsAny:
-    """N7 복원이 _needs_any 와 무관하게 수행되는지 확인 (감리 ②).
+    """설정 유래 보고 복원이 _needs_any 와 무관하게 수행되는지 확인 (감리 ②).
 
     과거 결함: 호출자가 다른 입력을 전부 명시하면 _needs_any 가 거짓이 되어
     블록이 스킵되고, 복원 루프가 아예 안 돌았다.
@@ -360,7 +360,7 @@ class TestN7RestoredIndependentOfNeedsAny:
 
         핵심: image_urls, detail_html, notice, tags, options, option_groups,
         deferred_notice_fields, delivery_fee 를 전부 명시하면 _needs_any 가
-        거짓이 된다. 과거에는 이 경우 N7 복원이 스킵되었다.
+        거짓이 된다. 과거에는 이 경우 설정 유래 보고 복원이 스킵되었다.
         """
         name = "전부명시상품"
         price = 50000
@@ -401,7 +401,7 @@ class TestN7RestoredIndependentOfNeedsAny:
         sent_manufacturer = captured[0]["product"].get("manufacturer")
         assert (
             sent_manufacturer == "(주)준비제조사"
-        ), f"전부 명시해도 N7 복원이 되어야 함: got {sent_manufacturer!r}"
+        ), f"전부 명시해도 설정 유래 보고 복원이 되어야 함: got {sent_manufacturer!r}"
 
     def test_importer_restored_when_all_inputs_explicit(
         self, _round5_isolated_prepared, monkeypatch

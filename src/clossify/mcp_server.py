@@ -50,7 +50,7 @@ def _resolve_version() -> str:
 
     ``importlib.metadata.version("clossify")`` 로 빌드 메타데이터를 조회한다.
     조회에 실패하면(예: 패키지가 설치되지 않은 개발 환경) 안전한 폴백
-    빈 문자열을 반환한다 — 예외로 서버가 죽으면 안 된다(N8).
+    빈 문자열을 반환한다 — 예외로 서버가 죽으면 안 된다(서버 버전 노출).
     """
     try:
         return _pkg_version("clossify")
@@ -367,7 +367,7 @@ def _generate_config_form(
 
             t = _threading.Thread(target=_wait_and_close, args=(srv,), daemon=True)
             t.start()
-        # N26: enable_auto_open 이 켜져 있으면 폼 HTML 을 브라우저로 자동 연다.
+        # 자동 열기: enable_auto_open 이 켜져 있으면 폼 HTML 을 브라우저로 자동 연다.
         # path containment·블로킹 금지·조용한 실패 금지는 auto_open 모듈이 책임진다.
         _auto_open.maybe_open_screen(
             html_path,
@@ -399,7 +399,7 @@ def _build_preview_api_payload(resolved_payload: dict[str, Any]) -> dict[str, An
     **왜 필요한가** (감리 ②): ``register_product`` 가 로컬 승인 대기 모드에
     진입하면 미리보기 HTML 을 **조작 모드**로 다시 쓴다. 이때 ``api_payload``
     를 넘기지 않으면 ``_collect_notice_rows`` 가 빈 ``notice_filled_from_config``
-    를 받아 설정 유래 N7 필드를 전부 "미제공" 으로 그린다. 사용자가 실제로 보고
+    를 받아 설정 유래 규제 신고 필드를 전부 "미제공" 으로 그린다. 사용자가 실제로 보고
     승인하는 화면만 거짓 — 보기 전용 경로는 설정값을 표시하는데 승인 화면은 안
     하는 모순이 생긴다.
 
@@ -495,7 +495,7 @@ def _apply_approval_edits(
         "price": None,
         "tags": None,
         "notice": None,
-        # 감리 ④: top-level 상품 키로 가야 하는 N7 필드.
+        # 감리 ④: top-level 상품 키로 가야 하는 설정 유래 규제 필드.
         "delivery_fee": None,
         "origin_content": None,
         "importer": None,
@@ -579,8 +579,8 @@ def _apply_approval_edits(
 # --------------------------------------------------------------------------- #
 
 # 고시 필드 이름 → 한국어 라벨/사유 매핑.
-# N77 — 라벨 함수와 라벨 테이블 로더를 아래층 모듈 notice_labels 로 옮겼다.
-# 계층 역전 해소: requirements (아래층) 가 mcp_server (위층) 를 역참조하던
+# 계층 역전 해소 — 라벨 함수와 라벨 테이블 로더를 아래층 모듈 notice_labels 로 옮겼다.
+# requirements (아래층) 가 mcp_server (위층) 를 역참조하던
 # 함수 내부 import 를 제거하고, 양쪽 모두 notice_labels 에서 읽는다.
 # 하위 호환: ``mcp_server._notice_field_label`` (및 loader 두 개) 로도 여전히
 # 접근 가능하게 별칭을 재노출한다.
@@ -1419,7 +1419,7 @@ def _attach_template_migration_form(result: dict[str, Any]) -> None:
             src_xlsx_path=a1_path,
         )
         result["template_migration_form_path"] = html_path
-        # N26: enable_auto_open 이 켜져 있으면 이관 폼 HTML 을 브라우저로 자동 연다.
+        # 자동 열기: enable_auto_open 이 켜져 있으면 이관 폼 HTML 을 브라우저로 자동 연다.
         _auto_open.maybe_open_screen(
             html_path,
             enabled=_config_enable_auto_open(),
@@ -2404,7 +2404,7 @@ def register_product(
         # 로컬 승인 다리가 켜져 있으면 "승인 대기 모드" 로 진입한다 —
         # 사용자가 브라우저에서 [승인] 버튼을 누를 때까지 대기한다.
         # 설정이 꺼져 있으면 기존 흐름(거부 + 안내) 그대로.
-        # N26: _approval_auto_opened 는 auto_open 이 호출되지 않은 경로에서도
+        # 자동 열기: _approval_auto_opened 는 auto_open 이 호출되지 않은 경로에서도
         # 정의되어야 한다 — 아래에서 참조될 수 있으므로 미리 None 으로 초기화.
         _approval_auto_opened = None
         if not _enable_local_approval:
@@ -2490,7 +2490,7 @@ def register_product(
             #
             # 감리 ②: 임시 api_payload 를 만들어 넘긴다 — 넘기지 않으면
             # _collect_notice_rows 가 빈 notice_filled_from_config 를 받아
-            # 설정 유래 N7 필드가 "미제공" 으로 뜬다. 보기 전용 경로는
+            # 설정 유래 규제 신고 필드가 "미제공" 으로 뜬다. 보기 전용 경로는
             # 설정값을 표시하는데 **사용자가 실제로 보고 승인하는 이 화면만**
             # 거짓 값이 되는 모순이 생긴다. 기능 목적 자체가 이 화면에 있다.
             _preview_api_payload = _build_preview_api_payload(_resolved_payload)
@@ -2502,7 +2502,7 @@ def register_product(
                 approval_port=_approval_port,
                 mode="interactive",
             )
-            # N26: enable_auto_open 이 켜져 있으면 갱신된 미리보기 HTML 을 브라우저로
+            # 자동 열기: enable_auto_open 이 켜져 있으면 갱신된 미리보기 HTML 을 브라우저로
             # 자동 연다. 승인 대기 모드이므로 사용자가 이 화면에서 [승인] 을 누른다.
             _approval_result: dict[str, Any] = {}
             _auto_open.maybe_open_screen(
@@ -2780,7 +2780,7 @@ def register_product(
     # **5라운드 감리 ②**: manufacturer·importer 복원은 ``_needs_any`` 와
     # 무관하게 수행한다. MCP 등록 시그니처에 manufacturer/importer 인자가
     # 없으므로, 호출자가 다른 입력을 전부 명시하면(배송비 포함)
-    # ``_needs_any`` 가 거짓이 되어 블록이 스킵되고, prepared 의 N7 값이
+    # ``_needs_any`` 가 거짓이 되어 블록이 스킵되고, prepared 의 설정 유래 규제값이
     # 복원되지 않는다 — 준비한 신고값이 조용히 설정 기본값·빈 값으로
     # 대체된다. 복원을 ``_needs_any`` 블록 밖으로 뺀다.
     # ------------------------------------------------------------------ #
@@ -2790,7 +2790,7 @@ def register_product(
             if isinstance(_resolved_payload.get("product"), dict)
             else {}
         )
-        # manufacturer·importer: prepared 의 top-level N7 규제 신고값 복원.
+        # manufacturer·importer: prepared 의 top-level 설정 유래 규제 신고값 복원.
         # **감리 ①** (4라운드): prepare_listing 이 저장한 명시값이 복원되지 않으면
         # 화면에서 승인한 값이 버려지고 config 폴백값(또는 빈 문자열)이 나간다.
         # 승인 편집이 있으면 _approval_top_level_edits 가 우선한다(명시 입력 우선).
@@ -3814,7 +3814,7 @@ def _infer_template_notice_type(product: dict[str, Any]) -> str:
 
 
 def _build_config_flags() -> dict[str, Any] | None:
-    """config 에서 원산지·A/S 존재 여부만 판정해 플래그를 만든다 (N76).
+    """config 에서 원산지·A/S 존재 여부만 판정해 플래그를 만든다 (컴플라이언스).
 
     **config 값을 반환하지 않는다** — 존재 여부(bool)만.
 
@@ -3920,7 +3920,7 @@ def _safe_diagnose(product: dict[str, Any] | None) -> dict[str, Any] | None:
     감싸서 실패하면 ``None`` 을 반환하고 원래 ``error`` 를 그대로 반환하게 둔다
     (진단이 본체를 죽이지 않는다).
 
-    config 에서 원산지·A/S 존재 플래그를 만들어 넘긴다(N76). config 읽기가
+    config 에서 원산지·A/S 존재 플래그를 만들어 넘긴다(컴플라이언스). config 읽기가
     실패하면 플래그는 ``None`` 이고, diagnose 는 "모름"으로 다룬다.
     """
     try:
@@ -4117,7 +4117,7 @@ def prepare_listing(
                 "error": _sanitize_text(str(exc)),
             }
 
-    # N26: enable_auto_open 이 켜져 있으면 미리보기 HTML 을 브라우저로 자동 연다.
+    # 자동 열기: enable_auto_open 이 켜져 있으면 미리보기 HTML 을 브라우저로 자동 연다.
     _result = {
         "ok": True,
         "product_key": payload.get("product_key"),
@@ -4160,7 +4160,7 @@ def submit_reviews(
       - 제출 가능 agent 는 ``{"image","copy"}`` 로 고정. ``compliance`` 제출은
         ``ValueError`` (결정론 검사를 클라이언트가 뒤집을 수 없다).
 
-    템플릿 저장 (N15 — 미리보기에서 "이 구성을 템플릿으로"):
+    템플릿 저장 (미리보기에서 "이 구성을 템플릿으로"):
         - ``save_prepared_as_template``: 빈 문자열이 아닌 이름을 주면, **이미
           준비된 payload** 를 재준비 없이 템플릿으로 저장한다. 네트워크 호출
           0회 — 로컬 파일만 읽는다(이미지 재업로드 금지). 상품명·가격·재고·
@@ -4228,7 +4228,7 @@ def submit_reviews(
         allowed = False
         _prepared = None
 
-    # --- 템플릿 저장 (N15: prepared → template, 재준비 없이) ---
+    # --- 템플릿 저장 (prepared → template, 재준비 없이) ---
     # 미리보기를 본 뒤 "이 구성을 템플릿으로" 저장하는 경로다.
     # **네트워크 호출 0회** — 로컬 파일(prepared payload)만 읽는다.
     # ``transform_prepared_to_template_input`` 이 완전성을 계산하고,
@@ -4307,7 +4307,7 @@ def submit_reviews(
 
 
 # ---------------------------------------------------------------------------
-# N27+N64: manage_products — 등록 후 관리 (목록/중지/재개/검수).
+# manage_products — 등록 후 관리 (목록/중지/재개/검수).
 #
 # 노선: **조작은 브라우저 창, 확인은 패널.** 이 도구는 등록된 상품을 **읽고
 # 상태를 바꾸는** 유일한 통로다. 7개 도구가 "등록" 흐름을 담당했다면, 이 8번째

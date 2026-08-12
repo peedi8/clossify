@@ -2,14 +2,14 @@
 # SPDX-License-Identifier: LicenseRef-SustainableUse-1.0
 # Providing this software to others is permitted only free of charge and for
 # non-commercial purposes. See LICENSE.md.
-"""N1 — 배송비 config 폴백 + N7 — 설정 유래 보고 확장.
+"""배송비 config 폴백 + 설정 유래 보고 확장.
 
-N1:
+배송비 config 폴백:
   - 배송비(baseFee) 결정: ``p.delivery_fee``(명시) → ``config.delivery_fee``
     (snake/camel 모두) → 기존 기본값 3000.
   - 상거래 조건이므로 fail-closed 로 만들지 않는다 — 다만 어디서 왔는지 보고.
 
-N7:
+설정 유래 보고:
   - ``notice_filled_from_config`` 에 공통 5필드 외 아래도 포함:
     ``origin_content``·``importer``·``manufacturer``·``delivery_fee``.
   - **상품 입력에 없고 config 에서만 채워졌을 때** 보고에 등장.
@@ -41,7 +41,7 @@ from clossify import naver_client
 
 
 def _make_product(extra=None):
-    """테스트용 상품 dict. 최소한의 필드만. N1/N7 필드는 extra 로 주입."""
+    """테스트용 상품 dict. 최소한의 필드만. config 폴백/보고 필드는 extra 로 주입."""
     p = {
         "name": "테스트상품",
         "categoryId": "50000000",
@@ -77,7 +77,7 @@ def _filled_from_config(payload):
 
 
 # =========================================================================== #
-# N1 — 배송비 config 폴백.
+# 배송비 config 폴백.
 # =========================================================================== #
 
 
@@ -121,7 +121,7 @@ class TestDeliveryFeeConfigFallback:
 
 
 # =========================================================================== #
-# N1 + N7 — delivery_fee 보고.
+# 배송비 config 폴백 + 설정 유래 보고 — delivery_fee 보고.
 # =========================================================================== #
 
 
@@ -166,7 +166,7 @@ class TestDeliveryFeeReporting:
 
 
 # =========================================================================== #
-# N7 — origin_content·importer·manufacturer 보고.
+# 설정 유래 보고 — origin_content·importer·manufacturer 보고.
 # =========================================================================== #
 
 
@@ -263,7 +263,7 @@ class TestPerProductFieldsReporting:
 
 
 # =========================================================================== #
-# N7 — 보고명 확인: origin_content (countryOfOrigin 아님).
+# 설정 유래 보고 — 보고명 확인: origin_content (countryOfOrigin 아님).
 # =========================================================================== #
 
 
@@ -288,7 +288,7 @@ class TestReportingFieldName:
 
 
 # =========================================================================== #
-# N7 — 통합: 모든 N7 필드가 동시에 config 유래일 때.
+# 설정 유래 보고 — 통합: 모든 보고 필드가 동시에 config 유래일 때.
 # =========================================================================== #
 
 
@@ -296,7 +296,7 @@ class TestAllN7FieldsReportedTogether:
     """origin_content·importer·manufacturer·delivery_fee 모두 config 유래일 때."""
 
     def test_all_n7_fields_reported(self):
-        """4개 N7 필드가 모두 config 유래이면 4개 모두 보고에 등장."""
+        """4개 설정 유래 필드가 모두 config 유래이면 4개 모두 보고에 등장."""
         p = {
             "name": "테스트상품",
             "categoryId": "50000000",
@@ -317,7 +317,7 @@ class TestAllN7FieldsReportedTogether:
             assert field in filled, f"{field} 가 config 유래인데 보고에 없음: {filled!r}"
 
     def test_base_fee_uses_config_value(self):
-        """모든 N7 필드가 config 유래일 때 baseFee 도 config 값."""
+        """모든 설정 유래 필드가 config 유래일 때 baseFee 도 config 값."""
         p = {
             "name": "테스트상품",
             "categoryId": "50000000",

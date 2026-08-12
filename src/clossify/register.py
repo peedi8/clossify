@@ -1087,7 +1087,7 @@ def inject_prepared_qa(d):
 
 
 # ---------------------------------------------------------------------------
-# 태그 추천·제한 검사 (N63).
+# 태그 추천·제한 검사 (네이버 태그 API 연동).
 #
 # prepare_listing 의 태그 조립이 ①상품명 기반 키워드로 추천 조회 →
 # ②후보를 제한 검사 → ③restricted:false 만 태그로 쓴다. 등록 시점의 사후
@@ -1354,7 +1354,7 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None, recommend_fn=None, r
         generate_fn: ``image_gen.generate`` 대체(테스트 주입용).
         recommend_fn: ``naver_client.recommend_tags`` 대체(테스트 주입용).
             None 이면 실제 ``naver_client.recommend_tags`` 를 쓴다(실호출 —
-            N60 컨텍스트에서 테스트는 반드시 주입해야 한다).
+            테스트 외부 네트워크 차단 컨텍스트에서 테스트는 반드시 주입해야 한다).
         restricted_fn: ``naver_client.restricted_tags`` 대체(테스트 주입용).
             None 이면 실제 ``naver_client.restricted_tags`` 를 쓴다.
 
@@ -1374,7 +1374,7 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None, recommend_fn=None, r
             포함한다 (``IMAGE_GENERATION_PRICE_POLICY.md`` 단위 규약 준수).
           - ``tags_meta``: 태그 추천·제한 검사 결과. ``final_tags``/
             ``user_tags``/``recommended_tags``/``restricted``/``recommend_lookup``/
-            ``restricted_lookup``/``error`` 키를 담는다(N63 — ``_resolve_tags``
+            ``restricted_lookup``/``error`` 키를 담는다(네이버 태그 API 연동 — ``_resolve_tags``
             참조). 추천·제한 검사를 통과한 최종 태그가 ``product.tags`` 에 들어간다.
           - ``version``: ``common.PREPARED_PAYLOAD_VERSION``.
 
@@ -1555,7 +1555,7 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None, recommend_fn=None, r
         # version 불일치 등 — 기존 것을 무시하고 새로 쓴다(스키마 변경 시).
         overwrite_warning = "기존 prepared payload 의 version 이 불일치한다. 덮어쓴다(스키마 변경)."
 
-    # --- 3.5. 태그 추천·제한 검사 (N63) ---
+    # --- 3.5. 태그 추천·제한 검사 (네이버 태그 API 연동) ---
     # prepare_listing 본체가 _resolve_tags 를 호출해 최종 태그를 산출한다.
     # 흐름: ①상품명으로 추천 조회 → ②후보+사용자 태그를 제한 검사 →
     # ③restricted:false 인 추천 태그로 남은 슬롯 채움. 사용자 태그는 항상

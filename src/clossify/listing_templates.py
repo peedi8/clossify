@@ -783,7 +783,7 @@ def transform_product_to_template_input(
             if _has_text(claim.get("exchangeDeliveryFee")):
                 our_product["exchange_delivery_fee"] = claim.get("exchangeDeliveryFee")
 
-    # 상품속성(productAttributes) 편승 — 응답에 있으면 그대로 보존(N58 슬라이스1).
+    # 상품속성(productAttributes) 편승 — 응답에 있으면 그대로 보존(상품속성 슬라이스1).
     # 응답에 없으면 조용히 통과(지어내지 않음). 상품군 고정 성격의 속성을
     # 템플릿에 저장하는 것은 원장 판단이나, 그 선별은 이 티켓 밖이다 —
     # 본 티켓은 **읽어서 그대로 보존**까지만.
@@ -819,7 +819,7 @@ def transform_product_to_template_input(
 
 
 # ---------------------------------------------------------------------------
-# prepared payload → 템플릿 입력 변환 (N15).
+# prepared payload → 템플릿 입력 변환 (미리보기에서 "이 구성을 템플릿으로").
 #
 # prepared payload 의 ``product`` 블록은 **이미 우리 입력 모양**이다 —
 # ``notice``, ``as_tel``, ``origin_code``, ``manufacturer``, ``importer`` 등
@@ -1027,7 +1027,7 @@ def save_template(
     saved_sections = [k for k, v in fields.items() if isinstance(v, dict) and v]
 
     # 미루기 선언(deferred_notice_fields) — 상품군이 같으면 미루는 항목도 대개
-    # 같다. 템플릿에 저장해 두 번째 상품부터 왕복을 없앤다(N61).
+    # 같다. 템플릿에 저장해 두 번째 상품부터 왕복을 없앤다(미루기 선언 저장).
     #
     # **정제된 목록만 저장한다** — mcp_server._validate_deferred_notice_fields 와
     # 동일한 원산지/allowlist/타입 검증을 거친 결과를 담는다(단일 진실 공급원
@@ -1375,7 +1375,7 @@ def apply_template(
         skipped=skipped_existing,
     )
 
-    # 미루기 선언(deferred_notice_fields) — 템플릿에서 채운다(N61).
+    # 미루기 선언(deferred_notice_fields) — 템플릿에서 채운다(미루기 선언 적용).
     #
     # **입력 우선 원칙** — 상품 입력에 ``deferred_notice_fields`` 키가 있으면
     # *입력이 이긴다*(합치지 않는다 — 명시가 정본). 템플릿의 선언은 무시된다.

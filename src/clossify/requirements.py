@@ -42,7 +42,7 @@ def _candidates_from_title(title_ko: str) -> tuple[list[dict[str, Any]], bool]:
       - 강한 단일 후보인 경우에도 해당 카테고리는 상품명에서 유추한 후보일 뿐이다.
         ``needs_category_choice = True`` 로 두고 사용자가 확정하게 한다.
         확정 경로(str 반환)는 분류기가 점수를 주지 않으므로 ``score`` 를
-        ``None`` 으로 둔다(N78). 0 을 지어내지 않는다.
+        ``None`` 으로 둔다(분류기 점수 미제공 경로). 0 을 지어내지 않는다.
       - LLM 위임(ambiguous) 인 경우 → input.candidates **전체**(자르지 않음).
         ``needs_category_choice = True`` (호출자가 사용자에게 골라야 함).
       - 후보 없음 → 빈 리스트.
@@ -61,7 +61,7 @@ def _candidates_from_title(title_ko: str) -> tuple[list[dict[str, Any]], bool]:
         return [], False
     if isinstance(result, str):
         # 강한 단일 후보 확정 — category_path 로 경로를 가져온다.
-        # N78: 이 경로는 분류기가 점수를 주지 않으므로 score 에 None 을 넣는다.
+        # 분류기 점수 미제공 경로 — score 에 None 을 넣는다.
         # 0 을 지어내면 소비처가 "0점" 으로 오해한다.
         cat_id = result
         try:
@@ -278,7 +278,7 @@ def _fields_with_labels(
     """필드명 목록을 ``[{"field": str, "label": str}, ...]`` 로 바꾼다.
 
     라벨은 ``notice_labels._notice_field_label`` 을 재사용한다 (중복 구현 금지).
-    N77 — 계층 역전 해소: ``notice_labels`` (아래층) 에서 모듈 최상위 import 로
+    계층 역전 해소: ``notice_labels`` (아래층) 에서 모듈 최상위 import 로
     읽는다. 이전의 ``mcp_server`` 역참조(함수 내부 import) 는 제거했다.
     """
     out: list[dict[str, str]] = []
@@ -700,7 +700,7 @@ def _build_compliance_block(
     config_flags: dict[str, Any] | None,
     all_candidates: list[dict[str, Any]] | None,
 ) -> dict[str, Any]:
-    """KC·원산지·A/S 컴플라이언스 정보를 만든다 (N76).
+    """KC·원산지·A/S 컴플라이언스 정보를 만든다.
 
     **순수 함수** — config 값을 읽지 않고 존재 여부(bool)만 받는다.
     법적 신고값을 지어내지 않는다.
@@ -726,7 +726,7 @@ def _build_compliance_block(
     Returns:
         ``{"kc": {...}, "origin": {...}, "after_service": {...}}`` dict.
 
-    N76 리뷰 수정 (F1~F5):
+    콤플라이언스 리뷰 수정 (F1~F5):
 
     - **F1**: categoryId 가 로컬 메타에 없으면 ``requires_kc=False`` 라도
       ``not_required`` 로 단정하지 않고 ``unknown`` 으로 다룬다.
@@ -905,7 +905,7 @@ def _build_compliance_block(
 
 
 def _compliance_missing_items(compliance: dict[str, Any]) -> list[dict[str, str]]:
-    """컴플라이언스 블록에서 missing 에 넣을 항목을 만든다 (N76 보수 규칙).
+    """컴플라이언스 블록에서 missing 에 넣을 항목을 만든다 (보수 규칙).
 
     원산지(R2): ``code_provided`` 와 ``content_provided`` 를 **별도로** 판정한다.
     각 성분에 대해 (상품에 없음) **and** (해당 성분 configured==False, 명시적) 일
@@ -1069,7 +1069,7 @@ def diagnose(
     # --- category 진단 ---
     name = str(product.get("name") or product.get("title_ko") or "").strip()
     all_candidates: list[dict[str, Any]] | None = None
-    # N79 — 최고점 동점자와 그 고시타입을 한 번만 계산해 재사용.
+    # 최고점 동점자와 그 고시타입을 한 번만 계산해 재사용.
     # 아래 category_block 조립과 notice_required_fields 산출 양쪽에서 쓴다.
     top_tied: list[dict[str, Any]] = []
     top_notice_types: list[str] = []
@@ -1098,7 +1098,7 @@ def diagnose(
                 "notice_types_seen": [],
             }
         else:
-            # N79 — top_tied/top_notice_types 를 한 번만 계산한다.
+            # top_tied/top_notice_types 를 한 번만 계산한다.
             # 이 결과는 notice_required_fields 산출에서도 그대로 재사용된다.
             max_score = max(c.get("score", 0) for c in all_candidates)
             top_tied = [c for c in all_candidates if c.get("score", 0) == max_score]
@@ -1168,7 +1168,7 @@ def diagnose(
     else:
         # F1: 상품명 분류 경로 — **최고점 동점자 전부** 의 고시타입을 쓴다.
         # (전체 후보가 아니다. F1 본문: "판정에는 동점자 전부를 쓴다.")
-        # N79 — 위 category_block 조립에서 이미 계산한 top_tied/top_notice_types
+        # 위 category_block 조립에서 이미 계산한 top_tied/top_notice_types
         # 를 재사용한다. 같은 all_candidates 에서 같은 max_score 로 고른 같은
         # 리스트이므로 다시 계산할 필요가 없다.
         candidates_for_fields = top_tied
@@ -1182,7 +1182,7 @@ def diagnose(
         is_explicit_confirmed=(explicit_notice_type is not None or cid_notice_type is not None),
     )
 
-    # --- compliance (N76): KC · 원산지 · A/S ---
+    # --- compliance: KC · 원산지 · A/S ---
     compliance = _build_compliance_block(product, category_block, config_flags, all_candidates)
     missing.extend(_compliance_missing_items(compliance))
 

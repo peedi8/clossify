@@ -137,7 +137,7 @@ class TestLabeledFieldReturnsKorean:
     def test_labeled_field_returns_korean_label(self):
         """material 필드 → ('소재', ...) 처럼 한국어 라벨 반환."""
         # 캐시를 초기화해 새 로딩을 보장.
-        # N77 — 캐시 상태는 notice_labels 모듈에 있다(단일 진실).
+        # 캐시 상태는 notice_labels 모듈에 있다(단일 진실 — 계층 역전 해소).
         notice_labels._notice_labels_cache = None
         label, hint = mcp_server._notice_field_label("material")
         assert label == "소재", f"material 라벨이 '소재'가 아님: {label!r}"
@@ -220,7 +220,7 @@ class TestLoadingCached:
 
     def test_second_call_does_not_read_disk(self):
         """두 번째 호출에서 open() 이 호출되지 않는다."""
-        # 캐시 초기화. N77 — 캐시 상태는 notice_labels 모듈에 있다.
+        # 캐시 초기화. 캐시 상태는 notice_labels 모듈에 있다(계층 역전 해소).
         notice_labels._notice_labels_cache = None
         # 첫 호출 — 정상 로딩.
         notice_labels._load_notice_field_labels()

@@ -21,7 +21,7 @@
    하지 않는다 ("임시 상품 같은 이름" 으로 추측 금지).
 2. **즉시 판매중지** — 찾는 즉시. 추출보다 먼저 (노출 창 최소화).
 3. **추출·템플릿 저장** — 행마다 ``get_product`` → ``save_template``
-   (N48 경로 재사용: ``get_product`` 의 ``save_as_template`` 매개변수).
+   (경로 재사용: ``get_product`` 의 ``save_as_template`` 매개변수).
 4. **삭제** — ②③ 이 끝난 것만.
 5. **보고** — ``삭제 N/M`` + 남은 것 목록 + "더 있을 수 있음".
 
@@ -442,7 +442,7 @@ def _extract_and_save(
     template_name: str,
     get_product_fn: Any,
 ) -> tuple[bool, str]:
-    """get_product(save_as_template=...) 경로로 템플릿 추출·저장 (N48 재사용).
+    """get_product(save_as_template=...) 경로로 템플릿 추출·저장 (경로 재사용).
 
     본 함수는 ``mcp_server.get_product`` 를 호출한다 — 이것은 MCP 도구 함수지만
     **새 도구를 등록하는 것이 아니라 기존 함수를 파이썬에서 직접 호출**하는 것이다.
@@ -747,7 +747,7 @@ def harvest_run_from_ledger(
 # **예외 방벽 (이 모듈의 핵심 계약)**:
 # 핸들러 바깥으로 예외가 번지면 ``http.server`` 는 응답을 쓰지 않고 연결을
 # 끊는다 → 사용자는 브라우저에 "연결이 재설정되었습니다" 만 보고 무슨 일이
-# 일어났는지 알 수 없다. 이것은 **거짓 성공(N28)** · **죽은 UI(D39)** 와 같은
+# 일어났는지 알 수 없다. 이것은 **거짓 성공** · **죽은 UI(D39)** 와 같은
 # 계열의 결함이다. 본 서버는:
 #   (1) ``do_POST``/``do_GET``/``do_OPTIONS`` 전체를 try/except 로 감싸,
 #       어떤 예외라도 5xx + 사람이 읽을 HTML 을 응답한다.
@@ -896,7 +896,7 @@ class _HarvestFormHandler(http.server.BaseHTTPRequestHandler):
 
     **예외 방벽**: 각 ``do_*`` 메서드 전체를 try/except 이 감싼다. 예외가
     핸들러 바깥으로 번지면 ``http.server`` 는 응답을 쓰지 않고 연결을 끊는다.
-    이것은 "거짓 성공" 결함(N28)의 한 계열이다. 모든 예외는
+    이것은 "거짓 성공" 결함의 한 계열이다. 모든 예외는
     ``_respond_barrier_error`` 로 5xx + 사람이 읽을 HTML 로 바뀐다.
     """
 

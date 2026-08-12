@@ -4,7 +4,7 @@
 # non-commercial purposes. See LICENSE.md.
 """SEO-title 금지표현 정규식(``SEO_TITLE_BANNED_RE``) 토큰 경계 수리 검증.
 
-N86/T3 수리 — 항목별 예외(lookahead 좁힘)는 두더지잡기였다. ``고급스러운``
+금지표현 패턴 수리 — 항목별 예외(lookahead 좁힘)는 두더지잡기였다. ``고급스러운``
 → ``스러운``, ``인기가요`` → ``가요`` 처럼 판매자 상품명이 훼손되었다.
 근본 원인: 삭제형(substring removal) 정규식이 한국어 조사·접미사 붙음을
 고려하지 않았다.

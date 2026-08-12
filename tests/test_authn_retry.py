@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: LicenseRef-SustainableUse-1.0
 # Providing this software to others is permitted only free of charge and for
 # non-commercial purposes. See LICENSE.md.
-"""토큰 만료(GW.AUTHN) 재시도 검증 (N84).
+"""토큰 만료(GW.AUTHN) 재시도 검증.
 
 네이버 문서 계약: API 응답이 **401** 이고 응답 본문의 ``code`` 가
 ``"GW.AUTHN"`` 이면 토큰이 만료되었을 가능성이 높다. 이 경우 토큰을

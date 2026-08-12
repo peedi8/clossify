@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: LicenseRef-SustainableUse-1.0
 # Providing this software to others is permitted only free of charge and for
 # non-commercial purposes. See LICENSE.md.
-"""N15 — 미리보기에서 '이 구성을 템플릿으로' (GUI 관문).
+"""미리보기에서 '이 구성을 템플릿으로' (GUI 관문).
 
 본 파일은 "미리보기를 본 뒤 **재준비 없이** prepared payload 를 템플릿으로
 저장하는 경로" 의 과업 (a)-(h) 를 검증한다. 핵심 위험:
