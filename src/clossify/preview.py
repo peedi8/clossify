@@ -122,6 +122,9 @@ def _collect_notice_rows(
       - ``"사용자 입력"`` — 상품 입력에 명시된 값.
       - ``"설정 기본값"`` — config 의 smartstore_notice_defaults 에서 채워진 값
         (``notice_filled_from_config`` 목록에 있는 필드).
+      - ``"사용자 입력 (설정에도 있음)"`` — 고시 본문에 사용자가 넣은 값과
+        config 유래 값이 같은 필드에 겹칠 때, 중첩 고시값과 설정 유래를
+        구분해 표시한다 (감리 ⑧ — 같은 출처 표기로 그려지는 것을 고친다).
       - ``"미제공"`` — 값이 비어 있거나 사용자·config 어디에도 없는 필드.
 
     **N7 필드의 top-level 명시값을 먼저 본다** (회귀 수정).
@@ -223,7 +226,12 @@ def _collect_notice_rows(
                 _add(field, top_value, "사용자 입력")
                 continue
         if field in user_body:
-            _add(field, user_body[field], "사용자 입력")
+            # 감리 ⑧ (4라운드): 고시 본문에 사용자가 넣은 값과 config 유래 값이
+            # 같은 필드에 겹칠 때 출처를 갈라 표시한다. 과거에는 무조건
+            # "사용자 입력" 으로 그려서, config 도 같은 필드에 값을 가지고 있다는
+            # 사실이 묻혔다 — 중첩 고시값과 설정 유래를 구분 안 하는 결함.
+            _src = "사용자 입력 (설정에도 있음)" if field in cfg_filled else "사용자 입력"
+            _add(field, user_body[field], _src)
         elif field in cfg_filled:
             # config 에서 값을 읽는다. 별칭이 있으면 별칭 키도 확인.
             cfg_keys = _cfg_key_aliases.get(field, (field,))
@@ -231,6 +239,11 @@ def _collect_notice_rows(
             for ck in cfg_keys:
                 cv = cfg_notice.get(ck)
                 if cv is not None and str(cv).strip():
+                    # 감리 ⑦ (4라운드): 자리표시자(REPLACE_WITH_...)를 실질값으로
+                    # 본다 — 해석기(_resolve_delivery_fee_with_slot 등)가 같은
+                    # 판정으로 건너뛴다. 판정 두 벌 금지 (2라운드 교훈).
+                    if "REPLACE_WITH_" in str(cv):
+                        continue
                     cfg_value = cv
                     break
             if cfg_value is not None:
@@ -287,6 +300,8 @@ body{margin:0;padding:24px;background:#f5f5f5;font-family:-apple-system,
   text-align:left;vertical-align:top}
 .notice-table th{background:#f5f5f5;font-weight:600;width:30%}
 .source-user{color:#137333;font-size:11px}
+.source-user-config-overlap{color:#7a5900;font-size:11px;font-weight:600;
+  background:#fff8e1;padding:1px 4px;border-radius:3px}
 .source-config{color:#a50e0e;font-size:11px;font-weight:600}
 .source-missing{color:#a50e0e;background:#fff3cd;font-weight:600}
 .missing-row td{background:#fff8e1}
@@ -441,6 +456,11 @@ def _render_notice_table(rows: list[dict[str, str]]) -> str:
         )
         if source == "사용자 입력":
             parts.append('<td><span class="source-user">사용자 입력</span></td>')
+        elif source == "사용자 입력 (설정에도 있음)":
+            parts.append(
+                '<td><span class="source-user-config-overlap">'
+                "사용자 입력 (설정에도 있음)</span></td>"
+            )
         elif source == "설정 기본값":
             parts.append('<td><span class="source-config">설정 기본값</span></td>')
         else:
@@ -555,6 +575,11 @@ def _render_notice_table_readonly(rows: list[dict[str, str]]) -> str:
             parts.append('<td><em style="color:#999">(비어 있음)</em></td>')
         if source == "사용자 입력":
             parts.append('<td><span class="source-user">사용자 입력</span></td>')
+        elif source == "사용자 입력 (설정에도 있음)":
+            parts.append(
+                '<td><span class="source-user-config-overlap">'
+                "사용자 입력 (설정에도 있음)</span></td>"
+            )
         elif source == "설정 기본값":
             parts.append('<td><span class="source-config">설정 기본값</span></td>')
         else:
@@ -1013,7 +1038,9 @@ def render_preview_html(
         '<p class="preview-meta"><span class="source-config">설정 기본값</span>'
         " 표시가 있는 필드는 판매자가 입력하지 않았지만 config 의 "
         "smartstore_notice_defaults 에서 자동으로 채워진 값입니다. "
-        "의도한 값인지 확인하세요.</p>"
+        "의도한 값인지 확인하세요. "
+        '<span class="source-user-config-overlap">사용자 입력 (설정에도 있음)</span>'
+        " 은 고시 본문 값과 설정 값이 겹치는 필드입니다.</p>"
     )
     parts.append("</div>")
 

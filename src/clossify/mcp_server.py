@@ -423,6 +423,38 @@ def _build_preview_api_payload(resolved_payload: dict[str, Any]) -> dict[str, An
     try:
         defaults = naver_client._notice_defaults(product)
         notice = naver_client._product_info_notice(product, defaults)
+        # 감리 ⑥ (4라운드): 명시 배송비를 병합한다. ``_notice_defaults`` 는
+        # ``delivery_fee`` 를 결과에 넣지 않는다 (``build_payload`` 안에서
+        # ``_resolve_delivery_fee`` 가 따로 부르기 때문). 미리보기는 ``build_payload``
+        # 를 부르지 않으므로, 여기서 명시값을 읽어 출처 보고용 product dict 에
+        # 넣지 않으면 화면에 "설정값" 만 뜨고 "사용자가 입력한 값" 이 빠진다 —
+        # ②③과 같은 "화면과 전송값 불일치" 결함.
+        #
+        # **수정 방식**: product 에 delivery_fee 가 없으면 config 에서 해석한다.
+        # slot 이 "product" 면 (사용자 명시값) product dict 에 넣어
+        # _collect_notice_rows 가 "사용자 입력" 으로 그리게 한다.
+        # slot 이 "config" 면 product dict 에 넣지 않고 notice_filled_from_config
+        # 목록에 추가해 "설정 기본값" 으로 그리게 한다 (둘을 섞으면 "사용자 입력"
+        # 으로 잘못 표시됨 — _collect_notice_rows 가 top-level 키를 먼저 보므로).
+        #
+        # **주의**: _notice_defaults → _notice_common_filled_from_config 가 이미
+        # delivery_fee 를 notice_filled_from_config 에 추가한다 (slot 이 "config"
+        # 일 때). 따라서 아래 elif 분기는 중복이다 — 단, _notice_defaults 가 이
+        # 동작을 바꾸면 회귀를 잡는 안전망 역할을 한다. slot 이 "product" 인
+        # 분기는 _resolve_delivery_fee_with_slot 가 p.delivery_fee 를 먼저 보므로
+        # 사실상 발동하지 않는다 (if 조건이 "delivery_fee" not in product 이기
+        # 때문). 이 코드는 방어적으로 유지한다.
+        if "delivery_fee" not in product:
+            _cfg_notice = naver_client._notice_config()
+            _fee, _slot = naver_client._resolve_delivery_fee_with_slot(product, _cfg_notice)
+            if _slot == "product":
+                product["delivery_fee"] = _fee
+            elif _slot == "config" and "delivery_fee" not in (
+                defaults.get("notice_filled_from_config") or []
+            ):
+                _nfc = list(defaults.get("notice_filled_from_config") or [])
+                _nfc.append("delivery_fee")
+                defaults["notice_filled_from_config"] = _nfc
         api_payload: dict[str, Any] = {
             "originProduct": {
                 "detailAttribute": {
@@ -468,6 +500,11 @@ def _apply_approval_edits(
         "origin_content": None,
         "importer": None,
         "manufacturer": None,
+        # 감리 ③ (4라운드): 파싱 실패로 **버려진** 편집 키를 추적한다.
+        # 응답에 ``approval_edits_rejected`` 로 노출되어 호출자가 "편집 안 함" 과
+        # "편집했는데 버려짐" 을 구분할 수 있게 한다. 값은 바꾸지 않는다 —
+        # 버려졌다는 **사실을 보이게** 하는 것이 본 수정의 목적이다.
+        "_rejected": [],
     }
     # 미리보기 고시 표에서 top-level 상품 키로 가야 하는 필드들.
     # 해석기(naver_client._notice_defaults)가 p.<key> 에서 읽는 후보들.
@@ -487,13 +524,16 @@ def _apply_approval_edits(
         if f == "상품명":
             if v:
                 result["name"] = v
+            else:
+                # 빈 값은 "편집했는데 파싱 실패(빈)" 로 본다.
+                result["_rejected"].append(f)
         elif f == "판매가":
-            # 쉼표 제거 후 int 변환. 실패하면 무시(조용한 치환 금지).
+            # 쉼표 제거 후 int 변환. 실패하면 거부 목록에 추가 (조용한 폐기 금지).
             cleaned = v.replace(",", "").replace("원", "").strip()
             try:
                 result["price"] = int(cleaned)
             except ValueError:
-                pass
+                result["_rejected"].append(f)
         elif f == "태그":
             # 쉼표 분리 → 리스트. 빈 항목 제거.
             parts = [p.strip() for p in v.split(",") if p.strip()]
@@ -507,12 +547,12 @@ def _apply_approval_edits(
             if notice_field in _TOP_LEVEL_NOTICE_FIELDS:
                 top_key = _TOP_LEVEL_NOTICE_FIELDS[notice_field]
                 if top_key == "delivery_fee":
-                    # 배송비는 숫자로 변환. 실패하면 무시(조용한 치환 금지).
+                    # 배송비는 숫자로 변환. 실패하면 거부 목록에 추가.
                     cleaned = v.replace(",", "").replace("원", "").strip()
                     try:
                         result["delivery_fee"] = int(cleaned)
                     except ValueError:
-                        pass
+                        result["_rejected"].append(f)
                 elif v:
                     result[top_key] = v
             else:
@@ -2351,6 +2391,8 @@ def register_product(
     _approval_edits_applied: dict[str, Any] = {}
     # 감리 ④: top-level 상품 키 편집 초기값. 승인 과정이 아니면 빈 dict.
     _approval_top_level_edits: dict[str, Any] = {}
+    # 감리 ③ (4라운드): 파싱 실패로 버려진 편집 키 초기값.
+    _approval_edits_rejected: list[str] = []
     if _require_preview and not preview_confirmed:
         # 로컬 승인 다리가 켜져 있으면 "승인 대기 모드" 로 진입한다 —
         # 사용자가 브라우저에서 [승인] 버튼을 누를 때까지 대기한다.
@@ -2544,10 +2586,15 @@ def register_product(
         # NOTE: _approval_edits_applied 은 함수 위쪽에서 미리 {} 로 초기화된다.
         # 여기서는 승인 과정의 편집만 추적하도록 다시 비운다.
         _approval_edits_applied = {}
+        # 감리 ③ (4라운드): 파싱 실패로 버려진 편집 키. 응답에 노출되어 호출자가
+        # "편집 안 함" 과 "편집했는데 버려짐" 을 구분할 수 있게 한다.
+        _approval_edits_rejected: list[str] = []
         # 감리 ④: top-level 상품 키 편집을 모았다가 product dict 구성 때 싣는다.
         _approval_top_level_edits: dict[str, Any] = {}
         if isinstance(_edits, dict) and _edits:
             _applied = _apply_approval_edits(_edits)
+            # 감리 ③: 버려진 키 추출 (빈 리스트가 아닐 때만 의미 있음).
+            _approval_edits_rejected = list(_applied.get("_rejected") or [])
             if _applied.get("name"):
                 name = _applied["name"]
                 _approval_edits_applied["name"] = name
@@ -2721,6 +2768,21 @@ def register_product(
             if _prepared_fee is not None:
                 delivery_fee = _prepared_fee
                 filled_from_prepared.append("delivery_fee")
+        # manufacturer·importer: prepared 의 top-level N7 규제 신고값 복원.
+        # **감리 ①** (4라운드): MCP 등록 시그니처에 manufacturer/importer 인자가
+        # 없으므로, prepare_listing 이 저장한 명시값이 복원되지 않으면 화면에서
+        # 승인한 값이 버려지고 config 폴백값(또는 빈 문자열)이 나간다 — 규제
+        # 신고값이 사용자가 본 것과 다르게 전송되는, 이 프로젝트가 가장 심각하게
+        # 다루는 종류의 결함. delivery_fee 와 같은 자리·같은 방식으로 복원한다.
+        # 승인 편집이 있으면 아래 _approval_top_level_edits 가 우선한다(명시 입력
+        # 우선 원칙). 복원한 값은 filled_from_prepared 에 기록한다 (조용한 복원 금지).
+        for _n7_key in ("manufacturer", "importer"):
+            _prepared_n7 = _fp_product.get(_n7_key)
+            # 빈 문자열은 "명시값 없음" 과 같다 — 복원하지 않는다 (⑤ 원칙과 동일).
+            if isinstance(_prepared_n7, str) and _prepared_n7.strip():
+                # 승인 편집이 이미 값을 넣었으면 그것이 우선 (명시 입력 우선).
+                _approval_top_level_edits.setdefault(_n7_key, _prepared_n7.strip())
+                filled_from_prepared.append(_n7_key)
 
     # ------------------------------------------------------------------ #
     # 복원 후 재검증 — prepared 가 검증을 우회하는 뒷문이 되면 안 된다.
@@ -3153,6 +3215,7 @@ def register_product(
                     "violations": _edit_gate["violations"],
                     "needs_user": _edit_gate["needs_user"],
                     "approval_edits_applied": dict(_approval_edits_applied),
+                    "approval_edits_rejected": list(_approval_edits_rejected),
                     "filled_from_prepared": filled_from_prepared,
                     "prepared_lookup": prepared_lookup,
                     "notice_filled_from_config": notice_filled,
@@ -3186,6 +3249,7 @@ def register_product(
                         "gate": "approval_edited",
                         "violations": _copy_recheck.get("violations") or [],
                         "approval_edits_applied": dict(_approval_edits_applied),
+                        "approval_edits_rejected": list(_approval_edits_rejected),
                         "filled_from_prepared": filled_from_prepared,
                         "prepared_lookup": prepared_lookup,
                         "notice_filled_from_config": notice_filled,
@@ -3250,6 +3314,7 @@ def register_product(
             # 실제 전송된 값에 적용된 판정을 기록에 남긴다.
             # 편집이 있었으면 라벨이 "full" 이 아님을 드러내고, 미검수 항목을 명시.
             "approval_edits_applied": dict(_approval_edits_applied),
+            "approval_edits_rejected": list(_approval_edits_rejected),
             "approval_edits_unreviewed": list(approval_edits_unreviewed),
             "sent_name": name,
             "error": None,
@@ -3394,6 +3459,7 @@ def register_product(
         # 실제 전송된 값과 그 값에 적용된 판정을 기록에 남긴다.
         # 편집이 있었으면 라벨이 "full" 이 아님을 드러내고, 미검수 항목을 명시.
         "approval_edits_applied": dict(_approval_edits_applied),
+        "approval_edits_rejected": list(_approval_edits_rejected),
         "approval_edits_unreviewed": list(approval_edits_unreviewed),
         "sent_name": name,
         "error": None if ok else _sanitize_text(f"API 반환 상태 {status_code}"),

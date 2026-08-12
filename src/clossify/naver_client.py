@@ -396,6 +396,22 @@ def _resolve_delivery_fee_with_slot(p, cfg_notice) -> tuple[int, str]:
         # 건너뛴 값을 보고가 "설정값" 이라고 말하면 실제(3000 기본값)와 어긋난다.
         if "REPLACE_WITH_" in text:
             continue
+        # 감리 ④ (4라운드): float 입력(예 3000.5)이 ``int()`` 로 조용히
+        # 잘리는 것을 막는다 — ``int(3000.5)`` → ``3000`` 은 폐기가 아니라
+        # 잘림이며, 원단위가 없는 한국 통화에서 소수 배송비는 입력 오류다.
+        # 단, ``3000.0`` 은 정수 ``3000`` 과 값이 같으므로 허용한다 — JSON
+        # 에서 ``3000.0`` 은 ``3000`` 의 유효한 표현이고, ``float(X.0)`` 은
+        # 정수 ``X`` 와 구별할 수 없다 (``float.is_integer()`` 로 판정).
+        # **주의**: 이 ValueError 를 아래 except (TypeError, ValueError) 가
+        # 잡아 "숫자가 아닙니다" 로 재포장하면 안 된다 — 소수 오류 메시지가
+        # "정수가 아닙니다" 에서 "숫자가 아닙니다" 로 바뀌어 진단 정보가 사라진다.
+        # 그래서 float 판정은 try 블록 밖에서 먼저 한다.
+        if isinstance(raw, float) and not raw.is_integer():
+            raise ValueError(
+                f"배송비(delivery_fee) 값이 정수가 아닙니다: {raw!r} "
+                f"(자리: {slot_label}). "
+                "소수점 단위 배송비는 원화 통화에서 유효하지 않습니다."
+            )
         try:
             return int(raw), slot_kind
         except (TypeError, ValueError) as exc:
@@ -405,6 +421,44 @@ def _resolve_delivery_fee_with_slot(p, cfg_notice) -> tuple[int, str]:
                 "입력 오류가 의도치 않은 배송비로 실제 판매 중인 상품이 될 수 있습니다."
             ) from exc
     return 3000, "default"
+
+
+def _build_delivery_fee_block(delivery_fee: int) -> dict:
+    """배송비 블록(``deliveryFee`` 객체)을 구성한다.
+
+    **감리 ②** (4라운드): 해석된 배송비가 0 이면 **무료 배송** 으로 정의하는데
+    (``_resolve_delivery_fee`` 가 숫자 0 을 유효한 명시값·무료배송으로 받음),
+    과거에는 ``baseFee: 0`` + ``deliveryFeeType: "PAID"`` 를 함께 낸다 — 배송
+    블록이 자기모순이다. 커머스 API 가 거절하거나 다르게 표현할 수 있다.
+
+    문서 근거 (네이버 커머스 API 원상품 정보 구조체 —
+    ``clossify-ops/naver-docs/`` 의
+    ``docs_commerce-api_*_schemas_*-EC_9B_90-EC_83_81-...`` 파일들):
+      > deliveryFeeType 배송비 타입 (string)
+      > 배송비 타입을 입력하지 않으면 FREE(무료)로 설정됩니다.
+      > FREE(무료), CONDITIONAL_FREE(조건부 무료), PAID(유료),
+      > UNIT_QUANTITY_PAID(수량별), RANGE_QUANTITY_PAID(구간별)
+      > Possible values: [ FREE , CONDITIONAL_FREE , PAID ,
+      >   UNIT_QUANTITY_PAID , RANGE_QUANTITY_PAID ]
+
+    즉, 무료배송은 ``deliveryFeeType: "FREE"`` 로 선언하는 것이 문서상 규약.
+    ``PAID`` + ``baseFee: 0`` 조합을 낼 근거가 문서에 없다. 따라서 배송비가 0
+    이면 ``FREE`` 타입을 내고 ``baseFee`` 는 0 으로 둔다(FREE 일 때 baseFee 의
+    의미가 문서에 정의되지 않으나 0 은 자기모순이 아님). 양수이면 ``PAID`` +
+    ``baseFee`` 를 낸다.
+    """
+    fee = int(delivery_fee)
+    if fee == 0:
+        return {
+            "deliveryFeeType": "FREE",
+            "baseFee": 0,
+            "deliveryFeePayType": "PREPAID",
+        }
+    return {
+        "deliveryFeeType": "PAID",
+        "baseFee": fee,
+        "deliveryFeePayType": "PREPAID",
+    }
 
 
 def _notice_defaults(p):
@@ -2266,11 +2320,7 @@ def build_payload(p, detail_html, images, status="SALE", deferred_notice_fields=
                 # "CJGLS" 기본값 제거.
                 "deliveryCompany": defaults["delivery_company"],
                 "deliveryBundleGroupUsable": False,
-                "deliveryFee": {
-                    "deliveryFeeType": "PAID",
-                    "baseFee": defaults["delivery_fee"],
-                    "deliveryFeePayType": "PREPAID",
-                },
+                "deliveryFee": _build_delivery_fee_block(defaults["delivery_fee"]),
                 "claimDeliveryInfo": {
                     "returnDeliveryFee": defaults["return_delivery_fee"],
                     "exchangeDeliveryFee": defaults["exchange_delivery_fee"],

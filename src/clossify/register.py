@@ -1846,10 +1846,13 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None, recommend_fn=None, r
     # 위에서 이미 원산지/allowlist 검증을 거친 ``sane_deferred`` 를 그대로 저장한다.
     # 컴플라이언스 검사에 넘긴 값과 저장하는 값이 같아야 준비 통과 → 등록 통과
     # 일관성이 성립한다. 여기서 다시 정제하면 검사에 쓴 값과 저장값이 어긋난다.
-    # delivery_fee: 키가 있을 때만 넣는다 (기본값 3000 은 _notice_defaults
+    # delivery_fee: **실질값이 있을 때만** 넣는다 (기본값 3000 은 _notice_defaults
     # 한 곳에서만 결정 — 키가 없으면 config 폴백이 발동해야 한다).
-    if "delivery_fee" in d:
-        payload["product"]["delivery_fee"] = d.get("delivery_fee")
+    # 감리 ⑤ (4라운드): 빈 값(None/""/공백)이 prepared 에 저장되면 다음 단계가
+    # "명시값 있음" 으로 오인한다 — 생략 보존 원칙(이 PR 의 핵심 원칙)과 같다.
+    _delivery_fee_raw = d.get("delivery_fee")
+    if _delivery_fee_raw is not None and str(_delivery_fee_raw).strip() != "":
+        payload["product"]["delivery_fee"] = _delivery_fee_raw
     if sane_deferred:
         payload["deferred_notice_fields"] = list(sane_deferred)
     if image_generation_meta is not None:
