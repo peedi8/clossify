@@ -227,6 +227,23 @@ class TestGetCategoryAttributes:
         assert status == 200
         assert body == fake_body
 
+    def test_uses_external_attribute_endpoint(self):
+        captured: dict = {}
+        fake_response = mock.Mock()
+        fake_response.status_code = 200
+        fake_response.json.return_value = {}
+
+        def _capture(url, **kwargs):
+            captured["url"] = url
+            return fake_response
+
+        with mock.patch.object(naver_client, "get_token", lambda: "fake-tk"):
+            with mock.patch.object(naver_client.requests, "get", side_effect=_capture):
+                with mock.patch.object(naver_client, "_json_or_text_response", return_value={}):
+                    naver_client.get_category_attributes("50002366")
+
+        assert captured["url"] == (f"{naver_client.BASE}/external/v1/product-attributes/attributes")
+
     def test_passes_category_id_as_param(self):
         """categoryId 가 쿼리 파라미터로 전달된다."""
         captured: dict = {}

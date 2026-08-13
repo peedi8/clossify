@@ -478,10 +478,10 @@ class TestInteractiveHtmlConstraints:
 
 
 # =========================================================================== #
-# (g) MCP 도구 9개 유지 — 새 도구를 만들지 않는다.
+# (g) MCP 도구 10개 유지.
 # =========================================================================== #
 class TestMcpToolCountUnchanged:
-    """submit_reviews 에 파라미터를 추가했을 뿐, 도구 수는 9개 그대로다."""
+    """현재 MCP 도구 표면은 10개다."""
 
     EXPECTED_NAMES = frozenset(
         {
@@ -494,17 +494,18 @@ class TestMcpToolCountUnchanged:
             "submit_reviews",
             "manage_products",
             "get_category_attributes",
+            "get_category_attribute_values",
         }
     )
 
-    def test_exactly_nine_tools(self):
+    def test_exactly_ten_tools(self):
         tools = mcp_server.mcp.list_tools()
         if hasattr(tools, "__await__"):
             try:
                 tools = asyncio.run(tools)
             except RuntimeError:
                 tools = asyncio.get_event_loop().run_until_complete(tools)
-        assert len(tools) == 9, f"도구 수가 9가 아님: {len(tools)}"
+        assert len(tools) == 10, f"도구 수가 10이 아님: {len(tools)}"
 
     def test_tool_names_unchanged(self):
         tools = mcp_server.mcp.list_tools()

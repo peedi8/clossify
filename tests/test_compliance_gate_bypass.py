@@ -576,12 +576,12 @@ class TestCheckConfigOrigin:
 
 
 # --------------------------------------------------------------------------- #
-# 도구 9개 등록 유지 (시그니처 변경 없음).
+# 도구 10개 등록 유지 (시그니처 변경 없음).
 # --------------------------------------------------------------------------- #
 class TestToolRegistrationPreserved:
-    """변경 후에도 9개 도구가 등록되어 있는가."""
+    """변경 후에도 10개 도구가 등록되어 있는가."""
 
-    def test_nine_tools_registered(self):
+    def test_ten_tools_registered(self):
         import asyncio
 
         tools = mcp_server.mcp.list_tools()
@@ -590,14 +590,14 @@ class TestToolRegistrationPreserved:
                 tools = asyncio.run(tools)
             except RuntimeError:
                 tools = asyncio.get_event_loop().run_until_complete(tools)
-        # 9개 도구: check_config, upload_images, register_product, get_product,
+        # 10개 도구: check_config, upload_images, register_product, get_product,
         # prepare_listing, submit_reviews, delete_product, manage_products,
-        # get_category_attributes.
+        # get_category_attributes, get_category_attribute_values.
         # manage_products 는 등록 후 관리(목록/중지/재개/검수)를 담당한다.
-        assert len(tools) == 9, f"도구가 9개여야 함: {len(tools)}"
+        assert len(tools) == 10, f"도구가 10개여야 함: {len(tools)}"
 
     def test_tool_names_unchanged(self):
-        """9개 도구 이름이 변경되지 않았는가."""
+        """10개 도구 이름이 변경되지 않았는가."""
         import asyncio
 
         tools = mcp_server.mcp.list_tools()
@@ -617,6 +617,7 @@ class TestToolRegistrationPreserved:
             "submit_reviews",
             "manage_products",
             "get_category_attributes",
+            "get_category_attribute_values",
         }
         assert names == expected, f"도구 이름 불일치: {names}"
 
