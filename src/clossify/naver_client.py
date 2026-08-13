@@ -1298,8 +1298,33 @@ def get_token():
             "type": c.get("type", "SELF"),
         },
     )
-    r.raise_for_status()
+    if not 200 <= r.status_code < 300:
+        _raise_response_error(r)
     return r.json()["access_token"]
+
+
+def _response_error_detail(response):
+    """비 2xx 응답을 기존 토큰 프로브 형식의 정화된 사유로 만든다."""
+    sc = response.status_code
+    body_text = ""
+    try:
+        if response.headers.get("content-type", "").startswith("application/json"):
+            body = response.json()
+            if isinstance(body, dict):
+                body_text = json.dumps(
+                    {key: body[key] for key in ("code", "message") if key in body},
+                    ensure_ascii=False,
+                )
+        else:
+            body_text = (response.text or "")[:1000]
+    except Exception:
+        body_text = ""
+    return common.sanitize_text(f"HTTP {sc}: {body_text}".strip())
+
+
+def _raise_response_error(response):
+    """상태 코드와 정화된 응답 본문을 가진 HTTPError 를 올린다."""
+    raise requests.HTTPError(_response_error_detail(response), response=response)
 
 
 def _probe_token_endpoint():
@@ -1342,17 +1367,8 @@ def _probe_token_endpoint():
     sc = r.status_code
     if 200 <= sc < 300:
         return {"ok": True, "status_code": sc, "detail": "정상"}
-    # 비 2xx — 응답 본문 전체를 정화해서 사유에 싣는(본문에 시크릿·경로가
-    # 섞여 있으면 가린다). 사유(상태 코드)는 detail 접두사로 남긴다.
-    body_text = ""
-    try:
-        if r.headers.get("content-type", "").startswith("application/json"):
-            body_text = json.dumps(r.json(), ensure_ascii=False)
-        else:
-            body_text = r.text or ""
-    except Exception:
-        body_text = ""
-    detail = common.sanitize_text(f"HTTP {sc}: {body_text}".strip())
+    # get_token/image upload 와 같은 형식·같은 정화 규칙을 사용한다.
+    detail = _response_error_detail(r)
     return {"ok": False, "status_code": sc, "detail": detail}
 
 
@@ -1761,7 +1777,8 @@ def upload_images(paths, tk=None):
             files=files,
             timeout=120,
         )
-        r.raise_for_status()
+        if not 200 <= r.status_code < 300:
+            _raise_response_error(r)
         return [im["url"] for im in r.json().get("images", [])]
     finally:
         for fh in opened_files:
