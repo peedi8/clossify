@@ -86,7 +86,7 @@ AS 전화번호·KC 신고값 등 고시 관련 실값도 등록 단계의 컴�
 ## 3. 클라이언트에 서버 등록
 
 이 서버는 stdio MCP 서버다. 클라이언트는 자식 프로세스로 서버를 띄우고 stdio 로
-통신한다. 두 기동 경로 모두 실제 stdio 프로토콜로 검증됐고, 둘 다 같은 도구 아홉
+통신한다. 두 기동 경로 모두 실제 stdio 프로토콜로 검증됐고, 둘 다 같은 도구 열한
 개를 노출한다:
 
 | 경로 | 커맨드 | 인자 |
@@ -151,7 +151,7 @@ AS 전화번호·KC 신고값 등 고시 관련 실값도 등록 단계의 컴�
 연결이 잡혔다면 클라이언트가 열 도구를 인식해야 한다: `check_config`,
 `upload_images`, `register_product`, `get_product`, `delete_product`,
 `prepare_listing`, `submit_reviews`, `manage_products`, `get_category_attributes`,
-`get_category_attribute_values`. 이 이름들이 보이지 않으면 서버가 뜌 경로가
+`get_category_attribute_values`, `suggest_product_attributes`. 이 이름들이 보이지 않으면 서버가 뜌 경로가
 잘못된 것이다.
 
 ## 5. 첫 등록으로 넘어가기

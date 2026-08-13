@@ -5,7 +5,7 @@
 """Clossify MCP 서버 — 네이버 스마트스토어 등록 능력을 MCP 클라이언트 LLM에 부여.
 
 이 모듈은 MCP Python SDK(v2, PyPI `mcp`)의 `MCPServer`(FastMCP 후속)를 사용해
-로컬 stdio MCP 서버를 노출한다. 서버는 10개의 도구를 제공한다:
+로컬 stdio MCP 서버를 노출한다. 서버는 11개의 도구를 제공한다:
 
 - ``check_config``: 자격증명/설정 파일 존재 및 형식 검사. 기본은 외부 API 호출
   없음. ``read_existing=True`` 면 기존 상품에서 정책값을 읽어 제안(온보딩).
@@ -20,6 +20,7 @@
   검수(수정요청) 확인. 정적 관리 패널 HTML 을 생성한다.
 - ``get_category_attributes``: 카테고리별 상품속성 목록을 조회한다.
 - ``get_category_attribute_values``: 카테고리별 상품속성값 목록을 조회한다.
+- ``suggest_product_attributes``: 상품 텍스트에서 카테고리 속성 후보를 제안한다.
 
 모든 자격증명은 프로젝트 루트의 ``.local/config.json`` 에만 존재한다
 (ADR-0002 로컬 MCP + BYO-key). 이 서버 자체는 자격증명을 수탁/저장하지 않는다.
@@ -45,6 +46,8 @@ from . import listing_templates as _templates_mod
 from . import notice_labels as _notice_labels
 from . import register as _register_mod
 from . import requirements as _requirements_mod
+from .attribute_suggestions import suggest_category_attributes
+from .text_props import desc_html_to_text
 
 
 def _resolve_version() -> str:
@@ -4083,6 +4086,255 @@ def get_category_attribute_values(category_id: str, attribute_seq: str | int) ->
         "raw_body_truncated": raw_body_truncated,
         "error": error_text,
     }
+
+
+_ATTRIBUTE_SUGGESTION_NOTE = (
+    "이 결과는 제안이며, 등록에 실으려면 register_product 의 attributes 인자로 "
+    "명시적으로 넘겨야 합니다. 이 도구는 어떤 등록 요청도 전송하지 않습니다."
+)
+
+
+def _suggest_product_attributes_response(
+    *,
+    ok: bool,
+    category_id: str,
+    status_code: int | None,
+    raw_body: Any,
+    stage: str,
+    attribute_seq: Any,
+    category_attributes_status_code: int | None,
+    category_attributes_raw_body: Any,
+    attribute_values_status_code: int | None,
+    attribute_values_raw_body: Any,
+    suggestions: list[dict[str, Any]] | None,
+    error: str | None,
+) -> dict[str, Any]:
+    """추천 조회의 성공·실패 응답을 같은 원형-보존 스키마로 만든다."""
+    return {
+        "ok": ok,
+        "category_id": category_id,
+        "status_code": status_code,
+        "raw_body": raw_body,
+        "stage": stage,
+        "attribute_seq": attribute_seq,
+        "category_attributes_status_code": category_attributes_status_code,
+        "category_attributes_raw_body": category_attributes_raw_body,
+        "attribute_values_status_code": attribute_values_status_code,
+        "attribute_values_raw_body": attribute_values_raw_body,
+        "suggestions": suggestions,
+        "note": _ATTRIBUTE_SUGGESTION_NOTE,
+        "error": error,
+    }
+
+
+@mcp.tool()
+def suggest_product_attributes(
+    category_id: str, name: str, detail_html: str | None = None
+) -> dict[str, Any]:
+    """상품명과 상세 본문에서 카테고리 속성값 후보를 제안한다.
+
+    이 도구는 조회와 문자열 대조만 수행한다. 추천 결과를 등록 payload 로 바꾸거나
+    전송하지 않으며, 등록하려면 호출자가 ``register_product(attributes=...)`` 에
+    선택한 값을 명시해야 한다.
+
+    속성값 API 는 첫 번째 속성의 ``attributeSeq`` 하나로 호출한다. 2026-08-12
+    카테고리 50000830 실측에서 이 호출이 카테고리 전체 속성값을 반환했다.
+    다른 응답 형태, 빈 목록, 비 200 응답은 성공으로 바꾸지 않는다. 조회 실패 시
+    ``status_code`` 와 ``raw_body`` 에 받은 값을 남기고, 두 조회의 원문도 각각
+    ``*_raw_body`` 필드에 보존한다.
+
+    Args:
+        category_id: 조회할 카테고리 ID.
+        name: 상품명 텍스트.
+        detail_html: 선택 사항인 상품 상세 HTML. 태그 속성은 대조하지 않는다.
+
+    Returns:
+        ``suggest_category_attributes`` 의 결과를 ``suggestions`` 에 그대로 담은
+        조회 전용 응답. ``note`` 는 추천을 등록하려면 명시 전달해야 함을 알린다.
+    """
+    raw_id = str(category_id or "").strip()
+    if not raw_id:
+        return _suggest_product_attributes_response(
+            ok=False,
+            category_id="",
+            status_code=None,
+            raw_body=None,
+            stage="input",
+            attribute_seq=None,
+            category_attributes_status_code=None,
+            category_attributes_raw_body=None,
+            attribute_values_status_code=None,
+            attribute_values_raw_body=None,
+            suggestions=None,
+            error="category_id 는 비어있지 않은 값이어야 합니다.",
+        )
+
+    try:
+        attributes_status_code, attributes_raw_body = naver_client.get_category_attributes(raw_id)
+    except Exception as exc:
+        return _suggest_product_attributes_response(
+            ok=False,
+            category_id=raw_id,
+            status_code=None,
+            raw_body=None,
+            stage="category_attributes",
+            attribute_seq=None,
+            category_attributes_status_code=None,
+            category_attributes_raw_body=None,
+            attribute_values_status_code=None,
+            attribute_values_raw_body=None,
+            suggestions=None,
+            error=f"속성 목록 조회 중 오류: {_sanitize_error(exc)}",
+        )
+
+    if attributes_status_code != 200:
+        return _suggest_product_attributes_response(
+            ok=False,
+            category_id=raw_id,
+            status_code=attributes_status_code,
+            raw_body=attributes_raw_body,
+            stage="category_attributes",
+            attribute_seq=None,
+            category_attributes_status_code=attributes_status_code,
+            category_attributes_raw_body=attributes_raw_body,
+            attribute_values_status_code=None,
+            attribute_values_raw_body=None,
+            suggestions=None,
+            error=_sanitize_text(f"속성 목록 API 반환 상태 {attributes_status_code}"),
+        )
+
+    if not isinstance(attributes_raw_body, list):
+        return _suggest_product_attributes_response(
+            ok=False,
+            category_id=raw_id,
+            status_code=attributes_status_code,
+            raw_body=attributes_raw_body,
+            stage="category_attributes",
+            attribute_seq=None,
+            category_attributes_status_code=attributes_status_code,
+            category_attributes_raw_body=attributes_raw_body,
+            attribute_values_status_code=None,
+            attribute_values_raw_body=None,
+            suggestions=None,
+            error="확인된 최상위 리스트 형태의 속성 목록이 아닙니다.",
+        )
+
+    first_attribute = next(
+        (
+            attribute
+            for attribute in attributes_raw_body
+            if isinstance(attribute, dict) and attribute.get("attributeSeq") not in (None, "")
+        ),
+        None,
+    )
+    if first_attribute is None:
+        return _suggest_product_attributes_response(
+            ok=False,
+            category_id=raw_id,
+            status_code=attributes_status_code,
+            raw_body=attributes_raw_body,
+            stage="category_attributes",
+            attribute_seq=None,
+            category_attributes_status_code=attributes_status_code,
+            category_attributes_raw_body=attributes_raw_body,
+            attribute_values_status_code=None,
+            attribute_values_raw_body=None,
+            suggestions=None,
+            error="속성 목록이 비어 있거나 첫 속성의 attributeSeq 가 없습니다.",
+        )
+
+    attribute_seq = first_attribute["attributeSeq"]
+    try:
+        attribute_values_status_code, attribute_values_raw_body = (
+            naver_client.get_category_attribute_values(raw_id, attribute_seq)
+        )
+    except Exception as exc:
+        return _suggest_product_attributes_response(
+            ok=False,
+            category_id=raw_id,
+            status_code=None,
+            raw_body=None,
+            stage="attribute_values",
+            attribute_seq=attribute_seq,
+            category_attributes_status_code=attributes_status_code,
+            category_attributes_raw_body=attributes_raw_body,
+            attribute_values_status_code=None,
+            attribute_values_raw_body=None,
+            suggestions=None,
+            error=f"속성값 목록 조회 중 오류: {_sanitize_error(exc)}",
+        )
+
+    if attribute_values_status_code != 200:
+        return _suggest_product_attributes_response(
+            ok=False,
+            category_id=raw_id,
+            status_code=attribute_values_status_code,
+            raw_body=attribute_values_raw_body,
+            stage="attribute_values",
+            attribute_seq=attribute_seq,
+            category_attributes_status_code=attributes_status_code,
+            category_attributes_raw_body=attributes_raw_body,
+            attribute_values_status_code=attribute_values_status_code,
+            attribute_values_raw_body=attribute_values_raw_body,
+            suggestions=None,
+            error=_sanitize_text(f"속성값 목록 API 반환 상태 {attribute_values_status_code}"),
+        )
+
+    if not isinstance(attribute_values_raw_body, list):
+        return _suggest_product_attributes_response(
+            ok=False,
+            category_id=raw_id,
+            status_code=attribute_values_status_code,
+            raw_body=attribute_values_raw_body,
+            stage="attribute_values",
+            attribute_seq=attribute_seq,
+            category_attributes_status_code=attributes_status_code,
+            category_attributes_raw_body=attributes_raw_body,
+            attribute_values_status_code=attribute_values_status_code,
+            attribute_values_raw_body=attribute_values_raw_body,
+            suggestions=None,
+            error="확인된 최상위 리스트 형태의 속성값 목록이 아닙니다.",
+        )
+
+    if not attribute_values_raw_body:
+        return _suggest_product_attributes_response(
+            ok=False,
+            category_id=raw_id,
+            status_code=attribute_values_status_code,
+            raw_body=attribute_values_raw_body,
+            stage="attribute_values",
+            attribute_seq=attribute_seq,
+            category_attributes_status_code=attributes_status_code,
+            category_attributes_raw_body=attributes_raw_body,
+            attribute_values_status_code=attribute_values_status_code,
+            attribute_values_raw_body=attribute_values_raw_body,
+            suggestions=None,
+            error="속성값 목록이 비어 있습니다. 빈 목록을 추천 성공으로 처리하지 않습니다.",
+        )
+
+    # ``desc_html_to_text`` 는 HTMLParser의 텍스트 노드만 모은다. 따라서
+    # ``<p>머슬핏</p>`` 본문은 대조하고 ``<img alt=\"면\">`` 속성값은 무시한다.
+    product_text = {
+        "name": str(name or ""),
+        "detail": desc_html_to_text(detail_html),
+    }
+    suggestions = suggest_category_attributes(
+        product_text, attributes_raw_body, attribute_values_raw_body
+    )
+    return _suggest_product_attributes_response(
+        ok=True,
+        category_id=raw_id,
+        status_code=attribute_values_status_code,
+        raw_body=attribute_values_raw_body,
+        stage="suggested",
+        attribute_seq=attribute_seq,
+        category_attributes_status_code=attributes_status_code,
+        category_attributes_raw_body=attributes_raw_body,
+        attribute_values_status_code=attribute_values_status_code,
+        attribute_values_raw_body=attribute_values_raw_body,
+        suggestions=suggestions,
+        error=None,
+    )
 
 
 # ---------------------------------------------------------------------------

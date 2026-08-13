@@ -42,7 +42,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 _AGENTS_DIR = _ROOT / "src" / "clossify" / "agents"
 _SRC_DIR = _ROOT / "src" / "clossify"
 
-# The ten MCP tools the server exposes.  These are verified dynamically by
+# The eleven MCP tools the server exposes.  These are verified dynamically by
 # test (e) against the runtime tool set, but the constant is used by test (c)
 # to check the registration-flow prompts mention all of them.
 _MCP_TOOLS = {
@@ -54,12 +54,13 @@ _MCP_TOOLS = {
     "manage_products",
     "prepare_listing",
     "register_product",
+    "suggest_product_attributes",
     "submit_reviews",
     "upload_images",
 }
 
 # Prompts that describe the registration flow and therefore must mention all
-# ten MCP tools.  This set is derived from the work-order scope and is stable:
+# eleven MCP tools.  This set is derived from the work-order scope and is stable:
 # any new registration-flow prompt should be added here.
 _REGISTRATION_FLOW_PROMPTS = {
     "registration_agent.md",
