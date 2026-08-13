@@ -225,7 +225,7 @@ def test_doc_tool_names_are_subset_of_registered() -> None:
     # Conversely, no backticked underscore token that the doc presents as a
     # tool may lie outside the registered set. We approximate "presented as a
     # tool" by the underscore heuristic plus already-registered membership is
-    # not useful here; instead we assert the six known tool names each appear.
+    # not useful here; instead we assert the nine known tool names each appear.
     for name in registered:
         assert name in doc, f"tool {name!r} is registered but not named in the doc."
     # claimed_tools is the intersection; this line keeps the variable used and

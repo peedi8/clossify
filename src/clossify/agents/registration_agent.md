@@ -11,8 +11,8 @@ description: 상품등록(네이버 커머스 API) 담당 에이전트 — 상�
 
 - "제목만/태그만"이 아니라 **등록에 필요한 전부를 한 담당자**가 owns. 생성과 검수를 같은 기준으로(생성이 만들고 검수가 또 잡는 모순 제거).
 
-## MCP 도구 표면 (실제 도구 8개 — 이 에이전트가 호출하는 전부)
-이 서버(`src/clossify/mcp_server.py`)는 **8개의 도구**만 노출한다. 이외의 함수는
+## MCP 도구 표면 (실제 도구 9개 — 이 에이전트가 호출하는 전부)
+이 서버(`src/clossify/mcp_server.py`)는 **9개의 도구**만 노출한다. 이외의 함수는
 도구로 노출되지 않으므로 클라이언트 LLM 이 호출할 수 없다. 등록 흐름의 정상
 호출 순서는 다음과 같다:
 
@@ -69,6 +69,9 @@ description: 상품등록(네이버 커머스 API) 담당 에이전트 — 상�
    검수내역 조회(`inspections`). `suspend`/`resume` 은 `confirm=True` 까지 dry-run
    이며, 실행 시 변경 전후 상태를 반환한다. `list` 는 관리용 정적 HTML 패널도
    생성한다(auto-open 설정 시 브라우저 자동 열림). 반환: `{ok, action, ...}`.
+9. `get_category_attributes(category_id)` → 카테고리별 속성 스키마 조회. 반환:
+   `{ok, attributes, schema_verified, error}`. **스키마 미검증** 표식이 있으므로
+   반환값을 그대로 payload 에 넣지 않고 판매자가 확인해야 한다.
 
 ## 담당 필드 (생성)
 1. **SEO 제목** — 맥락 있는 키워드 구문(유닛 6~9, 앞가중치, 읽힘). [[COMPLIANCE_RULES]] §7. 단순 나열 금지.
@@ -122,7 +125,7 @@ description: 상품등록(네이버 커머스 API) 담당 에이전트 — 상�
 미루기 불가 필드(날짜·수치·불리언 등)는 미루기를 제안하지 마라.
 
 ## 구현 매핑 (실제 코드)
-- **MCP 도구 8개**(호출 순서는 위 'MCP 도구 표면' 참조): `check_config`·`upload_images`·`prepare_listing`·`submit_reviews`·`register_product`·`get_product`·`delete_product`·`manage_products`. 이 8개가 클라이언트 LLM 이 호출할 수 있는 전부다.
+- **MCP 도구 9개**(호출 순서는 위 'MCP 도구 표면' 참조): `check_config`·`upload_images`·`prepare_listing`·`submit_reviews`·`register_product`·`get_product`·`delete_product`·`manage_products`·`get_category_attributes`. 이 9개가 클라이언트 LLM 이 호출할 수 있는 전부다.
 - 생성 헬퍼(서버 내부 — 도구가 아님): `naming_agent`(제목)·`classify_category`(카테고리)·`naver_client.build_payload`(고시/원산지/KC/claim).
 - 검수 헬퍼(서버 내부 — `submit_reviews` 가 회신을 받아 병합): `qa_copy`(제목·태그·본문)·`qa_compliance`(payload 법적)·`qa_image`(이미지). `compliance` verdict 는 클라이언트가 제출할 수 없다(결정론).
 - **가격 자동 계산 함수는 없다** — `register_product` 의 `price` 인자(양의 정수 KRW) 를 판매자가 직접 준다.

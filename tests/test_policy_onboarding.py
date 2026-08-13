@@ -482,7 +482,7 @@ class TestToolCountPreserved:
     delete_product 가 추가되면서 도구 수가 6 → 7 로 늘었다.
     """
 
-    def test_six_tools_registered(self):
+    def test_nine_tools_registered(self):
         import asyncio
 
         tools = mcp_server.mcp.list_tools()
@@ -491,9 +491,10 @@ class TestToolCountPreserved:
                 tools = asyncio.run(tools)
             except RuntimeError:
                 tools = asyncio.get_event_loop().run_until_complete(tools)
-        # 8개 도구: check_config, upload_images, register_product, get_product,
-        # prepare_listing, submit_reviews, delete_product, manage_products.
-        assert len(tools) == 8, f"도구가 8개여야 함: {len(tools)}"
+        # 9개 도구: check_config, upload_images, register_product, get_product,
+        # prepare_listing, submit_reviews, delete_product, manage_products,
+        # get_category_attributes.
+        assert len(tools) == 9, f"도구가 9개여야 함: {len(tools)}"
 
     def test_check_config_takes_read_existing(self):
         """check_config 가 read_existing 키워드 인자를 받는다."""

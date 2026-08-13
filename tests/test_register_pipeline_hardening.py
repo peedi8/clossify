@@ -453,6 +453,7 @@ class TestToolRegistration:
         expected = {
             "check_config",
             "delete_product",
+            "get_category_attributes",
             "get_product",
             "manage_products",
             "prepare_listing",
