@@ -383,3 +383,4 @@ pre-commit run --all-files  # (선택) 지금 트리 전체에 한 번 돌려보
 - `docs/adr/` — 아키텍처 결정 기록(0001~0004)
 - `SECURITY.md` — 보안 정책, 키 유출 대응
 - `src/clossify/data/README.md` — 카테고리/고시/인증 메타데이터 출처와 갱신
+`suggest_product_attributes`는 `category_id`, `name`, 선택 사항인 `detail_html`로 속성 후보만 제안하는 MCP 도구다. 이 결과는 등록을 전송하지 않으며, 등록하려면 선택한 값을 `register_product`의 `attributes` 인자로 명시해야 한다.

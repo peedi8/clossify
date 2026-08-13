@@ -455,6 +455,7 @@ class TestToolRegistration:
             "delete_product",
             "get_category_attributes",
             "get_category_attribute_values",
+            "suggest_product_attributes",
             "get_product",
             "manage_products",
             "prepare_listing",

@@ -566,13 +566,13 @@ class TestCheckConfigKeysPreserved:
         # probe 는 실패.
         assert result["connection_probe"]["ok"] is False
 
-    def test_ten_tools_registered_unchanged(self):
-        """probe 추가로 MCP 도구 수가 변하지 않는다 (10개 유지)."""
+    def test_eleven_tools_registered_unchanged(self):
+        """probe 추가로 MCP 도구 수가 변하지 않는다 (11개 유지)."""
         import asyncio
 
         tools = mcp_server.mcp.list_tools()
         if hasattr(tools, "__await__"):
             tools = asyncio.run(tools)
         assert (
-            len(tools) == 10
-        ), f"Expected 10 tools (probe is a parameter, not a new tool), got {len(tools)}"
+            len(tools) == 11
+        ), f"Expected 11 tools (probe is a parameter, not a new tool), got {len(tools)}"
