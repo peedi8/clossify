@@ -7,7 +7,7 @@
   3. 통과 반례: 의류 + 필수 필드 완비 + config 원산지 일치 → 등록 경로 진입.
   4. 미차단 확인: LLM 판단 미회신만 있는 경우 → 차단되지 않고 pending_reviews 표기.
   5. check_config 가 원산지 설정 여부를 보고하되 값은 반환하지 않음.
-  6. 도구 7개 등록 유지.
+  6. 도구 9개 등록 유지.
 
 모든 테스트는 실제 네이버 API 를 호출하지 않는다 — monkeypatch 로 네트워크 차단.
 """
@@ -576,12 +576,12 @@ class TestCheckConfigOrigin:
 
 
 # --------------------------------------------------------------------------- #
-# 도구 8개 등록 유지 (시그니처 변경 없음).
+# 도구 9개 등록 유지 (시그니처 변경 없음).
 # --------------------------------------------------------------------------- #
 class TestToolRegistrationPreserved:
-    """변경 후에도 8개 도구가 등록되어 있는가."""
+    """변경 후에도 9개 도구가 등록되어 있는가."""
 
-    def test_six_tools_registered(self):
+    def test_nine_tools_registered(self):
         import asyncio
 
         tools = mcp_server.mcp.list_tools()
@@ -590,13 +590,14 @@ class TestToolRegistrationPreserved:
                 tools = asyncio.run(tools)
             except RuntimeError:
                 tools = asyncio.get_event_loop().run_until_complete(tools)
-        # 8개 도구: check_config, upload_images, register_product, get_product,
-        # prepare_listing, submit_reviews, delete_product, manage_products.
+        # 9개 도구: check_config, upload_images, register_product, get_product,
+        # prepare_listing, submit_reviews, delete_product, manage_products,
+        # get_category_attributes.
         # manage_products 는 등록 후 관리(목록/중지/재개/검수)를 담당한다.
-        assert len(tools) == 8, f"도구가 8개여야 함: {len(tools)}"
+        assert len(tools) == 9, f"도구가 9개여야 함: {len(tools)}"
 
     def test_tool_names_unchanged(self):
-        """8개 도구 이름이 변경되지 않았는가."""
+        """9개 도구 이름이 변경되지 않았는가."""
         import asyncio
 
         tools = mcp_server.mcp.list_tools()
@@ -615,6 +616,7 @@ class TestToolRegistrationPreserved:
             "prepare_listing",
             "submit_reviews",
             "manage_products",
+            "get_category_attributes",
         }
         assert names == expected, f"도구 이름 불일치: {names}"
 
@@ -649,6 +651,7 @@ class TestToolRegistrationPreserved:
             "preview_confirmed",
             "option_groups",
             "deferred_notice_fields",
+            "attributes",
         ]
         assert param_names == expected, f"시그니처 변경 감지: {param_names}"
 

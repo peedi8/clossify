@@ -2109,6 +2109,7 @@ def register_product(
     preview_confirmed: bool = False,
     option_groups: list[str] | None = None,
     deferred_notice_fields: list[str] | None = None,
+    attributes: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """상품 정보를 받아 등록 페이로드를 빌드하고 네이버 커머스 API 로 등록한다.
 
@@ -2189,6 +2190,17 @@ def register_product(
             ``made_in`` 등)는 법적 선언이라 어떤 요청이든 거부된다 (네이버 호출 0회,
             거부 사유 명시). 실값이 채워진 필드를 미루기로 표시해도 실값이 우선하며,
             반환의 ``deferred_notice_fields`` 에서 제외된다.
+        attributes: 명시적 상품속성 ID 리스트. 형태는
+            ``[{"attributeSeq": int, "attributeValueSeq": int,
+               "attributeRealValue"?: str, "attributeRealValueUnitCode"?: str}, ...]``.
+            있으면 ``originProduct.detailAttribute.productAttributes`` 로 싣는다
+            (키 4종만). ``None`` (기본값) 이면 상품 dict 에 키를 넣지 않는다
+            (빈 배열 전송 금지 — 미실측 거동). ``prepare_listing`` 이 저장한
+            속성이 있고 호출자가 명시적으로 넘기지 않았으면 prepared 에서 복원한다
+            (오늘 제조사·수입사·배송비에서 한 것과 같은 자리·같은 방식). 명시
+            입력이 우선한다. 검증은 기존 ``naver_client._validate_product_attributes``
+            를 그대로 쓴다(새 판정 함수 금지). **값을 만들거나 추론하지 마라** —
+            명시적 ID 만 싣는다.
 
     Returns:
         ``{"ok": bool, "status_code": int | None, "origin_product_no": str | None,
@@ -2199,7 +2211,7 @@ def register_product(
         - ``filled_from_prepared``: prepared payload 에서 채운 항목 리스트.
           가능한 항목: ``"detail_html"`` · ``"image_urls"`` · ``"notice"`` ·
           ``"tags"`` · ``"options"`` · ``"option_groups"`` ·
-          ``"deferred_notice_fields"``. prepared 에 실제로 있고 호출자가 명시적으로
+          ``"deferred_notice_fields"`` · ``"attributes"``. prepared 에 실제로 있고 호출자가 명시적으로
           넘기지 않은 인자만 이 리스트에 들어간다. 직접 준 값은 포함되지 않는다
           (조용한 흐름 금지 — 복원은 항상 보고된다).
         - ``prepared_key_used``: 실제로 prepared 조회에 쓴 product_key.
@@ -2656,6 +2668,7 @@ def register_product(
     _need_option_groups = option_groups is None
     _need_deferred = deferred_notice_fields is None
     _need_delivery_fee = delivery_fee is None
+    _need_attributes = attributes is None
     filled_from_prepared: list[str] = []
 
     _needs_any = (
@@ -2667,6 +2680,7 @@ def register_product(
         or _need_option_groups
         or _need_deferred
         or _need_delivery_fee
+        or _need_attributes
     )
     if _needs_any and _resolved_payload is not None:
         _fill_pkey = _product_key
@@ -2775,6 +2789,15 @@ def register_product(
             if _prepared_fee is not None:
                 delivery_fee = _prepared_fee
                 filled_from_prepared.append("delivery_fee")
+        # attributes: prepared.product.attributes. 명시적 상품속성 ID 리스트.
+        # **값을 만들거나 추론하지 마라** — prepared 에 실제로 있는 리스트만
+        # 복원한다. 아래 build_payload → _validate_product_attributes 가 형태를
+        # 검증하므로 여기서는 복원만 한다(우회 금지 — 동일 검증 경로).
+        if _need_attributes:
+            _prepared_attrs = _fp_product.get("attributes")
+            if isinstance(_prepared_attrs, list) and _prepared_attrs:
+                attributes = list(_prepared_attrs)
+                filled_from_prepared.append("attributes")
 
     # ------------------------------------------------------------------ #
     # **5라운드 감리 ②**: manufacturer·importer 복원은 ``_needs_any`` 와
@@ -2942,6 +2965,11 @@ def register_product(
     # 검증은 이미 위에서 마쳤으므로 여기서는 None 이 아닐 때만 싣는다.
     if option_groups is not None:
         product["option_groups"] = list(option_groups)
+    # attributes: 명시적 상품속성 ID 리스트. None 이면 키를 넣지 않는다
+    # (빈 배열 전송 금지 — 미실측 거동). build_payload → _validate_product_attributes
+    # 가 형태를 검증한다(문자 ID·모르는 키 거부 — 새 판정 함수 금지).
+    if attributes is not None:
+        product["attributes"] = list(attributes)
 
     try:
         payload = naver_client.build_payload(
@@ -3785,6 +3813,197 @@ def delete_product(
         "origin_product_no": normalized_no,
         "registration_record_removed": record_removed,
         "error": record_error,
+    }
+
+
+# raw_body 크기 상한 — 너무 큰 본문은 LLM 컨텍스트를 잡아먹으므로 자르되
+# 잘랐다는 사실을 명시한다(조용한 절삭 금지). JSON 직렬화 길이 기준.
+_RAW_BODY_MAX_CHARS = 8192
+
+
+def _truncate_raw_body(body: Any) -> tuple[Any, bool]:
+    """서버가 준 본문을 직렬화하여 상한 초과 시 자른다.
+
+    반환: ``(본문_또는_잘린_문자열, 잘렸는지 여부)``.
+
+    - dict·list·str·기타: JSON 직렬화 가능하면 직렬화 길이로 판정.
+    - 상한 이하면 원형 그대로.
+    - 상한 초과면 앞부분을 자르고 ``"…[raw_body truncated: N chars → M chars]"``
+      꼬리를 붙인 **문자열**로 반환한다(원 자료형 복원 불가 — 자른 사실이 명시적).
+    - 직렬화 자체가 실패하면 ``str(body)`` 로 폴백 (자르기 동일 적용).
+    """
+    import json as _json
+
+    try:
+        text = _json.dumps(body, ensure_ascii=False, default=str)
+    except Exception:
+        text = str(body)
+    if len(text) <= _RAW_BODY_MAX_CHARS:
+        return body, False
+    truncated = text[:_RAW_BODY_MAX_CHARS] + (
+        f"…[raw_body truncated: {len(text)} chars → {_RAW_BODY_MAX_CHARS} chars]"
+    )
+    return truncated, True
+
+
+def _mask_secrets_in_body(body: Any) -> Any:
+    """응답 본문에서 토큰·자격증명 후보 키의 값을 마스킹한다.
+
+    네이버 커머스 API 응답에 토큰·자격증명이 실릴 일은 없지만, 혹시 있으면
+    ``accessToken``·``clientSecret``·``Authorization`` 등의 키 값을 ``"***"`` 로
+    바꾼다. 본 도구는 미실측 응답을 LLM 에게 그대로 보여주므로 방어적으로 적용.
+    """
+    _SECRET_KEY_FRAGMENTS = (
+        "token",
+        "secret",
+        "authorization",
+        "credential",
+        "password",
+        "apikey",
+        "api_key",
+    )
+
+    if isinstance(body, dict):
+        masked: dict[str, Any] = {}
+        for k, v in body.items():
+            key_lower = str(k).lower()
+            if any(frag in key_lower for frag in _SECRET_KEY_FRAGMENTS):
+                masked[k] = "***"
+            else:
+                masked[k] = _mask_secrets_in_body(v)
+        return masked
+    if isinstance(body, list):
+        return [_mask_secrets_in_body(v) for v in body]
+    return body
+
+
+@mcp.tool()
+def get_category_attributes(category_id: str) -> dict[str, Any]:
+    """카테고리별 상품속성 목록을 네이버 커머스 API 에서 조회한다.
+
+    **[미실측 도구]** — 이 응답 형태는 아직 실측되지 않았다. 실제 응답 1콜을
+    확인한 적이 없고, 쿼리 파라미터명 ``categoryId`` 도 **[가정]** 이다
+    (문서에 명시된 것이 아니라 커머스 API 관례에서 유추). 따라서:
+
+      - 응답을 **우리 스키마로 재매핑하지 않는다** — 받은 그대로 돌려준다.
+      - 응답이 예상과 다르면 **조용히 빈 목록을 내지 않는다** — 무엇을
+        받았는지 그대로 보고한다.
+      - 본 도구는 응답에 ``schema_verified: false`` 표시를 함께 실어, 이
+        응답을 그대로 신뢰해 자동 선택 로직을 짓는 것을 막는다.
+
+    반환의 ``raw_body`` 필드는 서버가 준 본문을 가공 없이 그대로 실는다
+    (dict·list·문자열 가리지 않음). ``attributes`` 필드는 ``raw_body`` 에서
+    ``attributes`` 키를 편의로 끌어낸 것이다 — 없으면 ``None`` 이지만
+    ``raw_body`` 는 항상 살아 있으므로 거기서 스키마를 확정하면 된다.
+
+    Args:
+        category_id: 네이버 커머스 API leaf category ID (문자열). 빈 값이면
+            API 호출 없이 거부한다.
+
+    Returns:
+        ``{"ok": bool, "status_code": int | None, "category_id": str,
+        "schema_verified": bool, "note": str, "attributes": Any,
+        "raw_body": Any, "raw_body_truncated": bool,
+        "error": str | None}``
+
+        - ``ok``: HTTP 200 일 때만 ``True``.
+        - ``schema_verified``: 항상 ``False``. 응답 스키마가 실측되지 않았다.
+        - ``note``: 미검증 상태를 명시하는 안내문(한국어).
+        - ``attributes``: ``raw_body`` 에서 ``attributes`` 키를 편의로 뽑은 것.
+          우리가 가정한 키가 없으면 ``None`` — 이때는 ``raw_body`` 를 보고
+          스키마를 확정하라.
+        - ``raw_body``: 서버가 준 본문을 가공 없이 그대로. dict 든 list 든
+          문자열이든 받은 것을 버리지 않는다. 상한 초과 시 자르되
+          ``raw_body_truncated=True`` 로 명시한다.
+        - ``raw_body_truncated``: ``raw_body`` 를 잘랐으면 ``True``.
+    """
+    _NOTE_BASE = (
+        "이 도구의 응답 형태는 아직 실측되지 않았습니다 "
+        "(schema_verified=false). 응답을 우리 스키마로 재매핑하지 않고 "
+        "받은 그대로 돌려줍니다. 이 응답으로 자동 선택 로직을 짓지 마세요."
+    )
+
+    # 1) 입력 검증 — 비어있으면 API 를 부르지 않고 거부한다.
+    raw_id = str(category_id or "").strip()
+    if not raw_id:
+        return {
+            "ok": False,
+            "status_code": None,
+            "category_id": "",
+            "schema_verified": False,
+            "note": _NOTE_BASE,
+            "attributes": None,
+            "raw_body": None,
+            "raw_body_truncated": False,
+            "error": "category_id 는 비어있지 않은 값이어야 합니다.",
+        }
+
+    # 2) API 호출 — naver_client.get_category_attributes 는 [미실측] 래퍼다.
+    #    응답 본문을 가공하지 않고 원형으로 돌려받는다(재매핑 금지).
+    try:
+        status_code, body = naver_client.get_category_attributes(raw_id)
+    except Exception as exc:  # 네이버 호출 자체가 실패한 경우.
+        return {
+            "ok": False,
+            "status_code": None,
+            "category_id": raw_id,
+            "schema_verified": False,
+            "note": _NOTE_BASE,
+            "attributes": None,
+            "raw_body": None,
+            "raw_body_truncated": False,
+            "error": f"조회 중 오류: {_sanitize_error(exc)}",
+        }
+
+    ok = isinstance(status_code, int) and status_code == 200
+
+    # 3) raw_body — 서버가 준 본문을 가공 없이 그대로 실는다(원형 보존).
+    #    비밀값 방어 마스킹 → 크기 상한 적용(잘랐으면 명시).
+    safe_body = _mask_secrets_in_body(body) if ok else None
+    if safe_body is not None:
+        raw_body, raw_body_truncated = _truncate_raw_body(safe_body)
+    else:
+        raw_body, raw_body_truncated = None, False
+
+    # 4) attributes — raw_body 에서 "attributes" 키를 편의로 뽑는다.
+    #    가정한 키가 없으면 None 이되, raw_body 는 살아 있다(버리지 않는다).
+    extracted_attrs: Any = None
+    note = _NOTE_BASE
+    if ok and isinstance(raw_body, dict):
+        if "attributes" in raw_body:
+            extracted_attrs = raw_body["attributes"]
+        else:
+            note = (
+                _NOTE_BASE + " 가정한 키(attributes)를 못 찾았다 — raw_body 를 보고 "
+                "스키마를 확정하라."
+            )
+
+    # 5) 응답 반환 — 원형 + 미검증 표시. 예상과 달라도 빈 목록으로 바꾸지
+    #    않는다(조용한 누락 금지). 비 200 이면 사유만.
+    error_text: str | None = None
+    if not ok:
+        # 비 200 응답 본문은 raw_body 에 그대로(요약) 실어 확인 가능.
+        if body is not None:
+            try:
+                import json as _json
+
+                body_preview = _json.dumps(body, ensure_ascii=False, default=str)
+            except Exception:
+                body_preview = str(body)
+            raw_body = body_preview[:_RAW_BODY_MAX_CHARS]
+            raw_body_truncated = len(body_preview) > _RAW_BODY_MAX_CHARS
+        error_text = _sanitize_text(f"API 반환 상태 {status_code}: {body}")
+
+    return {
+        "ok": ok,
+        "status_code": status_code,
+        "category_id": raw_id,
+        "schema_verified": False,
+        "note": note,
+        "attributes": extracted_attrs,
+        "raw_body": raw_body,
+        "raw_body_truncated": raw_body_truncated,
+        "error": error_text,
     }
 
 

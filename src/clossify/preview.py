@@ -281,6 +281,68 @@ def _collect_notice_rows(
 
 
 # ---------------------------------------------------------------------------
+# 상품속성(productAttributes) 행 빌딩.
+#
+# 등록 단계가 만들 페이로드(``naver_client.build_payload``)와 *같은 값을*
+# 그린다 — ``build_payload`` 가 ``_validate_product_attributes(p.get("attributes"))``
+# 로 검증한 뒤 ``detailAttribute.productAttributes`` 에 싣는다. 미리보기도
+# 같은 ``product.attributes`` 를 읽어 같은 형태로 행을 만든다. 화면과 payload
+# 가 어긋나면(오늘 네 번 어긋났던 자리) 안 된다.
+#
+# 출처 표기는 기존 어휘를 쓴다 — **"사용자 입력"** (속성은 config 에 두지
+# 않으므로 "설정 기본값" 은 없다). 속성이 없으면 행을 억지로 만들지 않는다
+# (미제공 한 줄).
+# ---------------------------------------------------------------------------
+
+
+def _collect_attribute_rows(product: dict[str, Any]) -> list[dict[str, str]]:
+    """상품속성을 (필드, 값, 출처) 행 리스트로 모은다.
+
+    ``product.attributes`` (명시적 ID 리스트) 를 읽어 행으로 만든다.
+    각 속성은 ``attributeSeq`` · ``attributeValueSeq`` (필수) 와
+    ``attributeRealValue`` · ``attributeRealValueUnitCode`` (범위형 선택) 를
+    가진다. 화면에 그리는 형태는 페이로드에 실리는 형태와 같아야 한다 —
+    ``naver_client._validate_product_attributes`` 가 허용하는 키 4종만 쓴다.
+
+    출처는 항상 "사용자 입력" 이다 — 속성은 config 에 두지 않는다(설정 유래 없음).
+
+    속성이 없으면 빈 리스트를 반환한다 — 행을 억지로 만들지 마라.
+    """
+    if not isinstance(product, dict):
+        return []
+    raw_attrs = product.get("attributes")
+    if not isinstance(raw_attrs, list) or not raw_attrs:
+        return []
+    rows: list[dict[str, str]] = []
+    for item in raw_attrs:
+        if not isinstance(item, dict):
+            continue
+        seq = item.get("attributeSeq")
+        vseq = item.get("attributeValueSeq")
+        # 필수 키가 없거나 정수가 아니면 행을 만들지 않는다 — payload 에도
+        # 실리지 않을 값이므로 화면에도 그리지 않는다 (불일치 금지).
+        if not isinstance(seq, int) or isinstance(seq, bool):
+            continue
+        if not isinstance(vseq, int) or isinstance(vseq, bool):
+            continue
+        # 값 조합: "seq / vseq" 가 기본. 범위형이면 실값+단위를 덧붙인다.
+        value_parts = [f"attributeSeq={seq}", f"attributeValueSeq={vseq}"]
+        real_val = item.get("attributeRealValue")
+        if isinstance(real_val, str) and real_val.strip():
+            unit = item.get("attributeRealValueUnitCode")
+            unit_text = f" {unit}" if isinstance(unit, str) and unit.strip() else ""
+            value_parts.append(f"attributeRealValue={real_val}{unit_text}")
+        rows.append(
+            {
+                "field": f"속성 #{len(rows) + 1}",
+                "value": ", ".join(value_parts),
+                "source": "사용자 입력",
+            }
+        )
+    return rows
+
+
+# ---------------------------------------------------------------------------
 # HTML 빌딩. 외부 리소스를 전혀 참조하지 않는 인라인 CSS 만 쓴다.
 # ---------------------------------------------------------------------------
 
@@ -619,6 +681,39 @@ def _render_notice_table_readonly(rows: list[dict[str, str]]) -> str:
     return "\n".join(parts)
 
 
+def _render_attribute_section(rows: list[dict[str, str]]) -> str:
+    """상품속성 표 HTML — 보기 전용·조작 모드 공통 (편집 불가).
+
+    속성은 ID 참조(attributeSeq·attributeValueSeq) 이므로 페이지에서 직접
+    편집하는 것이 의미 없다 — 고시 값처럼 contenteditable 으로 열지 않는다.
+    대신 전송될 값을 행으로 보여준다. 출처는 항상 "사용자 입력" 이고,
+    "설정 기본값" 은 없다(속성은 config 에 두지 않는다).
+
+    속성이 없으면 한 줄("상품속성 미제공") 만 반환한다 — 행을 억지로 만들지 마라.
+    """
+    if not rows:
+        return '<p class="preview-meta">(상품속성 미제공)</p>'
+    parts = [
+        '<table class="notice-table">',
+        "<thead><tr><th>속성</th><th>값</th><th>출처</th></tr></thead>",
+        "<tbody>",
+    ]
+    for row in rows:
+        field = row["field"]
+        value = row["value"]
+        source = row["source"]
+        parts.append('<tr class="notice-row">')
+        parts.append(f"<th>{html.escape(field)}</th>")
+        parts.append(f"<td>{html.escape(value)}</td>")
+        if source == "사용자 입력":
+            parts.append('<td><span class="source-user">사용자 입력</span></td>')
+        else:
+            parts.append('<td><span class="source-missing">미제공</span></td>')
+        parts.append("</tr>")
+    parts.append("</tbody></table>")
+    return "\n".join(parts)
+
+
 def _view_only_banner_html() -> str:
     """보기 전용 모드임을 알리고 조작이 가능한 자리를 안내하는 배너.
 
@@ -944,6 +1039,10 @@ def render_preview_html(
     notice_rows = _collect_notice_rows(product, notice_filled)
     notice_type_label = _notice_type_label(notice_type) if notice_type else "(미확정)"
 
+    # 상품속성 행 — payload.product.attributes 에서 읽는다. 화면과 payload 가
+    # 같아야 한다 (오늘 네 번 어긋났던 자리). 속성이 없으면 빈 리스트.
+    attribute_rows = _collect_attribute_rows(product)
+
     # srcdoc 은 HTML 의 " 속성을 escape 해야 한다.
     srcdoc = html.escape(detail_html, quote=True)
     # 생성 시각(UTC).
@@ -1066,6 +1165,15 @@ def render_preview_html(
         '<span class="source-user-config-overlap">사용자 입력 (설정에도 있음)</span>'
         " 은 고시 본문 값과 설정 값이 겹치는 필드입니다.</p>"
     )
+    parts.append("</div>")
+
+    # 상품속성(productAttributes) 섹션 — 보기 전용·조작 모드 공통 (편집 불가).
+    # 속성은 ID 참조이므로 contenteditable 으로 열지 않는다. 전송될 값을 행으로
+    # 보여준다. 속성이 없으면 "미제공" 한 줄 — 행을 억지로 만들지 마라.
+    # 화면과 payload 가 같아야 한다 (오늘 네 번 어긋났던 자리).
+    parts.append('<div class="preview-section">')
+    parts.append("<h2>상품속성 (productAttributes)</h2>")
+    parts.append(_render_attribute_section(attribute_rows))
     parts.append("</div>")
 
     # 태그 섹션. 조작 모드: 편집 가능(contenteditable). 보기 전용: 텍스트.

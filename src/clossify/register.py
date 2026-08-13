@@ -1856,6 +1856,13 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None, recommend_fn=None, r
     _delivery_fee_raw = d.get("delivery_fee")
     if _delivery_fee_raw is not None and str(_delivery_fee_raw).strip() != "":
         payload["product"]["delivery_fee"] = _delivery_fee_raw
+    # attributes: 명시적 상품속성 ID 리스트. **값이 주어질 때만** 넣는다
+    # (None 보존 — 빈 배열 전송 금지, 미실측 거동). prepare_listing 은 형태를
+    # 검증하지 않고 저장만 한다 — 형태 검증은 register_product → build_payload →
+    # _validate_product_attributes 가 담당한다(판정 한 곳에서만).
+    _attributes_raw = d.get("attributes")
+    if _attributes_raw is not None:
+        payload["product"]["attributes"] = list(_attributes_raw)
     if sane_deferred:
         payload["deferred_notice_fields"] = list(sane_deferred)
     if image_generation_meta is not None:

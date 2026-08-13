@@ -13,7 +13,7 @@
   (d) **path containment**: STATE_DIR 밖 경로는 거부, opener 호출 0회.
   (e) **셸 경유 금지**: 소스에 ``os.system``·``shell=True``·``subprocess`` 없음.
   (f) **방어 회귀**: 기존 승인 서버/폼 서버 방어가 그대로 동작.
-  (g) **도구 수 불변**: MCP 도구는 여전히 7개.
+  (g) **도구 수 불변**: MCP 도구는 여전히 9개.
 """
 
 from __future__ import annotations
@@ -501,28 +501,28 @@ class TestDefenseRegression:
         assert "from . import config_form_server" not in src
 
     def test_f_mcp_tool_count_unchanged(self):
-        """(f) MCP 도구 수가 8개로 불변."""
+        """(f) MCP 도구 수가 9개로 불변."""
         tools = _list_tools()
-        assert len(tools) == 8, f"도구가 8개여야 함: {len(tools)}"
+        assert len(tools) == 9, f"도구가 9개여야 함: {len(tools)}"
 
 
 # =========================================================================== #
-# (g) 도구 수 불변 — MCP 도구는 여전히 8개.
+# (g) 도구 수 불변 — MCP 도구는 여전히 9개.
 # =========================================================================== #
 
 
 class TestToolCount:
     """auto_open 추가로 MCP 도구가 늘지 않는다."""
 
-    def test_g_exactly_eight_mcp_tools(self):
-        """(g) ``@mcp.tool()`` 데코레이터가 8개, runtime list_tools() 도 8개."""
+    def test_g_exactly_nine_mcp_tools(self):
+        """(g) ``@mcp.tool()`` 데코레이터가 9개, runtime list_tools() 도 9개."""
         # 소스 카운트.
         src = Path(mcp_server.__file__).read_text(encoding="utf-8")
         decorator_count = src.count("@mcp.tool()")
-        assert decorator_count == 8, f"@mcp.tool() 데코레이터가 8개여야 함: {decorator_count}"
+        assert decorator_count == 9, f"@mcp.tool() 데코레이터가 9개여야 함: {decorator_count}"
         # 런타임 카운트.
         tools = _list_tools()
-        assert len(tools) == 8, f"runtime 도구가 8개여야 함: {len(tools)}"
+        assert len(tools) == 9, f"runtime 도구가 9개여야 함: {len(tools)}"
 
     def test_g_auto_open_not_a_tool(self):
         """(g) auto_open 은 MCP 도구로 등록되지 않는다."""

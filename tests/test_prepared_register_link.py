@@ -1214,5 +1214,6 @@ class TestDocstringMatchesBehavior:
             "options",
             "option_groups",
             "deferred_notice_fields",
+            "attributes",
         ):
             assert field in doc, f"docstring 에 {field!r} 이(가) 없다 (실제 동작과 불일치)"
