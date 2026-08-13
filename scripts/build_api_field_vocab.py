@@ -1,4 +1,4 @@
-"""어휘 생성기 — 커머스API 문서 스크랩 + src/clossify/data/*.json 에서 camelCase·PascalCase 토큰을 모은다.
+"""어휘 생성기 — 문서·데이터·실응답 픽스처에서 camelCase·PascalCase 토큰을 모은다.
 
 사용법:
     python scripts/build_api_field_vocab.py <문서_디렉토리>
@@ -47,9 +47,23 @@ def _extract_keys_from_json(obj: object) -> set[str]:
     return keys
 
 
+def _load_existing_vocab(repo_root: Path) -> set[str]:
+    """기존 생성 어휘를 보존해 문서 스크랩 입력 부재에도 항목이 줄지 않게 한다."""
+    vocab_path = repo_root / "scripts" / "api_field_vocab.json"
+    try:
+        with open(vocab_path, encoding="utf-8") as fh:
+            vocab = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return set()
+
+    names = vocab.get("names", []) if isinstance(vocab, dict) else []
+    return {name for name in names if isinstance(name, str) and _matches_any(name)}
+
+
 def build_vocab(docs_dir: str) -> list[str]:
-    """문서 디렉토리와 데이터 JSON 에서 camelCase 토큰을 모은다."""
-    tokens: set[str] = set()
+    """문서 디렉토리, 데이터 JSON, 실응답 픽스처에서 camelCase 토큰을 모은다."""
+    repo_root = Path(__file__).resolve().parent.parent
+    tokens = _load_existing_vocab(repo_root)
 
     # 1. 문서 디렉토리의 *.txt 전부
     txt_files = sorted(glob.glob(os.path.join(docs_dir, "*.txt")))
@@ -63,9 +77,18 @@ def build_vocab(docs_dir: str) -> list[str]:
         tokens |= _extract_camel_tokens(text)
 
     # 2. src/clossify/data/*.json 의 키
-    repo_root = Path(__file__).resolve().parent.parent
     json_dir = repo_root / "src" / "clossify" / "data"
     for json_path in sorted(json_dir.glob("*.json")):
+        try:
+            with open(json_path, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            continue
+        tokens |= _extract_keys_from_json(data)
+
+    # 3. 실응답 픽스처의 키 (최상위 list·dict 모두 재귀 처리)
+    fixtures_dir = repo_root / "tests" / "fixtures"
+    for json_path in sorted(fixtures_dir.glob("*.json")):
         try:
             with open(json_path, encoding="utf-8") as fh:
                 data = json.load(fh)
@@ -90,7 +113,10 @@ def main() -> int:
 
     output = {
         "_생성": "scripts/build_api_field_vocab.py 로 재생성한다. 손으로 고치지 마라.",
-        "_출처": "커머스API 문서 스크랩 + src/clossify/data/*.json",
+        "_출처": (
+            "커머스API 문서 스크랩 + src/clossify/data/*.json + 기존 어휘집 보존 + "
+            "tests/fixtures/*.json"
+        ),
         "_주의": "문서 스크랩은 불완전하다. 여기 없다고 존재하지 않는 필드인 것은 아니다.",
         "names": names,
     }
