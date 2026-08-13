@@ -2373,12 +2373,49 @@ def get_category_attributes(category_id, tk=None):
     # 재시도 안전: 카테고리 속성 조회(GET)는 부수효과가 없다 — 중복 피해가 없다.
     r = _api_request(
         "GET",
-        BASE + "/v1/product-attributes/attributes",
+        BASE + "/external/v1/product-attributes/attributes",
         tk=tk,
         header_builder=lambda t: _h(t, False),
         allow_retry=True,
         injected_token=injected_tk,
         params={"categoryId": str(category_id or "")},
+        timeout=20,
+    )
+    return r.status_code, _json_or_text_response(r)
+
+
+def get_category_attribute_values(category_id, attribute_seq, tk=None):
+    """GET /external/v1/product-attributes/attribute-values — 카테고리 속성값 조회.
+
+    2026-08-12 카테고리 ``50000830`` 한 건에서 실측한 응답은 최상위 리스트이며,
+    ``attributeSeq``, ``attributeValueSeq``, ``minAttributeValue``,
+    ``exposureOrder`` 를 가진 125개 항목이었다. ``attributeSeq`` 를 주어도 해당
+    카테고리의 전체 속성값이 반환됐다. 다른 카테고리의 응답 형태는 미확인이다.
+
+    본 함수는 기존 조회 래퍼와 같은 ``(status_code, body)`` 규약을 따른다.
+    응답 본문을 해석하거나 필터링하지 않고 그대로 반환한다.
+
+    Args:
+        category_id: 네이버 커머스 API leaf category ID.
+        attribute_seq: 조회 기준 속성 시퀀스 ID.
+        tk: 이미 발급받은 액세스 토큰. None 이면 새로 발급한다.
+
+    Returns:
+        ``(status_code, body)`` — 성공과 오류 모두 서버 응답 본문을 그대로 담는다.
+    """
+    injected_tk = tk is not None
+    tk = tk or get_token()
+    r = _api_request(
+        "GET",
+        BASE + "/external/v1/product-attributes/attribute-values",
+        tk=tk,
+        header_builder=lambda t: _h(t, False),
+        allow_retry=True,
+        injected_token=injected_tk,
+        params={
+            "categoryId": str(category_id or ""),
+            "attributeSeq": str(attribute_seq or ""),
+        },
         timeout=20,
     )
     return r.status_code, _json_or_text_response(r)

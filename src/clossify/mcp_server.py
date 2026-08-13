@@ -5,7 +5,7 @@
 """Clossify MCP 서버 — 네이버 스마트스토어 등록 능력을 MCP 클라이언트 LLM에 부여.
 
 이 모듈은 MCP Python SDK(v2, PyPI `mcp`)의 `MCPServer`(FastMCP 후속)를 사용해
-로컬 stdio MCP 서버를 노출한다. 서버는 8개의 도구를 제공한다:
+로컬 stdio MCP 서버를 노출한다. 서버는 10개의 도구를 제공한다:
 
 - ``check_config``: 자격증명/설정 파일 존재 및 형식 검사. 기본은 외부 API 호출
   없음. ``read_existing=True`` 면 기존 상품에서 정책값을 읽어 제안(온보딩).
@@ -18,6 +18,8 @@
   명시적으로 참일 때만 동작하며, 성공 시 로컬 등록 기록도 함께 지운다.
 - ``manage_products``: 등록 후 관리 — 상품 목록 조회, 판매중지/재개, 네이버
   검수(수정요청) 확인. 정적 관리 패널 HTML 을 생성한다.
+- ``get_category_attributes``: 카테고리별 상품속성 목록을 조회한다.
+- ``get_category_attribute_values``: 카테고리별 상품속성값 목록을 조회한다.
 
 모든 자격증명은 프로젝트 루트의 ``.local/config.json`` 에만 존재한다
 (ADR-0002 로컬 MCP + BYO-key). 이 서버 자체는 자격증명을 수탁/저장하지 않는다.
@@ -3819,9 +3821,10 @@ def delete_product(
 # raw_body 크기 상한 — 너무 큰 본문은 LLM 컨텍스트를 잡아먹으므로 자르되
 # 잘랐다는 사실을 명시한다(조용한 절삭 금지). JSON 직렬화 길이 기준.
 _RAW_BODY_MAX_CHARS = 8192
+_ATTRIBUTE_VALUES_RAW_BODY_MAX_CHARS = 32768
 
 
-def _truncate_raw_body(body: Any) -> tuple[Any, bool]:
+def _truncate_raw_body(body: Any, *, max_chars: int = _RAW_BODY_MAX_CHARS) -> tuple[Any, bool]:
     """서버가 준 본문을 직렬화하여 상한 초과 시 자른다.
 
     반환: ``(본문_또는_잘린_문자열, 잘렸는지 여부)``.
@@ -3838,11 +3841,9 @@ def _truncate_raw_body(body: Any) -> tuple[Any, bool]:
         text = _json.dumps(body, ensure_ascii=False, default=str)
     except Exception:
         text = str(body)
-    if len(text) <= _RAW_BODY_MAX_CHARS:
+    if len(text) <= max_chars:
         return body, False
-    truncated = text[:_RAW_BODY_MAX_CHARS] + (
-        f"…[raw_body truncated: {len(text)} chars → {_RAW_BODY_MAX_CHARS} chars]"
-    )
+    truncated = text[:max_chars] + f"…[raw_body truncated: {len(text)} chars → {max_chars} chars]"
     return truncated, True
 
 
@@ -3881,20 +3882,18 @@ def _mask_secrets_in_body(body: Any) -> Any:
 def get_category_attributes(category_id: str) -> dict[str, Any]:
     """카테고리별 상품속성 목록을 네이버 커머스 API 에서 조회한다.
 
-    **[미실측 도구]** — 이 응답 형태는 아직 실측되지 않았다. 실제 응답 1콜을
-    확인한 적이 없고, 쿼리 파라미터명 ``categoryId`` 도 **[가정]** 이다
-    (문서에 명시된 것이 아니라 커머스 API 관례에서 유추). 따라서:
+    **[실측 범위]** 2026-08-12 카테고리 50000830 1건으로 최상위 리스트 응답을
+    확인했다. 다른 카테고리 형태는 미확인이다. 확인된 응답에서는:
 
       - 응답을 **우리 스키마로 재매핑하지 않는다** — 받은 그대로 돌려준다.
       - 응답이 예상과 다르면 **조용히 빈 목록을 내지 않는다** — 무엇을
         받았는지 그대로 보고한다.
-      - 본 도구는 응답에 ``schema_verified: false`` 표시를 함께 실어, 이
-        응답을 그대로 신뢰해 자동 선택 로직을 짓는 것을 막는다.
+    - 최상위 리스트가 곧 속성 목록이므로, ``attributes`` 에 그대로 담는다.
 
     반환의 ``raw_body`` 필드는 서버가 준 본문을 가공 없이 그대로 실는다
-    (dict·list·문자열 가리지 않음). ``attributes`` 필드는 ``raw_body`` 에서
-    ``attributes`` 키를 편의로 끌어낸 것이다 — 없으면 ``None`` 이지만
-    ``raw_body`` 는 항상 살아 있으므로 거기서 스키마를 확정하면 된다.
+    (dict·list·문자열 가리지 않음). ``attributes`` 필드는 확인된 최상위
+    리스트 응답을 그대로 담는다. 다른 형태이면 ``None`` 이지만 ``raw_body`` 는
+    항상 살아 있으므로 거기서 형태를 확인할 수 있다.
 
     Args:
         category_id: 네이버 커머스 API leaf category ID (문자열). 빈 값이면
@@ -3907,21 +3906,15 @@ def get_category_attributes(category_id: str) -> dict[str, Any]:
         "error": str | None}``
 
         - ``ok``: HTTP 200 일 때만 ``True``.
-        - ``schema_verified``: 항상 ``False``. 응답 스키마가 실측되지 않았다.
-        - ``note``: 미검증 상태를 명시하는 안내문(한국어).
-        - ``attributes``: ``raw_body`` 에서 ``attributes`` 키를 편의로 뽑은 것.
-          우리가 가정한 키가 없으면 ``None`` — 이때는 ``raw_body`` 를 보고
-          스키마를 확정하라.
+        - ``schema_verified``: 확인된 최상위 리스트 응답이면 ``True``.
+        - ``note``: 실측 범위를 명시하는 안내문(한국어).
+        - ``attributes``: 확인된 최상위 리스트 전체. 다른 형태이면 ``None``.
         - ``raw_body``: 서버가 준 본문을 가공 없이 그대로. dict 든 list 든
           문자열이든 받은 것을 버리지 않는다. 상한 초과 시 자르되
           ``raw_body_truncated=True`` 로 명시한다.
         - ``raw_body_truncated``: ``raw_body`` 를 잘랐으면 ``True``.
     """
-    _NOTE_BASE = (
-        "이 도구의 응답 형태는 아직 실측되지 않았습니다 "
-        "(schema_verified=false). 응답을 우리 스키마로 재매핑하지 않고 "
-        "받은 그대로 돌려줍니다. 이 응답으로 자동 선택 로직을 짓지 마세요."
-    )
+    _NOTE_BASE = "2026-08-12 카테고리 50000830 1건으로 확인. 다른 카테고리 형태는 미확인."
 
     # 1) 입력 검증 — 비어있으면 API 를 부르지 않고 거부한다.
     raw_id = str(category_id or "").strip()
@@ -3938,8 +3931,7 @@ def get_category_attributes(category_id: str) -> dict[str, Any]:
             "error": "category_id 는 비어있지 않은 값이어야 합니다.",
         }
 
-    # 2) API 호출 — naver_client.get_category_attributes 는 [미실측] 래퍼다.
-    #    응답 본문을 가공하지 않고 원형으로 돌려받는다(재매핑 금지).
+    # 2) API 호출 — 응답 본문을 가공하지 않고 원형으로 돌려받는다(재매핑 금지).
     try:
         status_code, body = naver_client.get_category_attributes(raw_id)
     except Exception as exc:  # 네이버 호출 자체가 실패한 경우.
@@ -3965,20 +3957,15 @@ def get_category_attributes(category_id: str) -> dict[str, Any]:
     else:
         raw_body, raw_body_truncated = None, False
 
-    # 4) attributes — raw_body 에서 "attributes" 키를 편의로 뽑는다.
-    #    가정한 키가 없으면 None 이되, raw_body 는 살아 있다(버리지 않는다).
-    extracted_attrs: Any = None
+    # 4) attributes — 실측된 최상위 리스트가 곧 속성 목록이다. dict 의
+    #    "attributes" 키를 가정하거나 탐색하지 않는다.
+    extracted_attrs: Any = raw_body if ok and isinstance(raw_body, list) else None
+    schema_verified = ok and isinstance(raw_body, list)
     note = _NOTE_BASE
-    if ok and isinstance(raw_body, dict):
-        if "attributes" in raw_body:
-            extracted_attrs = raw_body["attributes"]
-        else:
-            note = (
-                _NOTE_BASE + " 가정한 키(attributes)를 못 찾았다 — raw_body 를 보고 "
-                "스키마를 확정하라."
-            )
+    if ok and not schema_verified:
+        note = _NOTE_BASE + " 확인된 최상위 리스트 형태가 아니므로 raw_body 를 확인하세요."
 
-    # 5) 응답 반환 — 원형 + 미검증 표시. 예상과 달라도 빈 목록으로 바꾸지
+    # 5) 응답 반환 — 원형 + 실측 범위 표시. 예상과 달라도 빈 목록으로 바꾸지
     #    않는다(조용한 누락 금지). 비 200 이면 사유만.
     error_text: str | None = None
     if not ok:
@@ -3998,9 +3985,100 @@ def get_category_attributes(category_id: str) -> dict[str, Any]:
         "ok": ok,
         "status_code": status_code,
         "category_id": raw_id,
-        "schema_verified": False,
+        "schema_verified": schema_verified,
         "note": note,
         "attributes": extracted_attrs,
+        "raw_body": raw_body,
+        "raw_body_truncated": raw_body_truncated,
+        "error": error_text,
+    }
+
+
+@mcp.tool()
+def get_category_attribute_values(category_id: str, attribute_seq: str | int) -> dict[str, Any]:
+    """카테고리의 상품속성값 목록을 네이버 커머스 API 에서 조회한다.
+
+    **[실측 범위]** 2026-08-12 카테고리 50000830 1건으로 확인했다. 해당 응답은
+    최상위 리스트 125개이며, ``attributeSeq`` 를 하나 주어도 카테고리 전체
+    속성값이 반환됐다. 다른 카테고리 형태는 미확인이다.
+
+    ``raw_body`` 는 서버가 준 본문을 가공 없이 보존한다. ``attribute_values`` 는
+    확인된 최상위 리스트를 편의로 그대로 가리킬 뿐, 항목을 재매핑하거나
+    필터링하지 않는다.
+
+    Returns:
+        ``{"ok": bool, "status_code": int | None, "category_id": str,
+        "attribute_seq": str, "schema_verified": bool, "note": str,
+        "attribute_values": Any, "raw_body": Any,
+        "raw_body_truncated": bool, "error": str | None}``
+    """
+    note_base = "2026-08-12 카테고리 50000830 1건으로 확인. 다른 카테고리 형태는 미확인."
+    raw_id = str(category_id or "").strip()
+    raw_seq = str(attribute_seq or "").strip()
+    if not raw_id or not raw_seq:
+        missing = "category_id" if not raw_id else "attribute_seq"
+        return {
+            "ok": False,
+            "status_code": None,
+            "category_id": raw_id,
+            "attribute_seq": raw_seq,
+            "schema_verified": False,
+            "note": note_base,
+            "attribute_values": None,
+            "raw_body": None,
+            "raw_body_truncated": False,
+            "error": f"{missing} 는 비어있지 않은 값이어야 합니다.",
+        }
+
+    try:
+        status_code, body = naver_client.get_category_attribute_values(raw_id, raw_seq)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "status_code": None,
+            "category_id": raw_id,
+            "attribute_seq": raw_seq,
+            "schema_verified": False,
+            "note": note_base,
+            "attribute_values": None,
+            "raw_body": None,
+            "raw_body_truncated": False,
+            "error": f"조회 중 오류: {_sanitize_error(exc)}",
+        }
+
+    ok = isinstance(status_code, int) and status_code == 200
+    safe_body = _mask_secrets_in_body(body) if ok else None
+    if safe_body is not None:
+        raw_body, raw_body_truncated = _truncate_raw_body(
+            safe_body, max_chars=_ATTRIBUTE_VALUES_RAW_BODY_MAX_CHARS
+        )
+    else:
+        raw_body, raw_body_truncated = None, False
+
+    schema_verified = ok and isinstance(raw_body, list)
+    note = note_base
+    if ok and not schema_verified:
+        note = note_base + " 확인된 최상위 리스트 형태가 아니므로 raw_body 를 확인하세요."
+
+    error_text: str | None = None
+    if not ok:
+        if body is not None:
+            try:
+                body_preview = json.dumps(body, ensure_ascii=False, default=str)
+            except Exception:
+                body_preview = str(body)
+            raw_body = body_preview[:_ATTRIBUTE_VALUES_RAW_BODY_MAX_CHARS]
+            raw_body_truncated = len(body_preview) > _ATTRIBUTE_VALUES_RAW_BODY_MAX_CHARS
+        error_text = _sanitize_text(f"API 반환 상태 {status_code}: {body}")
+
+    return {
+        "ok": ok,
+        "status_code": status_code,
+        "category_id": raw_id,
+        "attribute_seq": raw_seq,
+        "schema_verified": schema_verified,
+        "note": note,
+        "attribute_values": raw_body if schema_verified else None,
         "raw_body": raw_body,
         "raw_body_truncated": raw_body_truncated,
         "error": error_text,

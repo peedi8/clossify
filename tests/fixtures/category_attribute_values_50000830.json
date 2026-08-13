@@ -1,0 +1,752 @@
+[
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10614292,
+  "minAttributeValue": "데님",
+  "exposureOrder": 1
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10614291,
+  "minAttributeValue": "시폰",
+  "exposureOrder": 2
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10574774,
+  "minAttributeValue": "면",
+  "exposureOrder": 3
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10574775,
+  "minAttributeValue": "폴리에스테르",
+  "exposureOrder": 4
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10258043,
+  "minAttributeValue": "기모",
+  "exposureOrder": 5
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10574779,
+  "minAttributeValue": "폴리우레탄",
+  "exposureOrder": 6
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10574780,
+  "minAttributeValue": "아크릴",
+  "exposureOrder": 7
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10030853,
+  "minAttributeValue": "나일론",
+  "exposureOrder": 8
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 11503791,
+  "minAttributeValue": "포코노나일론",
+  "exposureOrder": 9
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10904505,
+  "minAttributeValue": "울/모",
+  "exposureOrder": 10
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10574784,
+  "minAttributeValue": "스판덱스",
+  "exposureOrder": 11
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10197460,
+  "minAttributeValue": "가죽",
+  "exposureOrder": 12
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10574786,
+  "minAttributeValue": "앙고라",
+  "exposureOrder": 13
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10574787,
+  "minAttributeValue": "알파카",
+  "exposureOrder": 14
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10574788,
+  "minAttributeValue": "견",
+  "exposureOrder": 15
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10768449,
+  "minAttributeValue": "레이온/인견",
+  "exposureOrder": 16
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10773536,
+  "minAttributeValue": "비스코스",
+  "exposureOrder": 17
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10583366,
+  "minAttributeValue": "실크",
+  "exposureOrder": 18
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10583619,
+  "minAttributeValue": "텐셀",
+  "exposureOrder": 19
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10583892,
+  "minAttributeValue": "모달",
+  "exposureOrder": 20
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10583957,
+  "minAttributeValue": "캐시미어",
+  "exposureOrder": 21
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10587992,
+  "minAttributeValue": "밍크",
+  "exposureOrder": 22
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10574792,
+  "minAttributeValue": "토끼털",
+  "exposureOrder": 23
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10591128,
+  "minAttributeValue": "라마",
+  "exposureOrder": 24
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10669967,
+  "minAttributeValue": "라쿤퍼",
+  "exposureOrder": 25
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10669977,
+  "minAttributeValue": "폭스퍼",
+  "exposureOrder": 26
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10765793,
+  "minAttributeValue": "마/리넨",
+  "exposureOrder": 27
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10826620,
+  "minAttributeValue": "지지미",
+  "exposureOrder": 28
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10663789,
+  "minAttributeValue": "인조퍼",
+  "exposureOrder": 29
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10726692,
+  "minAttributeValue": "인조가죽(합성피혁)",
+  "exposureOrder": 30
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10040900,
+  "minAttributeValue": "스웨이드",
+  "exposureOrder": 31
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10030578,
+  "minAttributeValue": "코듀로이",
+  "exposureOrder": 32
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10240816,
+  "minAttributeValue": "새틴",
+  "exposureOrder": 33
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10509706,
+  "minAttributeValue": "벨벳",
+  "exposureOrder": 34
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10033176,
+  "minAttributeValue": "네오프렌",
+  "exposureOrder": 35
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10808979,
+  "minAttributeValue": "모헤어",
+  "exposureOrder": 36
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10846427,
+  "minAttributeValue": "왁스드코튼",
+  "exposureOrder": 37
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10388519,
+  "minAttributeValue": "폴리아미드",
+  "exposureOrder": 38
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10588338,
+  "minAttributeValue": "리오셀",
+  "exposureOrder": 39
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10761412,
+  "minAttributeValue": "샤크스킨",
+  "exposureOrder": 40
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10583092,
+  "minAttributeValue": "아세테이트",
+  "exposureOrder": 41
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 11231981,
+  "minAttributeValue": "트리아세테이트",
+  "exposureOrder": 42
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10817458,
+  "minAttributeValue": "시어서커",
+  "exposureOrder": 43
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10304643,
+  "minAttributeValue": "쿨맥스",
+  "exposureOrder": 44
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 11431161,
+  "minAttributeValue": "망사,메시",
+  "exposureOrder": 45
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 11469581,
+  "minAttributeValue": "트라이자",
+  "exposureOrder": 46
+ },
+ {
+  "attributeSeq": 10012483,
+  "attributeValueSeq": 10030656,
+  "minAttributeValue": "기타",
+  "exposureOrder": 47
+ },
+ {
+  "attributeSeq": 10013498,
+  "attributeValueSeq": 10557683,
+  "minAttributeValue": "숏",
+  "exposureOrder": 1
+ },
+ {
+  "attributeSeq": 10013498,
+  "attributeValueSeq": 10904496,
+  "minAttributeValue": "기본/하프",
+  "exposureOrder": 2
+ },
+ {
+  "attributeSeq": 10013498,
+  "attributeValueSeq": 10557685,
+  "minAttributeValue": "롱",
+  "exposureOrder": 3
+ },
+ {
+  "attributeSeq": 10013498,
+  "attributeValueSeq": 11304391,
+  "minAttributeValue": "크롭",
+  "exposureOrder": 4
+ },
+ {
+  "attributeSeq": 10012485,
+  "attributeValueSeq": 10032139,
+  "minAttributeValue": "스트랩",
+  "exposureOrder": 1
+ },
+ {
+  "attributeSeq": 10012485,
+  "attributeValueSeq": 10588283,
+  "minAttributeValue": "민소매",
+  "exposureOrder": 2
+ },
+ {
+  "attributeSeq": 10012485,
+  "attributeValueSeq": 10669979,
+  "minAttributeValue": "캡소매",
+  "exposureOrder": 3
+ },
+ {
+  "attributeSeq": 10012485,
+  "attributeValueSeq": 10574793,
+  "minAttributeValue": "반팔",
+  "exposureOrder": 4
+ },
+ {
+  "attributeSeq": 10012485,
+  "attributeValueSeq": 10732758,
+  "minAttributeValue": "5부",
+  "exposureOrder": 5
+ },
+ {
+  "attributeSeq": 10012485,
+  "attributeValueSeq": 10574794,
+  "minAttributeValue": "7부",
+  "exposureOrder": 6
+ },
+ {
+  "attributeSeq": 10012485,
+  "attributeValueSeq": 10574795,
+  "minAttributeValue": "긴팔",
+  "exposureOrder": 7
+ },
+ {
+  "attributeSeq": 10012485,
+  "attributeValueSeq": 10030656,
+  "minAttributeValue": "기타",
+  "exposureOrder": 8
+ },
+ {
+  "attributeSeq": 10013357,
+  "attributeValueSeq": 10040041,
+  "minAttributeValue": "라운드넥",
+  "exposureOrder": 1
+ },
+ {
+  "attributeSeq": 10013357,
+  "attributeValueSeq": 10040039,
+  "minAttributeValue": "V넥",
+  "exposureOrder": 2
+ },
+ {
+  "attributeSeq": 10013357,
+  "attributeValueSeq": 10040040,
+  "minAttributeValue": "U넥",
+  "exposureOrder": 3
+ },
+ {
+  "attributeSeq": 10013357,
+  "attributeValueSeq": 10040043,
+  "minAttributeValue": "칼라넥",
+  "exposureOrder": 4
+ },
+ {
+  "attributeSeq": 10013357,
+  "attributeValueSeq": 10726808,
+  "minAttributeValue": "터틀넥",
+  "exposureOrder": 5
+ },
+ {
+  "attributeSeq": 10013357,
+  "attributeValueSeq": 10040038,
+  "minAttributeValue": "오프숄더넥",
+  "exposureOrder": 6
+ },
+ {
+  "attributeSeq": 10013357,
+  "attributeValueSeq": 10588352,
+  "minAttributeValue": "숄칼라",
+  "exposureOrder": 7
+ },
+ {
+  "attributeSeq": 10013357,
+  "attributeValueSeq": 10040044,
+  "minAttributeValue": "후드넥",
+  "exposureOrder": 8
+ },
+ {
+  "attributeSeq": 10013357,
+  "attributeValueSeq": 10729057,
+  "minAttributeValue": "반집업칼라",
+  "exposureOrder": 9
+ },
+ {
+  "attributeSeq": 10013357,
+  "attributeValueSeq": 10731791,
+  "minAttributeValue": "스텐드/차이나칼라",
+  "exposureOrder": 10
+ },
+ {
+  "attributeSeq": 10013357,
+  "attributeValueSeq": 10765710,
+  "minAttributeValue": "스퀘어넥",
+  "exposureOrder": 11
+ },
+ {
+  "attributeSeq": 10013357,
+  "attributeValueSeq": 10765711,
+  "minAttributeValue": "보트/입술넥",
+  "exposureOrder": 12
+ },
+ {
+  "attributeSeq": 10013357,
+  "attributeValueSeq": 10669058,
+  "minAttributeValue": "홀터넥",
+  "exposureOrder": 13
+ },
+ {
+  "attributeSeq": 10013357,
+  "attributeValueSeq": 10714679,
+  "minAttributeValue": "헨리넥",
+  "exposureOrder": 14
+ },
+ {
+  "attributeSeq": 10013357,
+  "attributeValueSeq": 10846520,
+  "minAttributeValue": "슬릿넥",
+  "exposureOrder": 15
+ },
+ {
+  "attributeSeq": 10013357,
+  "attributeValueSeq": 10844834,
+  "minAttributeValue": "하이넥",
+  "exposureOrder": 16
+ },
+ {
+  "attributeSeq": 10013357,
+  "attributeValueSeq": 10030656,
+  "minAttributeValue": "기타",
+  "exposureOrder": 17
+ },
+ {
+  "attributeSeq": 10011015,
+  "attributeValueSeq": 10040058,
+  "minAttributeValue": "슬림핏",
+  "exposureOrder": 1
+ },
+ {
+  "attributeSeq": 10011015,
+  "attributeValueSeq": 10040059,
+  "minAttributeValue": "기본핏",
+  "exposureOrder": 2
+ },
+ {
+  "attributeSeq": 10011015,
+  "attributeValueSeq": 10904155,
+  "minAttributeValue": "루즈핏/오버핏",
+  "exposureOrder": 3
+ },
+ {
+  "attributeSeq": 10011015,
+  "attributeValueSeq": 11439691,
+  "minAttributeValue": "머슬핏",
+  "exposureOrder": 4
+ },
+ {
+  "attributeSeq": 10011015,
+  "attributeValueSeq": 10030656,
+  "minAttributeValue": "기타",
+  "exposureOrder": 5
+ },
+ {
+  "attributeSeq": 10005212,
+  "attributeValueSeq": 10029065,
+  "minAttributeValue": "남성용",
+  "exposureOrder": 1
+ },
+ {
+  "attributeSeq": 10005212,
+  "attributeValueSeq": 10537277,
+  "minAttributeValue": "여성용",
+  "exposureOrder": 2
+ },
+ {
+  "attributeSeq": 10005212,
+  "attributeValueSeq": 10030583,
+  "minAttributeValue": "남녀공용",
+  "exposureOrder": 3
+ },
+ {
+  "attributeSeq": 10035018,
+  "attributeValueSeq": 11331141,
+  "minAttributeValue": "피케티셔츠",
+  "exposureOrder": 1
+ },
+ {
+  "attributeSeq": 10035018,
+  "attributeValueSeq": 11331151,
+  "minAttributeValue": "맨투맨(스웨트셔츠)",
+  "exposureOrder": 2
+ },
+ {
+  "attributeSeq": 10035018,
+  "attributeValueSeq": 10030656,
+  "minAttributeValue": "기타",
+  "exposureOrder": 3
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 10574836,
+  "minAttributeValue": "체크",
+  "exposureOrder": 1
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 10040089,
+  "minAttributeValue": "프린트",
+  "exposureOrder": 2
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 10040086,
+  "minAttributeValue": "도트",
+  "exposureOrder": 3
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 10040050,
+  "minAttributeValue": "스트라이프",
+  "exposureOrder": 4
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 10040928,
+  "minAttributeValue": "플라워",
+  "exposureOrder": 5
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 10264433,
+  "minAttributeValue": "레오파드",
+  "exposureOrder": 6
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 10553086,
+  "minAttributeValue": "지브라",
+  "exposureOrder": 7
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 10731153,
+  "minAttributeValue": "카모플라쥬",
+  "exposureOrder": 8
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 10722415,
+  "minAttributeValue": "기하학",
+  "exposureOrder": 9
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 10040057,
+  "minAttributeValue": "로고",
+  "exposureOrder": 10
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 10040055,
+  "minAttributeValue": "캐릭터",
+  "exposureOrder": 11
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 10731157,
+  "minAttributeValue": "레터링",
+  "exposureOrder": 12
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 10769411,
+  "minAttributeValue": "파이톤",
+  "exposureOrder": 13
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 10040049,
+  "minAttributeValue": "무지",
+  "exposureOrder": 14
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 10773537,
+  "minAttributeValue": "아가일",
+  "exposureOrder": 15
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 10846063,
+  "minAttributeValue": "헤링본",
+  "exposureOrder": 16
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 10759955,
+  "minAttributeValue": "페이즐리",
+  "exposureOrder": 17
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 10040861,
+  "minAttributeValue": "퀼팅",
+  "exposureOrder": 18
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 11051985,
+  "minAttributeValue": "크로커다일",
+  "exposureOrder": 19
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 11051995,
+  "minAttributeValue": "하운드",
+  "exposureOrder": 20
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 11051996,
+  "minAttributeValue": "쉐브론",
+  "exposureOrder": 21
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 10774065,
+  "minAttributeValue": "에스닉",
+  "exposureOrder": 22
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 10232290,
+  "minAttributeValue": "트로피칼",
+  "exposureOrder": 23
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 10383862,
+  "minAttributeValue": "하트",
+  "exposureOrder": 24
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 10760048,
+  "minAttributeValue": "사선",
+  "exposureOrder": 25
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 11526221,
+  "minAttributeValue": "젠탱글",
+  "exposureOrder": 26
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeValueSeq": 10030656,
+  "minAttributeValue": "기타",
+  "exposureOrder": 27
+ },
+ {
+  "attributeSeq": 10013358,
+  "attributeValueSeq": 10258043,
+  "minAttributeValue": "기모",
+  "exposureOrder": 1
+ },
+ {
+  "attributeSeq": 10013358,
+  "attributeValueSeq": 10583641,
+  "minAttributeValue": "양털",
+  "exposureOrder": 2
+ },
+ {
+  "attributeSeq": 10013358,
+  "attributeValueSeq": 10729222,
+  "minAttributeValue": "보아털",
+  "exposureOrder": 3
+ },
+ {
+  "attributeSeq": 10013358,
+  "attributeValueSeq": 10040903,
+  "minAttributeValue": "패딩",
+  "exposureOrder": 4
+ },
+ {
+  "attributeSeq": 10046117,
+  "attributeValueSeq": 10669925,
+  "minAttributeValue": "냉감",
+  "exposureOrder": 1
+ },
+ {
+  "attributeSeq": 10046117,
+  "attributeValueSeq": 10416650,
+  "minAttributeValue": "자외선차단",
+  "exposureOrder": 2
+ },
+ {
+  "attributeSeq": 10046117,
+  "attributeValueSeq": 10373536,
+  "minAttributeValue": "흡습",
+  "exposureOrder": 3
+ },
+ {
+  "attributeSeq": 10046117,
+  "attributeValueSeq": 10373537,
+  "minAttributeValue": "속건",
+  "exposureOrder": 4
+ },
+ {
+  "attributeSeq": 10046117,
+  "attributeValueSeq": 10669928,
+  "minAttributeValue": "통기",
+  "exposureOrder": 5
+ },
+ {
+  "attributeSeq": 10046117,
+  "attributeValueSeq": 10258049,
+  "minAttributeValue": "발수",
+  "exposureOrder": 6
+ },
+ {
+  "attributeSeq": 10046117,
+  "attributeValueSeq": 10031724,
+  "minAttributeValue": "정전기방지",
+  "exposureOrder": 7
+ }
+]

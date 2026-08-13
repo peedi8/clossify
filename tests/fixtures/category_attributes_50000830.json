@@ -1,0 +1,102 @@
+[
+ {
+  "attributeSeq": 10012483,
+  "attributeName": "주요소재",
+  "attributeClassificationType": "MULTI_SELECT",
+  "attributeClassificationCodeName": "복수선택형",
+  "attributeType": "PRIMARY",
+  "attributeTypeCodeName": "주요",
+  "unitUsable": false,
+  "attributeValueMaxMatchingCount": 5
+ },
+ {
+  "attributeSeq": 10013498,
+  "attributeName": "총기장",
+  "attributeClassificationType": "SINGLE_SELECT",
+  "attributeClassificationCodeName": "선택형",
+  "attributeType": "PRIMARY",
+  "attributeTypeCodeName": "주요",
+  "unitUsable": false,
+  "attributeValueMaxMatchingCount": 0
+ },
+ {
+  "attributeSeq": 10012485,
+  "attributeName": "소매기장",
+  "attributeClassificationType": "SINGLE_SELECT",
+  "attributeClassificationCodeName": "선택형",
+  "attributeType": "PRIMARY",
+  "attributeTypeCodeName": "주요",
+  "unitUsable": false,
+  "attributeValueMaxMatchingCount": 0
+ },
+ {
+  "attributeSeq": 10013357,
+  "attributeName": "네크라인",
+  "attributeClassificationType": "SINGLE_SELECT",
+  "attributeClassificationCodeName": "선택형",
+  "attributeType": "PRIMARY",
+  "attributeTypeCodeName": "주요",
+  "unitUsable": false,
+  "attributeValueMaxMatchingCount": 0
+ },
+ {
+  "attributeSeq": 10011015,
+  "attributeName": "핏",
+  "attributeClassificationType": "SINGLE_SELECT",
+  "attributeClassificationCodeName": "선택형",
+  "attributeType": "PRIMARY",
+  "attributeTypeCodeName": "주요",
+  "unitUsable": false,
+  "attributeValueMaxMatchingCount": 0
+ },
+ {
+  "attributeSeq": 10013386,
+  "attributeName": "패턴",
+  "attributeClassificationType": "MULTI_SELECT",
+  "attributeClassificationCodeName": "복수선택형",
+  "attributeType": "PRIMARY",
+  "attributeTypeCodeName": "주요",
+  "unitUsable": false,
+  "attributeValueMaxMatchingCount": 2
+ },
+ {
+  "attributeSeq": 10013358,
+  "attributeName": "안감",
+  "attributeClassificationType": "SINGLE_SELECT",
+  "attributeClassificationCodeName": "선택형",
+  "attributeType": "OPTIONAL",
+  "attributeTypeCodeName": "부가",
+  "unitUsable": false,
+  "attributeValueMaxMatchingCount": 0
+ },
+ {
+  "attributeSeq": 10005212,
+  "attributeName": "사용대상",
+  "attributeClassificationType": "SINGLE_SELECT",
+  "attributeClassificationCodeName": "선택형",
+  "attributeType": "PRIMARY",
+  "attributeTypeCodeName": "주요",
+  "unitUsable": false,
+  "attributeValueMaxMatchingCount": 0
+ },
+ {
+  "attributeSeq": 10035018,
+  "attributeName": "종류",
+  "attributeClassificationType": "MULTI_SELECT",
+  "attributeClassificationCodeName": "복수선택형",
+  "attributeType": "PRIMARY",
+  "attributeTypeCodeName": "주요",
+  "unitUsable": false,
+  "attributeValueMaxMatchingCount": 0
+ },
+ {
+  "attributeSeq": 10046117,
+  "attributeName": "기능",
+  "attributeClassificationType": "MULTI_SELECT",
+  "attributeClassificationCodeName": "복수선택형",
+  "attributeType": "OPTIONAL",
+  "attributeTypeCodeName": "부가",
+  "unitUsable": false,
+  "attributeValueMaxMatchingCount": 0
+ }
+]

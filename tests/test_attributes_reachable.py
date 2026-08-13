@@ -12,8 +12,8 @@
      거부(fail-closed).
   3. prepared 에 저장된 속성이 편집 없이 승인해도 최종 payload 에 실린다.
   4. 미리보기 행과 payload 가 같음을 확인.
-  5. ``get_category_attributes`` MCP 도구가 응답을 원형 + 미검증 표시로
-     돌려줌(몽키패치 응답으로).
+  5. ``get_category_attributes`` MCP 도구가 실측 최상위 리스트 응답을 원형으로
+     돌려주고, 확인 범위를 표시함(픽스처 기반).
 
 슬라이스1 (``test_product_attributes.py``) 은 ``build_payload`` 단위였다.
 슬라이스2는 MCP 진입점(``register_product`` · ``get_category_attributes``) 과
@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -552,14 +553,53 @@ class TestPreviewRowsMatchPayload:
 
 
 # =========================================================================== #
-# 인수조건 5: get_category_attributes MCP 도구가 응답을 원형 + 미검증 표시로
-#              돌려줌(몽키패치 응답으로).
+# 인수조건 5: get_category_attributes MCP 도구가 실측 최상위 리스트 응답을
+#              원형 + 확인 범위 표시로 돌려줌(픽스처 기반).
 # =========================================================================== #
 class TestGetCategoryAttributesMcpTool:
     """MCP 도구 get_category_attributes 의 동작 검증."""
 
-    def test_returns_raw_response_with_unverified_marker(self, monkeypatch):
-        """200 응답 → 원형 raw_body + 추출 attributes + schema_verified=false + note."""
+    def test_parses_measured_top_level_attribute_list_fixture(self, monkeypatch):
+        """실측 픽스처의 최상위 리스트를 속성 목록으로 그대로 반환한다."""
+        fixture_path = _PROJECT_ROOT / "tests" / "fixtures" / "category_attributes_50000830.json"
+        fixture_body = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+        def fake_api(category_id, tk=None):
+            return 200, fixture_body
+
+        monkeypatch.setattr(naver_client, "get_category_attributes", fake_api)
+
+        result = mcp_server.get_category_attributes("50000830")
+
+        expected_keys = {
+            "attributeSeq",
+            "attributeName",
+            "attributeClassificationType",
+            "attributeClassificationCodeName",
+            "attributeType",
+            "attributeTypeCodeName",
+            "unitUsable",
+            "attributeValueMaxMatchingCount",
+        }
+        assert result["ok"] is True
+        assert result["status_code"] == 200
+        assert result["category_id"] == "50000830"
+        assert result["schema_verified"] is True
+        assert result["note"] == (
+            "2026-08-12 카테고리 50000830 1건으로 확인. 다른 카테고리 형태는 미확인."
+        )
+        assert len(result["attributes"]) == 10
+        assert all(set(attribute) == expected_keys for attribute in result["attributes"])
+        assert any(
+            attribute["attributeSeq"] == 10011015 and attribute["attributeName"] == "핏"
+            for attribute in result["attributes"]
+        )
+        assert result["raw_body"] == fixture_body
+        assert isinstance(result["raw_body"], list)
+        assert result["raw_body_truncated"] is False
+
+    def test_returns_raw_response_without_dict_key_assumption(self, monkeypatch):
+        """200 dict 응답은 원형 보존하되 attributes 키를 탐색하지 않는다."""
         fake_body = {
             "attributes": [
                 {"attributeSeq": 1, "attributeName": "색상"},
@@ -576,18 +616,11 @@ class TestGetCategoryAttributesMcpTool:
         assert result["ok"] is True
         assert result["status_code"] == 200
         assert result["category_id"] == "50002366"
-        # 핵심: 미검증 표시.
-        assert (
-            result["schema_verified"] is False
-        ), "schema_verified 가 False 여야 한다 (미실측 도구)"
+        assert result["schema_verified"] is False
         # 핵심: raw_body 원형 반환(재매핑 금지).
         assert result["raw_body"] == fake_body, "raw_body 가 원형이 아니다 — 재매핑하면 안 된다"
-        # 핵심: attributes 는 raw_body 에서 편의 추출.
-        assert (
-            result["attributes"] == fake_body["attributes"]
-        ), "attributes 가 raw_body[attributes] 와 다르다"
-        # note 에 미검증 안내가 있어야 한다.
-        assert "실측" in result["note"], "note 에 미실측 안내가 없다"
+        assert result["attributes"] is None
+        assert "raw_body" in result["note"]
 
     def test_empty_category_id_rejected(self):
         """빈 category_id → API 호출 없이 거부."""
@@ -630,13 +663,12 @@ class TestGetCategoryAttributesMcpTool:
         assert result["schema_verified"] is False
         assert "연결 실패" in result["error"] or "오류" in result["error"]
 
-    def test_docstring_discloses_unverified(self):
-        """도구 설명(docstring) 에 '실측되지 않았다' 를 명시."""
+    def test_docstring_discloses_measured_scope(self):
+        """도구 설명(docstring) 에 실측 일자와 범위를 명시."""
         doc = mcp_server.get_category_attributes.__doc__ or ""
-        assert "실측" in doc, (
-            "docstring 에 미실측 문구가 없다 — 응답 형태가 아직 실측되지 "
-            "않았다는 것을 명시해야 한다."
-        )
+        assert "2026-08-12" in doc
+        assert "50000830" in doc
+        assert "다른 카테고리 형태는 미확인" in doc
 
     def test_unexpected_shape_not_silently_emptied(self, monkeypatch):
         """응답이 예상과 달라도 빈 목록으로 바꾸지 않는다 — 원형 보고.
@@ -659,7 +691,7 @@ class TestGetCategoryAttributesMcpTool:
         assert (
             result["raw_body"] == unexpected_body
         ), "예상과 다른 응답을 raw_body 에서 버렸다 — 원형을 그대로 돌려줘야 한다"
-        # note 에 가정한 키를 못 찾았다는 안내가 있어야 한다.
+        # note 에 원형 본문을 보라는 안내가 있어야 한다.
         assert "raw_body" in result["note"], "note 에 raw_body 를 보라는 안내가 없다"
 
 
@@ -689,8 +721,8 @@ class TestRawBodyPreservedFourShapes:
 
         result = mcp_server.get_category_attributes("50002366")
         assert result["ok"] is True
-        # attributes 추출은 편의로 유지.
-        assert result["attributes"] == fake_body["attributes"]
+        # dict의 attributes 키는 탐색하지 않는다.
+        assert result["attributes"] is None
         # 핵심: unexpectedKey 가 raw_body 에 살아있다.
         rb = result["raw_body"]
         assert isinstance(rb, dict), f"raw_body 가 dict 가 아님: {type(rb)}"
@@ -710,13 +742,13 @@ class TestRawBodyPreservedFourShapes:
 
         result = mcp_server.get_category_attributes("50002366")
         assert result["ok"] is True
-        # 가정한 키(attributes) 가 없다 → None 이되 원형은 살아있다.
+        # 최상위 리스트가 아니면 attributes=None 이되 원형은 살아있다.
         assert result["attributes"] is None, "attributes 키가 없는데 None 이 아니다"
         rb = result["raw_body"]
         assert isinstance(rb, dict), f"raw_body 가 dict 가 아님: {type(rb)}"
         assert rb.get("totalCount") == 1, "totalCount 가 raw_body 에 없다 — 원본 흔적이 사라졌다"
         assert rb.get("data") == [{"seq": 1}]
-        # note 에 가정한 키를 못 찾았다는 안내.
+        # note 에 원형 본문을 보라는 안내.
         assert "raw_body" in result["note"]
 
     def test_shape3_list_top_level(self, monkeypatch):
@@ -730,8 +762,8 @@ class TestRawBodyPreservedFourShapes:
 
         result = mcp_server.get_category_attributes("50002366")
         assert result["ok"] is True
-        # 최상위가 리스트 → dict 가 아니므로 attributes 추출 불가.
-        assert result["attributes"] is None
+        # 최상위 리스트가 곧 속성 목록이다.
+        assert result["attributes"] == fake_body
         # 핵심: 리스트 원형이 raw_body 에 살아있다.
         rb = result["raw_body"]
         assert rb == fake_body, "리스트 원형이 raw_body 에 없다 — 받은 것을 버렸다"
