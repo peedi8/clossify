@@ -74,6 +74,20 @@ def _reset_candidates_cache(monkeypatch):
 class TestNoticeBodyFieldsFromAuthoritativeSource:
     """정본(``notice_types.json``) 의 필드가 동적으로 후보가 된다."""
 
+    def test_certificate_details_uses_cert_detail_without_regressing_model_name(self):
+        product = {
+            "cert_detail": "KCC-REI-XXX",
+            "model_name": "M-1",
+            "manufacturer": "test-manufacturer",
+        }
+
+        candidates = dict(listing_templates._notice_body_field_candidates())
+        body = listing_templates._extract_notice_body(product)
+
+        assert "cert_detail" in candidates["certificateDetails"]
+        assert body["certificateDetails"] == "KCC-REI-XXX"
+        assert body["modelName"] == "M-1"
+
     def test_candidates_include_all_verified_fields(self):
         """후보 합집합이 정본 verified 35타입의 모든 camelCase 필드를 포함한다."""
         candidates = listing_templates._notice_body_field_candidates()
