@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from unittest import mock
@@ -13,7 +14,7 @@ _SRC = _PROJECT_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from clossify import naver_client
+from clossify import mcp_server, naver_client
 
 
 def _product(**overrides: str) -> dict:
@@ -34,6 +35,31 @@ def _build_payload(product: dict, notice_config: dict) -> dict:
 
 
 _ORIGIN = {"origin_area_code": "04", "origin_content": "한국"}
+
+
+def _config_diagnostics(tmp_path: Path, notice_config: dict) -> tuple[dict, dict]:
+    """동일 config에서 공개 점검과 컴플라이언스 플래그를 함께 읽는다."""
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "naver": {
+                    "client_id": "test-id",
+                    "client_secret": "test-secret",
+                    "type": "SELF",
+                    "store_url_slug": "test-store",
+                },
+                "smartstore_notice_defaults": notice_config,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    with (
+        mock.patch.object(naver_client, "config_path", return_value=str(config_path)),
+        mock.patch.object(naver_client, "resolve_config_path", return_value=str(config_path)),
+    ):
+        return mcp_server.check_config(), mcp_server._build_config_flags()
 
 
 def test_missing_as_tel_rejected_with_canonical_config_path():
@@ -70,6 +96,83 @@ def test_product_as_tel_takes_precedence_over_config():
     payload = _build_payload(
         _product(as_tel="02-9876-5432"),
         {**_ORIGIN, "as_tel": "070-1234-5678"},
+    )
+
+    assert (
+        payload["originProduct"]["detailAttribute"]["afterServiceInfo"][
+            "afterServiceTelephoneNumber"
+        ]
+        == "02-9876-5432"
+    )
+
+
+@pytest.mark.parametrize(
+    ("config_key", "phone"),
+    [
+        ("as_tel", "070-1111-1111"),
+        ("seller_tel", "070-2222-2222"),
+        ("customerServicePhoneNumber", "070-3333-3333"),
+    ],
+)
+def test_each_config_as_tel_key_matches_diagnostics_and_payload(tmp_path, config_key, phone):
+    """세 설정 키 각각은 공개 점검·컴플라이언스·조립기에서 모두 유효하다."""
+    notice_config = {**_ORIGIN, config_key: phone}
+
+    check_result, flags = _config_diagnostics(tmp_path, notice_config)
+    payload = _build_payload(_product(), notice_config)
+
+    assert check_result["as_tel_configured"] is True
+    assert flags["as_configured"] is True
+    assert (
+        payload["originProduct"]["detailAttribute"]["afterServiceInfo"][
+            "afterServiceTelephoneNumber"
+        ]
+        == phone
+    )
+
+
+def test_all_config_as_tel_keys_missing_are_rejected_with_all_key_names(tmp_path):
+    """세 설정 키가 모두 없으면 진단과 조립기가 함께 fail-closed 한다."""
+    check_result, flags = _config_diagnostics(tmp_path, _ORIGIN)
+
+    assert check_result["as_tel_configured"] is False
+    assert flags["as_configured"] is False
+    with pytest.raises(ValueError) as exc_info:
+        _build_payload(_product(), _ORIGIN)
+    message = str(exc_info.value)
+    for config_key in ("as_tel", "seller_tel", "customerServicePhoneNumber"):
+        assert config_key in message
+
+
+def test_all_config_as_tel_placeholders_are_rejected(tmp_path):
+    """세 설정 키의 자리표시자는 기존 _first_value 규칙으로 모두 미설정이다."""
+    notice_config = {
+        **_ORIGIN,
+        "as_tel": "REPLACE_WITH_AS_TEL",
+        "seller_tel": "REPLACE_WITH_SELLER_TEL",
+        "customerServicePhoneNumber": "REPLACE_WITH_CUSTOMER_SERVICE_PHONE",
+    }
+
+    check_result, flags = _config_diagnostics(tmp_path, notice_config)
+
+    assert check_result["as_tel_configured"] is False
+    assert flags["as_configured"] is False
+    with pytest.raises(ValueError):
+        _build_payload(_product(), notice_config)
+
+
+@pytest.mark.parametrize(
+    ("product_key", "config_key"),
+    [
+        ("as_tel", "seller_tel"),
+        ("seller_tel", "customerServicePhoneNumber"),
+    ],
+)
+def test_product_as_tel_candidates_take_precedence_over_all_config_keys(product_key, config_key):
+    """기존 상품 입력 후보 둘은 어떤 설정 키보다도 우선한다."""
+    payload = _build_payload(
+        _product(**{product_key: "02-9876-5432"}),
+        {**_ORIGIN, config_key: "070-1234-5678"},
     )
 
     assert (

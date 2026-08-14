@@ -485,20 +485,39 @@ def _build_delivery_fee_block(delivery_fee: int) -> dict:
     }
 
 
-def _notice_defaults(p):
-    cfg_notice = _notice_config()
-    product_name = _first_value(p.get("name"), p.get("title_ko"), default="상품명")
-    # AS 연락처는 규제 신고값이다. 상품 입력 → 정본 설정 순으로만 고르고,
-    # 실질값이 없으면 build_payload 경계에서 등록을 거부한다. 빈 문자열 전송이나
-    # 다른 설정 키로의 묵시적 폴백은 소비자 연락 불가 상품을 만들 수 있다.
-    as_tel = _first_value(
+def _resolve_as_tel(p, cfg_notice) -> str:
+    """A/S 연락처를 상품 입력 우선·설정 세 키 순서로 해석한다.
+
+    자리표시자 판정은 기존 ``_first_value`` 를 그대로 재사용한다. 설정의
+    ``as_tel``(권장)·``seller_tel``·``customerServicePhoneNumber`` 는 모두
+    유효한 A/S 연락처 자리이며, 세 키에 실질값이 없을 때만 fail-closed 한다.
+    """
+    cfg_notice = cfg_notice if isinstance(cfg_notice, dict) else {}
+    return _first_value(
         p.get("as_tel"),
         p.get("seller_tel"),
         cfg_notice.get("as_tel"),
+        cfg_notice.get("seller_tel"),
+        cfg_notice.get("customerServicePhoneNumber"),
         default="",
     )
+
+
+def _notice_defaults(p):
+    cfg_notice = _notice_config()
+    product_name = _first_value(p.get("name"), p.get("title_ko"), default="상품명")
+    # AS 연락처는 규제 신고값이다. 상품 입력 → 설정 세 키 순으로만 고르고,
+    # 실질값이 없으면 build_payload 경계에서 등록을 거부한다. 빈 문자열 전송은
+    # 소비자 연락 불가 상품을 만들 수 있다.
+    as_tel = _resolve_as_tel(p, cfg_notice)
     if not as_tel:
-        raise ValueError("config 에 AS 연락처 설정이 필요합니다: smartstore_notice_defaults.as_tel")
+        raise ValueError(
+            "config 에 AS 연락처 설정이 필요합니다: "
+            "smartstore_notice_defaults.as_tel(권장), "
+            "smartstore_notice_defaults.seller_tel 또는 "
+            "smartstore_notice_defaults.customerServicePhoneNumber 중 한 곳에 "
+            "실질값을 입력하세요."
+        )
     manufacturer = _first_value(
         p.get("manufacturer"), default=_seller_manufacturer_default(p, cfg_notice)
     )

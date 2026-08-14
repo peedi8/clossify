@@ -1743,19 +1743,17 @@ def check_config(
             "등록을 거부합니다."
         )
 
-    # AS 전화번호 정본 위치 점검 항목 추가.
-    # 정본은 smartstore_notice_defaults.as_tel 이다 (naver_client._notice_defaults 가
-    # cfg_notice.get("as_tel") 로 읽는 자리). 값 자체는 반환하지 않고
-    # 채워짐/비어있음만 보고한다. 미설정 시 등록이 거부된다는
-    # 안내를 포함한다.
-    as_tel_set = False
-    if isinstance(notice_defaults, dict):
-        as_tel_value = notice_defaults.get("as_tel")
-        as_tel_set = bool(as_tel_value) and not _is_placeholder(as_tel_value)
+    # A/S 설정은 조립기와 같은 공유 해석기에서 판정한다. as_tel(권장),
+    # seller_tel, customerServicePhoneNumber 중 실질값 하나면 채워짐이다.
+    # 값 자체는 반환하지 않고 채워짐/비어있음만 보고한다.
+    as_tel_set = bool(naver_client._resolve_as_tel({}, notice_defaults))
     result["as_tel_configured"] = as_tel_set
     if not as_tel_set:
         result["as_tel_hint"] = (
-            "AS 전화번호(smartstore_notice_defaults.as_tel)가 설정되지 않았습니다. "
+            "AS 전화번호가 설정되지 않았습니다. "
+            "smartstore_notice_defaults.as_tel(권장), "
+            "smartstore_notice_defaults.seller_tel 또는 "
+            "smartstore_notice_defaults.customerServicePhoneNumber 중 한 곳에 입력하세요. "
             "register_product 가 컴플라이언스 검사에서 등록을 거부합니다. "
             "안내문구/플레이스홀더를 넣으면 거부됩니다 (fail-closed)."
         )
@@ -4372,8 +4370,8 @@ def _build_config_flags() -> dict[str, Any] | None:
 
       - 원산지 코드: ``origin_area_code`` (naver_client.py:189 ``_resolve_origin_area_code``)
       - 원산지 표기: ``origin_content`` (naver_client.py:264~265 ``_notice_defaults`` made_in)
-      - A/S 전화: ``as_tel``·``seller_tel``·``customerServicePhoneNumber``
-        (naver_client.py:247~253 ``_notice_defaults`` as_tel)
+       - A/S 전화: ``as_tel``·``seller_tel``·``customerServicePhoneNumber``
+         (naver_client._resolve_as_tel)
 
     반환 플래그 3종(정확히)::
 
@@ -4445,15 +4443,9 @@ def _build_config_flags() -> dict[str, Any] | None:
     origin_content = notice_defaults.get("origin_content")
     origin_content_set = bool(origin_content) and not _is_placeholder(origin_content)
 
-    # R2 — A/S 는 as_tel | seller_tel | customerServicePhoneNumber 셋 중 하나.
-    # 조립기(naver_client.py:247~253) 가 config 에서 읽는 키와 동일하게.
-    as_tel_value = ""
-    for _as_key in ("as_tel", "seller_tel", "customerServicePhoneNumber"):
-        _v = notice_defaults.get(_as_key)
-        if _v and not _is_placeholder(_v):
-            as_tel_value = _v
-            break
-    as_tel_set = bool(as_tel_value)
+    # R2 — A/S 판정은 조립기와 같은 공유 해석기를 쓴다. 현재 행 참조는
+    # naver_client.py:488~502 (_resolve_as_tel) 이다.
+    as_tel_set = bool(naver_client._resolve_as_tel({}, notice_defaults))
 
     return {
         "origin_code_configured": origin_code_set,
