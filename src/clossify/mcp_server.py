@@ -4361,7 +4361,7 @@ def _infer_template_notice_type(product: dict[str, Any]) -> str:
 
 
 def _build_config_flags() -> dict[str, Any] | None:
-    """config 에서 원산지·A/S 존재 여부만 판정해 플래그를 만든다 (컴플라이언스).
+    """config 에서 원산지·A/S·공통 고시 존재 여부만 판정해 플래그를 만든다.
 
     **config 값을 반환하지 않는다** — 존재 여부(bool)만.
 
@@ -4373,15 +4373,22 @@ def _build_config_flags() -> dict[str, Any] | None:
        - A/S 전화: ``as_tel``·``seller_tel``·``customerServicePhoneNumber``
          (naver_client._resolve_as_tel)
 
-    반환 플래그 3종(정확히)::
+    반환 플래그 4종::
 
         {
           "origin_code_configured":    bool | None,  # origin_area_code 존재
           "origin_content_configured": bool | None,  # origin_content 존재
           "as_configured":             bool | None,  # as_tel|seller_tel|customerServicePhoneNumber 존재
+          "common_notice_configured": {              # 공통 고시 5필드의 설정 존재 여부
+            "returnCostReason": bool | None,
+            "noRefundReason": bool | None,
+            "qualityAssuranceStandard": bool | None,
+            "compensationProcedure": bool | None,
+            "troubleShootingContents": bool | None,
+          },
         }
 
-    F6 — 플래그 3값을 정확히:
+    F6 — 플래그를 정확히:
       - 파일이 **확실히 없음**(신규 설치) → 각 플래그 **False** (미설정 확정).
       - 읽기 **오류**(파손·권한) → ``None`` (모름).
       - 있음 → 키 존재 여부로 True/False.
@@ -4396,7 +4403,7 @@ def _build_config_flags() -> dict[str, Any] | None:
     진단은 살아 있어야 한다.
 
     Returns:
-        R2 플래그 dict (위 3키). config 읽기 자체가 실패하면 ``None``
+        R2 플래그 dict (위 4키). config 읽기 자체가 실패하면 ``None``
         (거부 응답을 죽이지 않는다).
     """
     try:
@@ -4407,6 +4414,7 @@ def _build_config_flags() -> dict[str, Any] | None:
                 "origin_code_configured": False,
                 "origin_content_configured": False,
                 "as_configured": False,
+                "common_notice_configured": naver_client._notice_common_configured_flags({}),
             }
         with open(cfg_path, encoding="utf-8-sig") as f:
             cfg = json.load(f)
@@ -4417,10 +4425,12 @@ def _build_config_flags() -> dict[str, Any] | None:
     # R4 — config 루트가 dict 가 아니면(예: ``[]``) 플래그 전부 None.
     # cfg.get 에서 AttributeError 가 나는 것을 막고 진단을 살린다.
     if not isinstance(cfg, dict):
+        common_unknown = dict.fromkeys(naver_client._notice_common_configured_flags({}), None)
         return {
             "origin_code_configured": None,
             "origin_content_configured": None,
             "as_configured": None,
+            "common_notice_configured": common_unknown,
         }
 
     # R3 — naver_client._notice_config() 와 **같은 섹션 해석**을 쓴다.
@@ -4435,6 +4445,7 @@ def _build_config_flags() -> dict[str, Any] | None:
             "origin_code_configured": False,
             "origin_content_configured": False,
             "as_configured": False,
+            "common_notice_configured": naver_client._notice_common_configured_flags({}),
         }
 
     # R2 — 원산지 code (origin_area_code) 와 content (origin_content) 를 별도로.
@@ -4451,6 +4462,7 @@ def _build_config_flags() -> dict[str, Any] | None:
         "origin_code_configured": origin_code_set,
         "origin_content_configured": origin_content_set,
         "as_configured": as_tel_set,
+        "common_notice_configured": naver_client._notice_common_configured_flags(notice_defaults),
     }
 
 
@@ -4519,10 +4531,10 @@ def prepare_listing(
         - ``needs_llm`` 의 각 항목은 ``submit_reviews`` 로 회신해야 한다.
         - 회신하지 않으면 PENDING 이 유지되어 등록이 차단된다.
         - 서버 자체는 LLM 을 호출하지 않는다(common._llm_hint 위임).
-        - ``requirements`` 는 **거부됐을 때만** 채워진다(성공 시 ``None``).
-          목적: 막힌 사유 하나만 말하고 끝내지 않고, 그 시점에 알 수 있는
-          필요사항을 한 번에 준다. 호출자는 이걸 보고 **사용자에게 한 번에
-          물어야 한다**(빠진 것 하나씩 왕복하지 마라).
+        - ``requirements`` 는 입력 거부 또는 결정론 컴플라이언스 FAIL 때 채워진다
+          (그 밖의 준비 성공 시 ``None``). 목적: 막힌 사유 하나만 말하고 끝내지
+          않고, 그 시점에 알 수 있는 필요사항을 한 번에 준다. 호출자는 이걸 보고
+          **사용자에게 한 번에 물어야 한다**(빠진 것 하나씩 왕복하지 마라).
         - ``requirements.notice_required_fields.certain`` 은 후보 고시타입들의
           **공통 안전 부분집합**이다. ``is_complete=false`` 면 전체 요구목록이
           아니므로 완료로 취급하지 말고 ``completion_blocked_by`` 를 해결한 뒤
@@ -4621,6 +4633,31 @@ def prepare_listing(
         if isinstance(u, str) and u.strip()
     ]
 
+    # 준비 payload 는 만들어졌어도 결정론 컴플라이언스가 FAIL 이면 등록은
+    # 막혀 있다. 특히 build_payload 가 A/S fail-closed 에서 먼저 멈춘 경우,
+    # 기존 requirements 진단으로 공통 고시 누락까지 함께 반환한다. 등록 조립의
+    # 엄격함은 바꾸지 않고, 준비 응답의 정보량만 보강한다.
+    requirements = None
+    needs_user = list(payload.get("needs_user") or [])
+    qa_agents_rows = (payload.get("qa") or {}).get("agents") or []
+    compliance_failed = any(
+        isinstance(row, dict)
+        and row.get("agent") == "compliance"
+        and qa_agents._clamp_verdict(row.get("verdict")) == qa_agents.FAIL
+        for row in qa_agents_rows
+    )
+    if compliance_failed:
+        requirements = _safe_diagnose(product)
+        if requirements:
+            existing_fields = {
+                str(item.get("field") or "") for item in needs_user if isinstance(item, dict)
+            }
+            for item in requirements.get("missing") or []:
+                field = str(item.get("field") or "") if isinstance(item, dict) else ""
+                if isinstance(item, dict) and field and field not in existing_fields:
+                    needs_user.append(item)
+                    existing_fields.add(field)
+
     # --- 템플릿 저장 (준비 성공 후 — 사용자가 이름을 명시했을 때만) ---
     # 상품 입력에서 안전한 필드만 뽑아 저장한다(화이트리스트). 상품명·가격·재고·
     # 이미지·옵션·비밀값은 어떤 경우에도 담기지 않는다. 저장소 손상 시 조용히
@@ -4663,17 +4700,16 @@ def prepare_listing(
         "ok": True,
         "product_key": payload.get("product_key"),
         "needs_llm": payload.get("needs_llm") or [],
-        "needs_user": payload.get("needs_user") or [],
+        "needs_user": needs_user,
         "qa": payload.get("qa") or {},
         "images": _listing_urls,
         "preview_path": payload.get("preview_path"),
         "template_applied": template_applied,
         "template_saved": template_saved,
         "error": None,
-        # F6: 독스트링이 "requirements 는 거부됐을 때만 채워진다(성공 시 None)" 이라
-        # 약속했으므로, 성공 경로에도 키를 항상 포함한다. 과거에는 이 키가 없어
-        # result["requirements"] 가 KeyError 였다.
-        "requirements": None,
+        # 성공 경로에도 키를 항상 포함한다. 결정론 컴플라이언스 FAIL 이면
+        # 등록에 필요한 누락을 한 번에 넣고, 그 밖에는 None 이다.
+        "requirements": None if requirements is None else requirements,
     }
     _auto_open.maybe_open_screen(
         _result.get("preview_path"),

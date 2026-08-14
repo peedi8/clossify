@@ -1312,6 +1312,13 @@ class TestN76F6ConfigAbsentIsFalse:
             "origin_code_configured": False,
             "origin_content_configured": False,
             "as_configured": False,
+            "common_notice_configured": {
+                "returnCostReason": False,
+                "noRefundReason": False,
+                "qualityAssuranceStandard": False,
+                "compensationProcedure": False,
+                "troubleShootingContents": False,
+            },
         }, f"F6: 파일 부재 시 예상값과 다름: {flags}"
         print(f"\n=== F6: config absent → {flags} ===")
 
@@ -1541,6 +1548,13 @@ class TestN76F7ConfigSectionAliases:
                 "origin_code_configured": False,
                 "origin_content_configured": False,
                 "as_configured": False,
+                "common_notice_configured": {
+                    "returnCostReason": False,
+                    "noRefundReason": False,
+                    "qualityAssuranceStandard": False,
+                    "compensationProcedure": False,
+                    "troubleShootingContents": False,
+                },
             }, f"반례: 없는 경로인데 False 가 아님: {flags_absent}"
 
             # 두 결과가 달라야 패치가 실제로 경로를 바꾼 것이다.

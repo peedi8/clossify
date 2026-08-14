@@ -14,7 +14,7 @@ _SRC = _PROJECT_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from clossify import mcp_server, naver_client
+from clossify import common, mcp_server, naver_client, register
 
 
 def _product(**overrides: str) -> dict:
@@ -35,6 +35,70 @@ def _build_payload(product: dict, notice_config: dict) -> dict:
 
 
 _ORIGIN = {"origin_area_code": "04", "origin_content": "한국"}
+
+_COMMON_NOTICE_FIELDS = {
+    "returnCostReason",
+    "noRefundReason",
+    "qualityAssuranceStandard",
+    "compensationProcedure",
+    "troubleShootingContents",
+}
+
+_WEAR_NOTICE_WITHOUT_COMMON = {
+    "productInfoProvidedNoticeType": "WEAR",
+    "etc": {
+        "material": "면 100%",
+        "color": "검정",
+        "size": "FREE",
+        "caution": "세탁 전 라벨을 확인하세요.",
+        "packDateText": "2026-08-14",
+        "warrantyPolicy": "소비자분쟁해결기준에 따릅니다.",
+    },
+}
+
+
+def _fake_attach_ok(sources):
+    return {
+        "urls": [f"http://cdn.example.test/{index}.png" for index, _source in enumerate(sources)],
+        "rejected": [],
+        "notes": [],
+    }
+
+
+def _prepare_response_with_notice_config(
+    product: dict, notice_config: dict, tmp_path: Path, monkeypatch
+) -> dict:
+    """실제 준비 경로를 attach/tag 외부 의존성 없이 호출한다."""
+    prepared_dir = tmp_path / "prepared"
+    prepared_dir.mkdir()
+    monkeypatch.setattr(common, "PREPARED_DIR", prepared_dir)
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({"smartstore_notice_defaults": notice_config}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    original_prepare = register.prepare_listing
+
+    def prepare_with_local_dependencies(input_product):
+        return original_prepare(
+            input_product,
+            attach_fn=_fake_attach_ok,
+            recommend_fn=lambda _name: (200, []),
+            restricted_fn=lambda _tags: (200, []),
+        )
+
+    with (
+        mock.patch.object(naver_client, "_notice_config", return_value=notice_config),
+        mock.patch.object(naver_client, "_kc_config", return_value=({}, "")),
+        mock.patch.object(naver_client, "config_path", return_value=str(config_path)),
+        mock.patch.object(
+            mcp_server._register_mod,
+            "prepare_listing",
+            side_effect=prepare_with_local_dependencies,
+        ),
+    ):
+        return mcp_server.prepare_listing(product)
 
 
 def _config_diagnostics(tmp_path: Path, notice_config: dict) -> tuple[dict, dict]:

@@ -964,6 +964,50 @@ def _compliance_missing_items(compliance: dict[str, Any]) -> list[dict[str, str]
     return items
 
 
+def _common_notice_missing_items(
+    product: dict[str, Any], config_flags: dict[str, Any] | None
+) -> list[dict[str, str]]:
+    """공통 고시 5필드 중 상품·설정 모두에 없는 항목을 진단한다.
+
+    후보 키·중첩 고시 본문·자리표시자 규칙은 등록 조립기(``naver_client``)의
+    공유 해석을 그대로 쓴다. 준비 진단이 별도 후보 목록으로 등록 경계와
+    어긋나지 않게 하기 위함이다. config 값 자체는 읽거나 반환하지 않고,
+    호출자가 넘긴 존재 여부 플래그만 사용한다.
+    """
+    flags = config_flags if isinstance(config_flags, dict) else {}
+    configured = flags.get("common_notice_configured")
+    if not isinstance(configured, dict):
+        return []
+
+    from . import naver_client
+
+    items: list[dict[str, str]] = []
+    for notice_field, product_keys, _config_keys in naver_client._NOTICE_COMMON_FIELD_CANDIDATES:
+        # config 읽기 실패/미상(None)은 미설정으로 단정하지 않는다.
+        if configured.get(notice_field) is not False:
+            continue
+        if naver_client._notice_common_field_provided_by_product(
+            product, notice_field, product_keys
+        ):
+            continue
+        try:
+            label, _hint = _notice_labels._notice_field_label(notice_field, None)
+        except Exception:
+            label = notice_field
+        items.append(
+            {
+                "field": notice_field,
+                "label": str(label),
+                "why": (
+                    f"공통 고시 필드 {notice_field}가 상품 입력과 설정 모두에 없습니다. "
+                    "실제 신고값을 입력해야 합니다."
+                ),
+                "answer_shape": "text",
+            }
+        )
+    return items
+
+
 def diagnose(
     product: dict[str, Any], *, config_flags: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -981,12 +1025,19 @@ def diagnose(
               "origin_code_configured":    bool | None,  # origin_area_code 존재
               "origin_content_configured": bool | None,  # origin_content 존재
               "as_configured":             bool | None,  # as_tel|seller_tel|customerServicePhoneNumber 존재
+              "common_notice_configured": {
+                "returnCostReason": bool | None,
+                "noRefundReason": bool | None,
+                "qualityAssuranceStandard": bool | None,
+                "compensationProcedure": bool | None,
+                "troubleShootingContents": bool | None,
+              },
             }
 
-            원산지·A/S 의 설정 존재 여부(값이 아님). 어느 키가 ``None`` 이면
-            "모름" — 모름을 미설정(False)으로 단정하지 마라. ``diagnose`` 자체는
-            config 파일을 읽지 않으므로 호출자(mcp_server)가 이 플래그를 만들어
-            넘겨야 한다.
+            원산지·A/S·공통 고시 필드의 설정 존재 여부(값이 아님). 어느 키가
+            ``None`` 이면 "모름" — 모름을 미설정(False)으로 단정하지 마라.
+            ``diagnose`` 자체는 config 파일을 읽지 않으므로 호출자(mcp_server)가
+            이 플래그를 만들어 넘겨야 한다.
 
     Returns:
         진단 결과 dict::
@@ -1185,6 +1236,9 @@ def diagnose(
     # --- compliance: KC · 원산지 · A/S ---
     compliance = _build_compliance_block(product, category_block, config_flags, all_candidates)
     missing.extend(_compliance_missing_items(compliance))
+    # 공통 고시 5필드는 모든 고시 타입의 교집합이다. build_payload 가 A/S
+    # fail-closed 에서 먼저 멈춰도, 준비 진단은 같은 턴에 이 누락을 함께 알린다.
+    missing.extend(_common_notice_missing_items(product, config_flags))
 
     # --- images (F5) ---
     # 유효한(공백 아닌 문자열) 이미지 수로 센다.
@@ -1215,6 +1269,7 @@ __all__ = [
     "_candidates_from_title",
     "_candidates_with_all_types",
     "_category_id_known",
+    "_common_notice_missing_items",
     "_compliance_missing_items",
     "_explicit_notice_type_from_category_id",
     "_explicit_notice_type_from_input",
