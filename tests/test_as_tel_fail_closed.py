@@ -245,3 +245,66 @@ def test_product_as_tel_candidates_take_precedence_over_all_config_keys(product_
         ]
         == "02-9876-5432"
     )
+
+
+def test_prepare_preserves_seller_tel_to_registration_payload(tmp_path, monkeypatch):
+    """seller_tel 단독 입력은 준비와 등록 payload 양쪽에서 살아남는다."""
+    notice_config = {
+        **_ORIGIN,
+        "return_cost_reason": "단순변심 반품비용 구매자부담",
+        "no_refund_reason": "주문제작 청약철회 제한",
+        "quality_assurance_standard": "관련법에 따름",
+        "compensation_procedure": "소비자분쟁해결기준",
+        "trouble_shooting_contents": "고객센터 문의",
+    }
+    product = {
+        **_product(seller_tel="02-9876-5432", categoryId="50021299"),
+        "image_sources": ["product.png"],
+        "notice": _WEAR_NOTICE_WITHOUT_COMMON,
+        "origin_code": "04",
+        "origin_content": "한국",
+    }
+    prepared = _prepare_response_with_notice_config(product, notice_config, tmp_path, monkeypatch)
+
+    assert prepared["ok"] is True, prepared
+    compliance_rules = {
+        violation.get("rule")
+        for row in prepared["qa"]["agents"]
+        if isinstance(row, dict) and row.get("agent") == "compliance"
+        for violation in row.get("violations", [])
+        if isinstance(violation, dict)
+    }
+    assert "등록 페이로드 생성 불가" not in compliance_rules
+    assert "A/S 연락처 누락" not in compliance_rules
+    stored_payload = register.load_prepared_payload(product_key=prepared["product_key"])
+    prepared_product = stored_payload["product"]
+    assert prepared_product["seller_tel"] == "02-9876-5432"
+    payload = _build_payload(
+        prepared_product,
+        notice_config,
+    )
+    assert (
+        payload["originProduct"]["detailAttribute"]["afterServiceInfo"][
+            "afterServiceTelephoneNumber"
+        ]
+        == "02-9876-5432"
+    )
+
+
+def test_prepare_diagnosis_does_not_ask_explicitly_deferred_common_field(tmp_path, monkeypatch):
+    """AS가 비었어도 이미 미룬 공통 고시 필드는 다시 묻지 않는다."""
+    product = {
+        **_product(),
+        "image_sources": ["product.png"],
+        "notice": _WEAR_NOTICE_WITHOUT_COMMON,
+        "deferred_notice_fields": ["returnCostReason"],
+    }
+    prepared = _prepare_response_with_notice_config(product, _ORIGIN, tmp_path, monkeypatch)
+
+    assert prepared["ok"] is True, prepared
+    missing_fields = {
+        item.get("field") for item in prepared["requirements"]["missing"] if isinstance(item, dict)
+    }
+    assert "as_tel" in missing_fields
+    assert "returnCostReason" not in missing_fields
+    assert "noRefundReason" in missing_fields

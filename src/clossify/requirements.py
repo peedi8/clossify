@@ -965,14 +965,17 @@ def _compliance_missing_items(compliance: dict[str, Any]) -> list[dict[str, str]
 
 
 def _common_notice_missing_items(
-    product: dict[str, Any], config_flags: dict[str, Any] | None
+    product: dict[str, Any],
+    config_flags: dict[str, Any] | None,
+    deferred_notice_fields: list[str] | None = None,
 ) -> list[dict[str, str]]:
     """공통 고시 5필드 중 상품·설정 모두에 없는 항목을 진단한다.
 
     후보 키·중첩 고시 본문·자리표시자 규칙은 등록 조립기(``naver_client``)의
-    공유 해석을 그대로 쓴다. 준비 진단이 별도 후보 목록으로 등록 경계와
-    어긋나지 않게 하기 위함이다. config 값 자체는 읽거나 반환하지 않고,
-    호출자가 넘긴 존재 여부 플래그만 사용한다.
+    공유 해석을 그대로 쓴다. 미루기 판정도 컴플라이언스 경로의
+    ``qa_agents._field_missing_with_deferred`` 를 그대로 호출한다. 준비 진단이
+    별도 후보 목록이나 미루기 판정으로 등록 경계와 어긋나지 않게 하기 위함이다.
+    config 값 자체는 읽거나 반환하지 않고, 호출자가 넘긴 존재 여부 플래그만 사용한다.
     """
     flags = config_flags if isinstance(config_flags, dict) else {}
     configured = flags.get("common_notice_configured")
@@ -988,6 +991,13 @@ def _common_notice_missing_items(
             continue
         if naver_client._notice_common_field_provided_by_product(
             product, notice_field, product_keys
+        ):
+            continue
+        # 컴플라이언스가 쓰는 동일 판정기로, 명시적으로 미룬 문자열 필드는
+        # 누락 질문에서 제외한다. 빈 본문을 주는 것은 이 시점에 필요한 사실이
+        # "해당 필드가 비어 있다면 미루기가 적용되는가" 하나뿐이기 때문이다.
+        if notice_field not in _qa_agents._field_missing_with_deferred(
+            {}, (notice_field,), deferred_notice_fields
         ):
             continue
         try:
@@ -1009,7 +1019,10 @@ def _common_notice_missing_items(
 
 
 def diagnose(
-    product: dict[str, Any], *, config_flags: dict[str, Any] | None = None
+    product: dict[str, Any],
+    *,
+    config_flags: dict[str, Any] | None = None,
+    deferred_notice_fields: list[str] | None = None,
 ) -> dict[str, Any]:
     """거부 시점에 알 수 있는 필요사항을 한 번에 진단한다.
 
@@ -1033,6 +1046,9 @@ def diagnose(
                 "troubleShootingContents": bool | None,
               },
             }
+        deferred_notice_fields: 판매자가 명시적으로 미루기로 선택한 고시 필드명.
+            공통 고시 5필드는 컴플라이언스와 같은 판정으로, 실제로 미룰 수 있는
+            필드만 ``missing`` 에서 제외한다.
 
             원산지·A/S·공통 고시 필드의 설정 존재 여부(값이 아님). 어느 키가
             ``None`` 이면 "모름" — 모름을 미설정(False)으로 단정하지 마라.
@@ -1238,7 +1254,7 @@ def diagnose(
     missing.extend(_compliance_missing_items(compliance))
     # 공통 고시 5필드는 모든 고시 타입의 교집합이다. build_payload 가 A/S
     # fail-closed 에서 먼저 멈춰도, 준비 진단은 같은 턴에 이 누락을 함께 알린다.
-    missing.extend(_common_notice_missing_items(product, config_flags))
+    missing.extend(_common_notice_missing_items(product, config_flags, deferred_notice_fields))
 
     # --- images (F5) ---
     # 유효한(공백 아닌 문자열) 이미지 수로 센다.

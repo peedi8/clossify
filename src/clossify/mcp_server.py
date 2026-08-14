@@ -4478,9 +4478,15 @@ def _safe_diagnose(product: dict[str, Any] | None) -> dict[str, Any] | None:
     """
     try:
         config_flags = _build_config_flags()
+        deferred_notice_fields = (
+            product.get("deferred_notice_fields") if isinstance(product, dict) else None
+        )
         return _requirements_mod.diagnose(
             product if isinstance(product, dict) else {},
             config_flags=config_flags,
+            deferred_notice_fields=(
+                deferred_notice_fields if isinstance(deferred_notice_fields, list) else None
+            ),
         )
     except Exception:
         return None
