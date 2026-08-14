@@ -136,7 +136,7 @@ scene 의 notice 섹션 행(분해 후):
 
 ### 고시 필수 필드 누락 표시 규칙
 
-`data/notice_types.json` 의 해당 고시 타입 **필수 필드 목록** 중 사용자가 주지 않은
+`src/clossify/data/notice_types.json` 의 해당 고시 타입 **필수 필드 목록** 중 사용자가 주지 않은
 것은 `value: ""` + `source.missing: true` 로 **행을 남긴다**(생략하지 않는다).
 필수 목록에 없는 임의 필드를 만들어내지는 않는다.
 
@@ -152,7 +152,7 @@ scene 의 notice 섹션 행(분해 후):
 ]
 ```
 
-`missing` 으로 표시된 필드 집합은 `data/notice_types.json` 의 해당 타입 필수 필드
+`missing` 으로 표시된 필드 집합은 `src/clossify/data/notice_types.json` 의 해당 타입 필수 필드
 중 미제공분과 정확히 일치한다.
 
 ## 식별자(`id`) 안정성 규칙

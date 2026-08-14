@@ -40,13 +40,21 @@ description: 상품등록(네이버 커머스 API) 담당 에이전트 — 상�
    페이로드 빌드 + 컴플라이언스 게이트 + 네이버 API 등록. 반환: `{ok,
    origin_product_no, channel_product_no, blocked_by, ...}`.
    `preview_confirmed=True` 선언이 없으면 게이트가 거부한다.
+   - ★★ **`preview_confirmed=True` 를 네가 스스로 세팅하지 마라.** 이건 **선언
+     게이트**라서 코드는 누가 선언했는지 구별하지 못한다 — 네가 넣으면 그대로
+     통과한다. 실제로 그렇게 시도한 사례가 관측됐다. 이 값은 **사용자가 미리보기
+     파일을 열어 보고 "등록해"라고 말한 뒤에만** 넣는다. 사용자가 미리보기를 봤다고
+     추정하지 마라(파일을 만들었다·경로를 알려줬다 ≠ 봤다). 거부당했을 때
+     `preview_confirmed=True` 를 붙여 재시도하는 것은 **게이트 우회이며 금지**다.
+     막혔으면 사용자에게 미리보기 경로를 주고 **거기서 멈춰라.**
    - **`option_groups`**: 다축 옵션의 축 이름 리스트(예: `["색상","사이즈"]`).
      주의: `options` 의 축 수와 **정확히** 같아야 한다. 1축+`["색상","사이즈","소재"]`
      처럼 주면 게이트가 거부한다(조용한 절삭 금지). 중복 이름도 거부. `options`
      가 단일 축이고 기본 이름(`option_group` 또는 "사이즈")으로 졌으면 생략한다.
    - **`deferred_notice_fields`**: 판매자가 "상세페이지 참조" 로 미루려는
      고시 필드명 리스트(예: `["material","color"]`). 허용 목록은
-     `data/notice_types.json` 35종 `fields` 의 합집합에서 자동 도출된다 —
+     `src/clossify/data/notice_types.json` **전체 타입**의 `fields` 합집합에서
+     자동 도출된다(수동 목록 아님 — 숫자를 외우지 마라) —
      대소문자 변형·별칭·오타(`madein`·`countryOfOrigin`)는 거부된다(임의 키로
      네이버에 전송되는 것을 막는다). **원산지(origin_content·origin_area_code)는
      법적 선언 필드이므로 미루기 불가** — 이 키를 `deferred_notice_fields` 에

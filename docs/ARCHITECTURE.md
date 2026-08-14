@@ -3,6 +3,12 @@
 이 문서는 Clossify 저장소의 **현재 상태**를 코드 대조 기준으로 서술한다. 미구현
 구간은 명시적으로 표시한다. 과대 표기 없음.
 
+> **경로 표기**: 이 문서에서 `data/…`·`agents/…`·모듈명(`category_meta` 등)은
+> **패키지 루트 `src/clossify/` 기준**의 줄임 표기다. 저장소 루트에서 찾으려면
+> `src/clossify/` 를 앞에 붙여라 — 예: `data/notice_types.json` →
+> `src/clossify/data/notice_types.json`, `agents/COMPLIANCE_RULES.md` →
+> `src/clossify/agents/COMPLIANCE_RULES.md`.
+
 ## 1. 모듈 의존 방향
 
 의존은 아래 방향으로 흐른다(상위 → 하위). 화살표는 실제 import 문을 기준으로 한다.
