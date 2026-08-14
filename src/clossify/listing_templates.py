@@ -201,7 +201,7 @@ _NOTICE_BODY_SNAKE_ALIASES: dict[str, tuple[str, ...]] = {
     # AS/제조 관련.
     "manufactureDate": ("manufacture_date",),
     "modelName": ("model_name",),
-    "certDetail": ("cert_detail",),
+    "certificateDetails": ("cert_detail",),
     "madeIn": ("made_in", "origin_content"),
     "safetyStandard": ("safety_standard",),
 }
