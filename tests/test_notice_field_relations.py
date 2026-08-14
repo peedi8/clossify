@@ -302,16 +302,14 @@ class TestNoticeFieldRelationsDataIntegrity:
         )
         assert found, f"afterServiceDirector/customerServicePhoneNumber XOR 그룹이 없음: {groups}"
 
-    def test_unconfirmed_type_has_no_groups(self):
-        """관계가 기록되지 않은 타입은 빈 리스트 (기존 동작 유지).
-
-        WEAR, FURNITURE 등 다른 타입은 확인되지 않았으므로 XOR 그룹이 없다.
-        """
-        for unconfirmed in ("WEAR", "FURNITURE", "SHOES", "BAG"):
-            groups = qa_agents._notice_xor_groups(unconfirmed)
+    def test_date_text_pair_is_derived_and_other_types_have_no_groups(self):
+        """정본 field_meta 의 WEAR 날짜/직접입력 쌍은 XOR 이고, 나머지는 빈 리스트다."""
+        assert qa_agents._notice_xor_groups("WEAR") == [["packDate", "packDateText"]]
+        for type_without_pair in ("FURNITURE", "SHOES", "BAG"):
+            groups = qa_agents._notice_xor_groups(type_without_pair)
             assert (
                 groups == []
-            ), f"확인되지 않은 타입 {unconfirmed} 에 XOR 그룹이 있음 (추측 금지 위반): {groups}"
+            ), f"날짜/직접입력 쌍이 없는 타입 {type_without_pair} 에 XOR 그룹이 있음: {groups}"
 
 
 # =========================================================================== #
@@ -650,9 +648,10 @@ class TestUnconfirmedTypeBehaviorUnchanged:
     과 _notice_field_missing_with_relations 가 동일하게 동작해야 한다.
     """
 
-    def test_g_unconfirmed_type_xor_empty(self):
-        """확인되지 않은 타입은 XOR 그룹이 빈 리스트."""
-        for t in ("WEAR", "FURNITURE", "SHOES", "BAG", "SLEEPING_GEAR"):
+    def test_g_date_text_pair_derived_and_other_types_empty(self):
+        """WEAR의 정본 날짜/직접입력 XOR 은 유지하고, 관계 없는 타입은 빈 리스트다."""
+        assert qa_agents._notice_xor_groups("WEAR") == [["packDate", "packDateText"]]
+        for t in ("FURNITURE", "SHOES", "BAG", "SLEEPING_GEAR"):
             assert qa_agents._notice_xor_groups(t) == []
 
     def test_g_missing_same_with_or_without_relations(self):

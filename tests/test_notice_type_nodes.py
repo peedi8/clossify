@@ -482,15 +482,15 @@ class TestMcpIntegration:
 
 
 # --------------------------------------------------------------------------- #
-# 7. 데이터 기반 검증: 35종 전체 지원 + 노드명 일관성.
+# 7. 데이터 기반 검증: 정본 API 갱신으로 verified 36종 전체 지원 + 노드명 일관성.
 # --------------------------------------------------------------------------- #
-class TestThirtyFiveTypesSupport:
-    """data/notice_types.json 의 verified 35종 전체를 지원하는가."""
+class TestThirtySixTypesSupport:
+    """data/notice_types.json 의 verified 36종 전체를 지원하는가."""
 
     def test_all_verified_types_produce_correct_node(self):
         """verified 목록의 모든 타입이 자기 node 키로 실리는가."""
         specs = naver_client._load_notice_type_specs()
-        assert len(specs) == 35, f"verified 타입이 35종이 아님: {len(specs)}"
+        assert len(specs) == 36, f"verified 타입이 36종이 아님: {len(specs)}"
         for spec in specs:
             notice_type = spec["type"]
             node = spec["node"]
@@ -505,10 +505,10 @@ class TestThirtyFiveTypesSupport:
             assert notice["productInfoProvidedNoticeType"] == notice_type
             assert node in notice, f"{notice_type} → {node} 노드 없음: keys={list(notice.keys())}"
 
-    def test_type_count_is_35(self):
-        """data/notice_types.json 의 verified 타입 수가 35인가."""
+    def test_type_count_is_36(self):
+        """data/notice_types.json 의 verified 타입 수가 36인가."""
         specs = naver_client._load_notice_type_specs()
-        assert len(specs) == 35
+        assert len(specs) == 36
 
     def test_no_hardcoded_node_outside_data(self):
         """_product_info_notice 가 데이터 외의 노드명을 생성하지 않는가."""

@@ -317,7 +317,7 @@ class TestNoOrphanTypeLabels:
         assert offenders == [], f"labels_by_type 에 유령 DateType 이 잔존: {offenders}"
 
     def test_e_label_fields_are_superset_of_required(self):
-        """labels_by_type[TYPE] 은 그 타입의 required fields 를 전부 커버한다.
+        """labels[FIELD] 또는 labels_by_type[TYPE] 이 required fields 를 전부 커버한다.
 
         required 가 아닌 documented 필드의 라벨이 추가로 있을 수 있다(공식 문서가
         required 이외의 필드도 라벨을 제공하기 때문). 핵심 계약은 required 는
@@ -325,17 +325,21 @@ class TestNoOrphanTypeLabels:
         한국어 이름을 볼 수 있어야 한다.
         """
         labels_doc = _load_labels_doc()
+        labels = labels_doc.get("labels") or {}
         by_type = labels_doc.get("labels_by_type") or {}
         specs = _all_notice_specs()
         missing: list[str] = []
         for spec in specs:
             t = spec["type"]
             required = set(spec.get("fields") or [])
-            labeled = set(by_type.get(t, {}).keys())
+            # 공통 필드의 단독 labels 와 타입별 우선 라벨을 함께 사용자에게 노출한다.
+            labeled = set(labels.keys()) | set(by_type.get(t, {}).keys())
             gap = required - labeled
             for f in sorted(gap):
                 missing.append(f"{t}.{f}")
-        assert missing == [], f"labels_by_type 이 required 필드를 커버하지 않는다: {missing[:10]}"
+        assert (
+            missing == []
+        ), f"labels/labels_by_type 이 required 필드를 커버하지 않는다: {missing[:10]}"
 
 
 # =========================================================================== #

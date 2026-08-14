@@ -1,7 +1,9 @@
 {
   "generated_at": "2026-08-05T00:00:00Z",
+  "updated_at": "2026-08-12T00:00:00Z",
   "source": "https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product",
-  "provenance": "필드 단독 라벨(39건)은 기존 큐레이션. labels_by_type 은 공식 문서 스키마에서 기계 추출한 585건의 (타입.필드) → 한국어 라벨 (사용자 저장본에서 추출, 2026-08-05). 같은 필드가 타입마다 다른 이름을 가질 때(35개 필드) 타입별 층이 우선한다.",
+  "supplemental_source": "GET /external/v1/products-for-provided-notice",
+  "provenance": "필드 단독 라벨(39건)은 기존 큐레이션. labels_by_type 은 공식 문서 스키마에서 기계 추출한 585건의 (타입.필드) → 한국어 라벨 (사용자 저장본에서 추출, 2026-08-05)과 2026-08-12 정본 API(`products-for-provided-notice`) 의 `fieldDescription` 에서 보강한 10건이다. 같은 필드가 타입마다 다른 이름을 가질 때(35개 필드) 타입별 층이 우선한다.",
   "note": "라벨은 사용자에게 무엇을 입력해야 하는지 알려주는 표시 문구다. 신고값이 아니다.",
   "labels": {
     "material": {
@@ -309,6 +311,8 @@
       "consumptionDate": "소비기한",
       "consumptionDateText": "소비기한 직접 입력",
       "customerServicePhoneNumber": "소비자 상담 관련 전화번호",
+      "expirationDate": "유통기한",
+      "expirationDateText": "유통기한 직접 입력",
       "geneticallyModified": "유전자변형건강기능식품에 해당하는 경우의 표시",
       "importDeclarationCheck": "수입 건강기능식품에 해당하는 경우",
       "ingredients": "원료명 및 함량",
@@ -394,6 +398,8 @@
       "consumptionDate": "소비기한 또는 품질유지기한",
       "consumptionDateText": "소비기한 또는 품질유지기한 직접 입력",
       "customerServicePhoneNumber": "소비자 상담 관련 전화번호",
+      "expirationDate": "유통기한",
+      "expirationDateText": "유통기한 직접 입력",
       "foodItem": "품목 또는 명칭",
       "keep": "보관 방법 또는 취급 방법",
       "noRefundReason": "제품하자가 아닌 소비자의 단순변심에 따른 청약철회가 불가능한 경우 그 구체적 사유와 근거",
@@ -422,6 +428,7 @@
       "noRefundReason": "제품하자가 아닌 소비자의 단순변심에 따른 청약철회가 불가능한 경우 그 구체적 사유와 근거",
       "producer": "제조국",
       "qualityAssuranceStandard": "재화 등의 교환ㆍ반품ㆍ보증 조건 및 품질 보증 기준",
+      "refurb": "재공급 사유 및 하자",
       "returnCostReason": "제품하자/오배송에 따른 청약철회 조항",
       "size": "크기",
       "troubleShootingContents": "소비자피해보상의 처리, 재화 등에 대한 불만 처리 및 소비자와 사업자 사이의 분쟁 처리에 관한 사항",
@@ -434,6 +441,8 @@
       "consumptionDate": "소비기한 또는 품질유지기한",
       "consumptionDateText": "소비기한 또는 품질유지기한 직접 입력",
       "customerServicePhoneNumber": "소비자 상담 관련 전화번호",
+      "expirationDate": "유통기한",
+      "expirationDateText": "유통기한 직접 입력",
       "foodType": "식품의 유형",
       "geneticallyModified": "유전자변형식품에 해당하는 경우의 표시",
       "importDeclarationCheck": "수입식품의 경우 신고 필 유무",
@@ -538,6 +547,7 @@
       "material": "재질",
       "modelName": "모델명",
       "noRefundReason": "제품하자가 아닌 소비자의 단순변심에 따른 청약철회가 불가능한 경우 그 구체적 사유와 근거",
+      "numberLimit": "크기·체중의 한계",
       "qualityAssuranceStandard": "재화 등의 교환ㆍ반품ㆍ보증 조건 및 품질 보증 기준",
       "recommendedAge": "사용 연령 또는 권장 사용 연령",
       "releaseDate": "동일 모델의 출시연월",
@@ -728,6 +738,16 @@
       "returnCostReason": "제품하자/오배송에 따른 청약철회 조항",
       "specification": "제품 사양",
       "troubleShootingContents": "소비자피해보상의 처리, 재화 등에 대한 불만 처리 및 소비자와 사업자 사이의 분쟁 처리에 관한 사항"
+    },
+    "RENTAL_HA": {
+      "customerServicePhoneNumber": "소비자 상담 관련 전화번호",
+      "itemName": "품명",
+      "modelName": "모델명",
+      "ownershipTransferCondition": "소유권 이전 조건",
+      "payingForLossOrDamage": "상품의 고장, 분실, 훼손 시 소비자 책임",
+      "refundPolicyForCancel": "중도 해약 시 환불 기준",
+      "maintenance": "유지 보수 조건",
+      "specification": "제품 사양"
     },
     "SEASON_APPLIANCES": {
       "afterServiceDirector": "A/S 책임자와 전화번호",

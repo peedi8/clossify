@@ -480,9 +480,9 @@ class TestRegisterProductE2E:
         assert result.get("blocked_by") == "compliance"
         # 네이버 API 호출 0회.
         assert naver_mock.call_count == 0
-        # 위반 항목에 packDateText 누락이 포함되어야 한다.
+        # placeholder packDateText 는 유효한 택일값이 아니므로 게이트는 짝의 기준 필드를 요구한다.
         needs_fields = [n.get("field") for n in (result.get("needs_user") or [])]
-        assert "packDateText" in needs_fields, f"packDateText 누락 지적 없음: {needs_fields}"
+        assert needs_fields == ["packDate"], f"packDate XOR 누락 지적이 아님: {needs_fields}"
 
         # (1) 전송 검증: build_payload 를 직접 호출해 payload 에 값이 실리는지 확인.
         product = {

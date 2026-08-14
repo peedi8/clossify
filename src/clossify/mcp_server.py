@@ -664,6 +664,28 @@ def _notice_field_answer_shape(field: str) -> str:
     return ""
 
 
+def _notice_missing_answer_shape(field: str, notice_type: str) -> str:
+    """누락 고시 필드의 답변 형태를 정본 택일 관계까지 반영해 안내한다."""
+    alternative = qa_agents._notice_date_text_alternative(notice_type, field)
+    if alternative is None:
+        return _notice_field_answer_shape(field)
+
+    date_field = alternative["date_field"]
+    text_field = alternative["text_field"]
+    date_field_type = alternative["date_field_type"]
+    if date_field_type == "YearMonth":
+        exact_value = "정확한 연월(yyyy-MM)"
+    else:
+        # _notice_date_text_alternative 는 LocalDate/YearMonth 정본 메타만 반환한다.
+        exact_value = "정확한 연월일(yyyy-MM-dd)"
+    return (
+        "이 항목은 정본 fieldType 으로 확인된 택일 필드입니다. "
+        f"{date_field}에 {exact_value}을 입력하거나, "
+        f"{text_field}에 직접 입력하세요. "
+        f"{date_field}은 미루기 불가이고 {text_field}은 미루기 가능합니다."
+    )
+
+
 def _category_path_for(category_id: str) -> str:
     """``category_id`` 의 카테고리 경로를 반환.
 
@@ -918,7 +940,7 @@ def _run_compliance_gate(
                     if field and field not in seen_fields:
                         seen_fields.add(field)
                         label, why = _notice_field_label(field, gate_notice_type)
-                        answer_shape = _notice_field_answer_shape(field)
+                        answer_shape = _notice_missing_answer_shape(field, gate_notice_type)
                         needs_user.append(
                             {
                                 "field": field,

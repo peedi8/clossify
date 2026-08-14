@@ -62,10 +62,10 @@ def _load_labels_doc() -> dict:
 
 
 def _all_notice_fields() -> set[str]:
-    """notice_types.json 의 verified 35종에서 등장하는 모든 필드명 집합.
+    """notice_types.json 의 모든 실재 필드명 집합.
 
-    고아 라벨 검증(b) 에 사용 — 라벨 파일의 키가 이 집합에 없으면 오타 또는
-    추측이다.
+    고아 라벨 검증(b) 에 사용 — 조건부 필드는 ``fields`` 대신 ``field_meta`` 에
+    보존되므로 둘을 합친다. 어느 쪽에도 없는 키만 오타 또는 추측이다.
     """
     specs = naver_client._load_notice_type_specs()
     fields: set[str] = set()
@@ -73,6 +73,9 @@ def _all_notice_fields() -> set[str]:
         for name in spec.get("fields") or []:
             if isinstance(name, str) and name:
                 fields.add(name)
+        field_meta = spec.get("field_meta") or {}
+        if isinstance(field_meta, dict):
+            fields.update(name for name in field_meta if isinstance(name, str) and name)
     return fields
 
 
