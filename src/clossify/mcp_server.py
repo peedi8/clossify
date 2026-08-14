@@ -3342,7 +3342,7 @@ def register_product(
                         "blocked_by": "approval_edit_copy",
                         "gate": "approval_edited",
                         "violations": _copy_recheck.get("violations") or [],
-                        "warnings": gate.get("warnings") or [],
+                        "warnings": _edit_gate.get("warnings") or [],
                         "approval_edits_applied": dict(_approval_edits_applied),
                         "approval_edits_rejected": list(_approval_edits_rejected),
                         "filled_from_prepared": filled_from_prepared,
