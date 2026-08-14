@@ -59,6 +59,8 @@ def _origin_content(payload: dict) -> str | None:
 
 def _build_payload(p: dict, cfg: dict) -> dict:
     """notice_config 를 cfg 로 고정하고 build_payload 실행. 네트워크 없음."""
+    p = dict(p)
+    p.setdefault("as_tel", "070-1234-5678")
     with (
         mock.patch.object(naver_client, "_notice_config", return_value=cfg),
         mock.patch.object(naver_client, "_kc_config", return_value=({}, "")),
@@ -599,6 +601,7 @@ class TestRegisterEntryPointFloatDeliveryFeeRejected:
             "origin_code": "04",
             "made_in": "중국",
             "delivery_fee": 3000.5,
+            "as_tel": "02-0000-0000",
         }
         result = register._build_register_product_dict(d, "테스트상품", "50000000")
         # 원값이 그대로 전달되어야 함 (int() 로 깎이지 않음).
@@ -614,6 +617,7 @@ class TestRegisterEntryPointFloatDeliveryFeeRejected:
             "categoryId": "50000000",
             "origin_code": "04",
             "made_in": "중국",
+            "as_tel": "02-0000-0000",
             "delivery_fee": 3000.5,
         }
         product = register._build_register_product_dict(d, "테스트상품", "50000000")
@@ -649,6 +653,7 @@ class TestBooleanDeliveryFeeRejected:
             "origin_code": "04",
             "made_in": "중국",
             "delivery_fee": val,
+            "as_tel": "02-0000-0000",
         }
         cfg = {"origin_area_code": "04", "origin_content": "중국"}
         with (
@@ -667,6 +672,7 @@ class TestBooleanDeliveryFeeRejected:
             "salePrice": 30000,
             "origin_code": "04",
             "made_in": "중국",
+            "as_tel": "02-0000-0000",
         }
         cfg = {"origin_area_code": "04", "origin_content": "중국", "delivery_fee": val}
         with (
@@ -685,6 +691,7 @@ class TestBooleanDeliveryFeeRejected:
             "origin_code": "04",
             "made_in": "중국",
             "delivery_fee": True,
+            "as_tel": "02-0000-0000",
         }
         cfg = {"origin_area_code": "04", "origin_content": "중국"}
         with (

@@ -70,6 +70,7 @@ class TestFix4ImporterField:
             "manufacturer": "테스트제조사",
             "origin_code": "05",
             "made_in": "한국",
+            "as_tel": "02-0000-0000",
         }
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
             with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
@@ -224,6 +225,7 @@ class TestFix6OriginAreaCode:
             "salePrice": 5000,
             "origin_code": "05",
             "made_in": "한국",
+            "as_tel": "02-0000-0000",
         }
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
             with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
@@ -509,6 +511,7 @@ class TestOptionStockFailClosed:
             "categoryId": "50002366",
             "salePrice": 5000,
             "options": [{"name": "블랙", "price": 0}],  # stock 누락
+            "as_tel": "02-0000-0000",
         }
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
             with pytest.raises(ValueError):
@@ -523,6 +526,7 @@ class TestOptionStockFailClosed:
             "origin_code": "05",
             "made_in": "한국",
             "options": [{"name": "블랙", "stock": 0, "price": 0}],
+            "as_tel": "02-0000-0000",
         }
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
             with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
@@ -565,6 +569,7 @@ class TestBuildPayloadNameCut:
             "salePrice": 10000,
             "origin_code": "05",
             "made_in": "한국",
+            "as_tel": "02-0000-0000",
         }
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
             with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
@@ -579,6 +584,7 @@ class TestBuildPayloadNameCut:
             "salePrice": 10000,
             "origin_code": "05",
             "made_in": "한국",
+            "as_tel": "02-0000-0000",
         }
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
             with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
@@ -592,6 +598,7 @@ class TestBuildPayloadNameCut:
             "salePrice": 10000,
             "origin_code": "05",
             "made_in": "한국",
+            "as_tel": "02-0000-0000",
         }
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
             with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
@@ -605,6 +612,7 @@ class TestBuildPayloadNameCut:
             "salePrice": 10000,
             "origin_code": "05",
             "made_in": "한국",
+            "as_tel": "02-0000-0000",
         }
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
             with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):

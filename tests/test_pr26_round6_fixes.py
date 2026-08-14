@@ -50,6 +50,8 @@ from clossify import naver_client, preview
 
 def _build_payload(p: dict, cfg: dict) -> dict:
     """notice_config 를 cfg 로 고정하고 build_payload 실행. 네트워크 없음."""
+    p = dict(p)
+    p.setdefault("as_tel", "070-1234-5678")
     with (
         mock.patch.object(naver_client, "_notice_config", return_value=cfg),
         mock.patch.object(naver_client, "_kc_config", return_value=({}, "")),

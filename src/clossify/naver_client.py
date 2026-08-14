@@ -488,16 +488,17 @@ def _build_delivery_fee_block(delivery_fee: int) -> dict:
 def _notice_defaults(p):
     cfg_notice = _notice_config()
     product_name = _first_value(p.get("name"), p.get("title_ko"), default="상품명")
-    # AS 연락처는 규제 신고값. config/상품 입력에 없으면 빈 문자열.
-    # 컴플라이언스 검사가 afterServiceTelephoneNumber 누락을 FAIL 로 차단한다.
+    # AS 연락처는 규제 신고값이다. 상품 입력 → 정본 설정 순으로만 고르고,
+    # 실질값이 없으면 build_payload 경계에서 등록을 거부한다. 빈 문자열 전송이나
+    # 다른 설정 키로의 묵시적 폴백은 소비자 연락 불가 상품을 만들 수 있다.
     as_tel = _first_value(
         p.get("as_tel"),
         p.get("seller_tel"),
         cfg_notice.get("as_tel"),
-        cfg_notice.get("seller_tel"),
-        cfg_notice.get("customerServicePhoneNumber"),
         default="",
     )
+    if not as_tel:
+        raise ValueError("config 에 AS 연락처 설정이 필요합니다: smartstore_notice_defaults.as_tel")
     manufacturer = _first_value(
         p.get("manufacturer"), default=_seller_manufacturer_default(p, cfg_notice)
     )

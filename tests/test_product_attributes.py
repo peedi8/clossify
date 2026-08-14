@@ -42,6 +42,7 @@ def _make_product(**overrides) -> dict:
         "name": "테스트상품",
         "categoryId": "50002366",
         "salePrice": 10000,
+        "as_tel": "070-1234-5678",
         "origin_code": "05",
         "made_in": "한국",
     }

@@ -46,6 +46,9 @@ def _base_fee(payload: dict) -> int | None:
 
 def _build_payload(p: dict, cfg: dict) -> dict:
     """notice_config 를 cfg 로 고정하고 build_payload 실행. 네트워크 없음."""
+    p = dict(p)
+    if not str(p.get("as_tel") or "").strip():
+        p["as_tel"] = "02-0000-0000"
     with (
         mock.patch.object(naver_client, "_notice_config", return_value=cfg),
         mock.patch.object(naver_client, "_kc_config", return_value=({}, "")),
@@ -243,6 +246,7 @@ class TestInteractivePreviewShowsConfigProvenance:
             "importer": "설정수입사",
             "manufacturer": "설정제조사",
             "delivery_fee": 7700,
+            "as_tel": "02-0000-0000",
         }
         # prepared payload 의 product dict — 네 설정 유래 보고 필드 모두 없음 (config 유래).
         resolved_payload = {

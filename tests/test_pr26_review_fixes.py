@@ -182,6 +182,7 @@ class TestExplicitZeroNotConfigReported:
             "salePrice": 30000,
             "origin_code": "04",
             "made_in": "중국",
+            "as_tel": "02-0000-0000",
             "delivery_fee": 0,
         }
         cfg = {
@@ -225,6 +226,7 @@ class TestOriginReportWithNoticeBodyOnly:
             "categoryId": "50000000",
             "salePrice": 30000,
             "origin_code": "04",
+            "as_tel": "02-0000-0000",
             "notice": {
                 "productInfoProvidedNoticeType": "ETC",
                 "etc": {
@@ -310,6 +312,7 @@ class TestInvalidDeliveryFeeRaises:
             "salePrice": 30000,
             "origin_code": "04",
             "made_in": "중국",
+            "as_tel": "02-0000-0000",
             "delivery_fee": "abc",
         }
         cfg = {"origin_area_code": "04", "origin_content": "중국"}
@@ -328,6 +331,7 @@ class TestInvalidDeliveryFeeRaises:
             "salePrice": 30000,
             "origin_code": "04",
             "made_in": "중국",
+            "as_tel": "02-0000-0000",
         }
         cfg = {"origin_area_code": "04", "origin_content": "중국", "delivery_fee": "abc"}
         with (
@@ -345,6 +349,7 @@ class TestInvalidDeliveryFeeRaises:
             "salePrice": 30000,
             "origin_code": "04",
             "made_in": "중국",
+            "as_tel": "02-0000-0000",
         }
         cfg = {"origin_area_code": "04", "origin_content": "중국"}
         with (
@@ -421,6 +426,7 @@ class TestDeliveryFeeSourceMatchesResolver:
             "salePrice": 30000,
             "origin_code": "04",
             "made_in": "중국",
+            "as_tel": "02-0000-0000",
         }
         cfg = {
             "origin_area_code": "04",
@@ -454,6 +460,7 @@ class TestDeliveryFeeSourceMatchesResolver:
             "salePrice": 30000,
             "origin_code": "04",
             "made_in": "중국",
+            "as_tel": "02-0000-0000",
         }
         cfg = {
             "origin_area_code": "04",
@@ -485,6 +492,7 @@ class TestDeliveryFeeSourceMatchesResolver:
             "salePrice": 30000,
             "origin_code": "04",
             "made_in": "중국",
+            "as_tel": "02-0000-0000",
         }
         cfg = {
             "origin_area_code": "04",
@@ -514,6 +522,7 @@ class TestDeliveryFeeSourceMatchesResolver:
             "salePrice": 30000,
             "origin_code": "04",
             "made_in": "중국",
+            "as_tel": "02-0000-0000",
             "delivery_fee": 2500,
         }
         cfg = {
@@ -544,6 +553,7 @@ class TestDeliveryFeeSourceMatchesResolver:
             "salePrice": 30000,
             "origin_code": "04",
             "made_in": "중국",
+            "as_tel": "02-0000-0000",
         }
         cfg = {"origin_area_code": "04", "origin_content": "중국"}
         with (
@@ -697,6 +707,7 @@ class TestImporterManufacturerSuppressionMatchesResolver:
             "salePrice": 30000,
             "origin_code": "04",
             "made_in": "중국",
+            "as_tel": "02-0000-0000",
             "notice": {
                 "productInfoProvidedNoticeType": "ETC",
                 "etc": {
@@ -746,6 +757,7 @@ class TestImporterManufacturerSuppressionMatchesResolver:
             "salePrice": 30000,
             "origin_code": "04",
             "made_in": "중국",
+            "as_tel": "02-0000-0000",
             "notice": {
                 "productInfoProvidedNoticeType": "ETC",
                 "etc": {

@@ -46,6 +46,7 @@ def _make_product(extra=None):
         "name": "테스트상품",
         "categoryId": "50000000",
         "salePrice": 30000,
+        "as_tel": "070-1234-5678",
         "origin_code": "04",
         "made_in": "중국",
     }
@@ -56,6 +57,8 @@ def _make_product(extra=None):
 
 def _build_payload(p, cfg):
     """notice_config 를 cfg 로 고정하고 build_payload 실행. 네트워크 없음."""
+    p = dict(p)
+    p.setdefault("as_tel", "070-1234-5678")
     with mock.patch.object(naver_client, "_notice_config", return_value=cfg):
         with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
             return naver_client.build_payload(p, "<html></html>", ["http://x.png"])
