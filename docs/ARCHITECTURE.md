@@ -56,7 +56,7 @@ text_props         순수 리터럴/정규식 (의존 없음)
 
 | 모듈 | 역할 |
 |------|------|
-| `mcp_server` | stdio MCP 서버. **8개 도구** 노출(`check_config`, `upload_images`, `register_product`, `get_product`, `delete_product`, `prepare_listing`, `submit_reviews`, `manage_products`). 검증 sanitization, 컴플라이언스 게이트 회선. 도구 목록은 서버에서 직접 뽑는다: `python -c "import asyncio,sys; sys.path.insert(0,'src'); from clossify import mcp_server; print(sorted(t.name for t in asyncio.run(mcp_server.mcp.list_tools())))"` |
+| `mcp_server` | stdio MCP 서버. **11개 도구** 노출(`check_config`, `delete_product`, `get_category_attribute_values`, `get_category_attributes`, `get_product`, `manage_products`, `prepare_listing`, `register_product`, `submit_reviews`, `suggest_product_attributes`, `upload_images`). 검증 sanitization, 컴플라이언스 게이트 회선. 도구 목록은 서버에서 직접 뽑는다: `python -c "import asyncio,sys; sys.path.insert(0,'src'); from clossify import mcp_server; print(sorted(t.name for t in asyncio.run(mcp_server.mcp.list_tools())))"` |
 | `naver_client` | 네이버 커머스 API 인증·페이로드 빌드·등록·조회·삭제·이미지 업로드 |
 | `images` | 이미지 입력 정규화. 로컬 가드(`validate_local_image`), SSRF 방어 외부 URL fetch(`fetch_external_image`), 통합 진입점(`attach_images`) |
 | `qa_agents` | 3분할 QA(이미지/카피/컴플라이언스) 결정론 검사 + 집계 + 등록 게이트(`qa_gate`) |
@@ -64,6 +64,7 @@ text_props         순수 리터럴/정규식 (의존 없음)
 | `requirements` | 거부 시점 진단(`diagnose`). **순수 함수** — 네트워크·LLM·파일쓰기 0회, 읽기 전용 데이터만. 법적 신고값·카테고리를 확정하지 않고 후보·필요사항만 돌려준다 |
 | `notice_labels` | 고시 필드명 → 한국어 라벨/사유 매핑(아래층 모듈). `data/notice_field_labels.json` 이 단일 진실 공급원. `requirements`·`mcp_server` 가 이 모듈에서 라벨을 읽는다 |
 | `agent_calls` | 클라이언트 LLM 위임 디스크립터(llm_hint) 생성(naming, qa_copy) |
+| `attribute_suggestions` | 상품명·상세 본문과 카테고리 속성·속성값을 대조해 후보를 제안하는 **순수 함수**. 네트워크·설정·등록 payload 전송 부작용 없음 |
 | `category_meta` | `data/category_meta.json` 로더. KC 필요 여부·예외 플래그·경로 조회 |
 | `category` | 카테고리 분류 보조. `common`/`text_props`(모듈 로드)·`category_meta`(지연) 에만 의존하는 독립 leaf |
 | `common` | config 로더(`cfg()` 가 `naver_client.load_config` 로 위임), 경로 상수, JSON 입출력 유틸 |
@@ -72,6 +73,11 @@ text_props         순수 리터럴/정규식 (의존 없음)
 | `templates` | 상세페이지 HTML 템플릿 빌더(`build_korean_detail_html`) |
 | `seo` | SEO 상품명/태그 |
 | `keyword_volume` | 검색광고 키워드 볼륨 |
+
+속성 관련 도구 3종은 역할을 구분한다. `get_category_attributes`와
+`get_category_attribute_values`는 읽기 전용 조회 도구이고,
+`suggest_product_attributes`는 아무 값도 전송하지 않는 제안 도구다. 실제 전송은
+`register_product`의 `attributes` 인자로만 한다.
 
 ## 2. 데이터 자산 3종
 
