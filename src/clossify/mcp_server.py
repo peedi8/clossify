@@ -3232,6 +3232,7 @@ def register_product(
                     "blocked_by": "prepared_qa_gate",
                     "gate": "full",
                     "reason": _reason,
+                    "warnings": gate.get("warnings") or [],
                     "needs_llm": _prepared.get("needs_llm") or [],
                     "needs_user": _prepared.get("needs_user") or [],
                     "filled_from_prepared": filled_from_prepared,
