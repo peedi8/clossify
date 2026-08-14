@@ -171,6 +171,30 @@ def test_product_as_tel_takes_precedence_over_config():
 
 
 @pytest.mark.parametrize(
+    ("case_name", "notice_config", "expected_configured"),
+    [
+        ("as_tel", {**_ORIGIN, "as_tel": "070-1111-1111"}, True),
+        (
+            "customerServicePhoneNumber",
+            {**_ORIGIN, "customerServicePhoneNumber": "070-3333-3333"},
+            True,
+        ),
+        ("seller_tel", {**_ORIGIN, "seller_tel": "070-2222-2222"}, True),
+        ("all_missing", _ORIGIN, False),
+    ],
+)
+def test_check_config_as_tel_configuration_and_policy_gap_agree(
+    tmp_path, case_name, notice_config, expected_configured
+):
+    """공개 설정 여부와 AS 정책 공백은 세 후보 키·전부 없음에서 모순되지 않는다."""
+    check_result, _ = _config_diagnostics(tmp_path, notice_config)
+    as_tel_is_gap = "smartstore_notice_defaults.as_tel" in check_result["policy_gaps"]
+
+    assert check_result["as_tel_configured"] is expected_configured, case_name
+    assert as_tel_is_gap is (not expected_configured), case_name
+
+
+@pytest.mark.parametrize(
     ("config_key", "phone"),
     [
         ("as_tel", "070-1111-1111"),
@@ -179,13 +203,14 @@ def test_product_as_tel_takes_precedence_over_config():
     ],
 )
 def test_each_config_as_tel_key_matches_diagnostics_and_payload(tmp_path, config_key, phone):
-    """세 설정 키 각각은 공개 점검·컴플라이언스·조립기에서 모두 유효하다."""
+    """세 설정 키 각각은 공개 점검·정책 공백·컴플라이언스·조립기에서 모두 유효하다."""
     notice_config = {**_ORIGIN, config_key: phone}
 
     check_result, flags = _config_diagnostics(tmp_path, notice_config)
     payload = _build_payload(_product(), notice_config)
 
     assert check_result["as_tel_configured"] is True
+    assert "smartstore_notice_defaults.as_tel" not in check_result["policy_gaps"]
     assert flags["as_configured"] is True
     assert (
         payload["originProduct"]["detailAttribute"]["afterServiceInfo"][
@@ -200,6 +225,7 @@ def test_all_config_as_tel_keys_missing_are_rejected_with_all_key_names(tmp_path
     check_result, flags = _config_diagnostics(tmp_path, _ORIGIN)
 
     assert check_result["as_tel_configured"] is False
+    assert "smartstore_notice_defaults.as_tel" in check_result["policy_gaps"]
     assert flags["as_configured"] is False
     with pytest.raises(ValueError) as exc_info:
         _build_payload(_product(), _ORIGIN)
@@ -220,6 +246,7 @@ def test_all_config_as_tel_placeholders_are_rejected(tmp_path):
     check_result, flags = _config_diagnostics(tmp_path, notice_config)
 
     assert check_result["as_tel_configured"] is False
+    assert "smartstore_notice_defaults.as_tel" in check_result["policy_gaps"]
     assert flags["as_configured"] is False
     with pytest.raises(ValueError):
         _build_payload(_product(), notice_config)

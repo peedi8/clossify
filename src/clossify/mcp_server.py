@@ -1037,9 +1037,18 @@ def _diagnose_policy_gaps(cfg: dict[str, Any]) -> list[str]:
     어느 별칭에서든 실질값이 있으면 "설정됨" 으로 본다. 판매자가 camelCase
     ``deliveryFee`` 로 설정했는데 ``delivery_fee`` 만 보고 "미설정" 이라
     진단하면 등록은 값을 쓰면서 진단만 거짓이 된다.
+
+    A/S 는 별칭 목록을 별도로 복제하지 않고, 조립기 및 ``as_tel_configured`` 와
+    같은 ``naver_client._resolve_as_tel`` 로 판정한다. 세 후보 키와
+    자리표시자 규율이 한 곳에만 남도록 한다.
     """
     gaps: list[str] = []
     for path in _POLICY_CONFIG_KEYS:
+        if path == ("smartstore_notice_defaults", "as_tel"):
+            notice_defaults = _cfg_value_at(cfg, ("smartstore_notice_defaults",))
+            if not naver_client._resolve_as_tel({}, notice_defaults):
+                gaps.append(".".join(path))
+            continue
         aliases = _POLICY_CONFIG_ALIASES.get(path, (path,))
         found_present = False
         for alias_path in aliases:
