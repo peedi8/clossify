@@ -1080,8 +1080,11 @@ def _base_etc_notice(defaults):
     cert = defaults["cert_detail"]
     notice: dict = {"itemName": defaults["item_name"]}
     if cert:
-        notice["certDetail"] = cert
-        notice["certificationDetails"] = cert
+        # 정본 필드명은 certificateDetails 다 (data/notice_types.json 의 ETC·
+        # ETC_SERVICE). 과거에 실었던 certDetail/certificationDetails 는 정본에
+        # 없는 키라 네이버에 보낼 이유가 없다 — 값을 줘도 게이트가 누락으로
+        # 오판하는 결함의 원인이었다.
+        notice["certificateDetails"] = cert
     notice["madeIn"] = defaults["made_in"]
     notice["countryOfOrigin"] = defaults["made_in"]
     if defaults.get("manufacturer"):
