@@ -244,6 +244,69 @@ class TestApprovalEditRecheck:
         assert http_calls["count"] == 0, "네이버 호출이 0회여야 함(차단)"
         assert result.get("gate") == "approval_edited"
 
+    def test_a1_edited_name_and_notice_copy_block_returns_edited_warnings(
+        self, monkeypatch, isolated_prepared_dir
+    ):
+        """(a-1) name·notice 편집 뒤 카피 차단은 재검사 경고를 반환한다."""
+        bad_name = "최고급 특별보장 상품"
+        fake_srv = _mock_approval_server(
+            edits={
+                "상품명": bad_name,
+                "고시.returnCostReason": "승인 편집 후 고시 값",
+            }
+        )
+        monkeypatch.delenv("COMMERCE_DRY_RUN", raising=False)
+        original_warning = {"rule": "편집 전", "detail": "편집 전 payload 경고"}
+        edited_warning = {"rule": "편집 후", "detail": "승인 편집 payload 경고"}
+        gate_before_edit = {
+            "blocked": False,
+            "violations": [],
+            "warnings": [original_warning],
+            "needs_user": [],
+            "pending_reviews": [],
+        }
+        gate_after_edit = {
+            "blocked": False,
+            "violations": [],
+            "warnings": [edited_warning],
+            "needs_user": [],
+            "pending_reviews": [],
+        }
+        passing_payload = _make_passing_prepared("정상이름")
+
+        with (
+            mock.patch.object(naver_client, "_notice_config", return_value=_NOTICE_CFG_FULL),
+            mock.patch.object(naver_client, "_kc_config", return_value=({}, "")),
+            mock.patch.object(mcp_server, "_config_enable_local_approval", return_value=True),
+            mock.patch.object(
+                mcp_server, "_config_require_preview_confirmation", return_value=True
+            ),
+            mock.patch.object(approval_server, "ApprovalServer", fake_srv),
+            mock.patch.object(
+                mcp_server,
+                "_run_compliance_gate",
+                side_effect=[gate_before_edit, gate_after_edit],
+            ),
+            mock.patch.object(register, "load_prepared_payload", return_value=passing_payload),
+            mock.patch.object(
+                register, "resolve_prepared_for_register", return_value=(passing_payload, {})
+            ),
+            mock.patch.object(
+                common, "cfg", return_value={"smartstore_notice_defaults": _NOTICE_CFG_FULL}
+            ),
+        ):
+            result = mcp_server.register_product(
+                name="정상이름",
+                price=10000,
+                category_id="50002366",
+                preview_confirmed=False,
+            )
+
+        assert result["ok"] is False
+        assert result.get("blocked_by") == "approval_edit_copy"
+        assert result.get("warnings") == [edited_warning]
+        assert original_warning not in result.get("warnings", [])
+
     def test_b_edited_notice_missing_required_blocks(self, monkeypatch, isolated_prepared_dir):
         """(b) 승인 편집으로 고시 필수필드가 누락되면 등록 차단.
 

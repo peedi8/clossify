@@ -89,14 +89,16 @@
   `fields` 는 **우리 게이트가 하드 필수로 요구하는** 목록이라 정본보다 짧다
   (35개 적음 · 21타입 — 그중 33개는 `~에 한함` 조건부라 의도적으로 제외).
   **통계·표를 뽑을 땐 `field_meta` 를 써라.** `fields` 로 뽑으면 과소 집계된다.
-- **총 개수**: 공식 `create-product-product` 문서의 정적 enum 정의에는
-  40개 값이 노출됨. 본 파일은 35/40 verified, 5/40 unverified.
-  참고: 공식 maintainer 응답(#3490)에서는 GET
-  `/v1/products-for-provided-notice` 기준 36종이라고 했으며, 40과 36의
-  차이는 병합/제외 처리 또는 버전 차이로 추정됨.
+- **총 개수**: 공식 `create-product-product` 문서의 정적 enum 정의에는 **40개** 값이
+  노출되고, 정본 API `GET /external/v1/products-for-provided-notice` 응답에는 **36종**이 온다.
+  본 파일은 **API 응답 36종을 `verified`**, 그 응답에서 찾지 못한 **4종을 `unverified`** 로 담는다.
+  ~~35/40 verified, 5/40 unverified~~ **(2026-08-14 정정 — 정본 API 로 교체 전 숫자)**
+  40과 36의 차이는 병합/제외 처리 또는 버전 차이로 추정됨[추정].
+  **숫자를 외우지 말고 세라**:
+  `python -c "import json;d=json.load(open('src/clossify/data/notice_types.json',encoding='utf-8'));print(len(d['verified']),len(d['unverified']))"`
 - **제약**: 토큰·계정 식별자·스토어명·한자 0건. 한글 라벨은 허용된 리터럴.
-- **갱신**: unverified 5종의 필드 구조는 동일 문서에서 별도 조사하면
-  채울 수 있음.
+- **갱신**: `unverified` 타입의 필드 구조는 정본 API 응답에 없으므로 문서 조사로만 채울 수 있다.
+  정본이 갱신되면 **재생성이 곧 덮어쓰기**임에 주의(우리가 얹은 주석은 정본에 없다).
 
 ### `notice_field_labels.json`
 

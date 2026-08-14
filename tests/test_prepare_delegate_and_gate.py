@@ -403,6 +403,10 @@ class TestBypassBlocking:
 
         # COMMERCE_DRY_RUN 이 아닌 상태에서 register_product 직접 호출.
         monkeypatch.delenv("COMMERCE_DRY_RUN", raising=False)
+        tag_duplicate_warning = {
+            "rule": "태그 중복",
+            "detail": "태그 '테스트제조사'가 제조사와 같습니다",
+        }
         # 결정론 compliance 게이트는 이 테스트의 대상이 아니므로 통과시킨다.
         # (prepared_qa_gate 차단을 관찰하기 위함.)
         monkeypatch.setattr(
@@ -411,6 +415,7 @@ class TestBypassBlocking:
             lambda *a, **kw: {
                 "blocked": False,
                 "violations": [],
+                "warnings": [tag_duplicate_warning],
                 "needs_user": [],
                 "pending_reviews": [],
             },
@@ -445,6 +450,7 @@ class TestBypassBlocking:
         assert (
             result.get("blocked_by") == "prepared_qa_gate"
         ), f"prepared_qa_gate 가 아닌 다른 원인으로 차단됨: {result.get('blocked_by')}"
+        assert result.get("warnings") == [tag_duplicate_warning]
 
     def test_no_prepared_marks_deterministic_only(self, isolated_prepared_dir, monkeypatch):
         """prepared 가 없는 신규 호출은 gate=deterministic_only."""
