@@ -579,15 +579,85 @@ def _load_notice_field_relations() -> dict[str, list[list[str]]]:
     return normalized
 
 
+def _notice_date_text_pairs(notice_type: str) -> list[dict[str, str]]:
+    """정본 ``field_meta`` 에서 날짜형-직접입력 택일 쌍을 판별한다.
+
+    ``notice_types.json`` 의 타입별 API 메타가 유일한 판정 근거다. ``XText``
+    필드가 ``String`` 이고 같은 타입에 ``X`` 필드가 있으며 그 ``fieldType`` 이
+    ``YearMonth`` 또는 ``LocalDate`` 일 때만 쌍으로 인정한다. 타입/필드명 목록을
+    코드에 따로 적지 않으므로 정본에 새 쌍이 추가되면 자동으로 반영된다.
+
+    메타가 없거나 불완전하면 쌍으로 추측하지 않는다. 규제 필드는 완화보다
+    fail-closed 가 우선이다.
+    """
+    spec = _notice_type_spec(notice_type)
+    field_meta = (spec or {}).get("field_meta")
+    if not isinstance(field_meta, dict):
+        return []
+
+    pairs: list[dict[str, str]] = []
+    for text_field, text_meta in field_meta.items():
+        if not isinstance(text_field, str) or not text_field.endswith("Text"):
+            continue
+        if not isinstance(text_meta, dict):
+            continue
+        date_field = text_field.removesuffix("Text")
+        date_meta = field_meta.get(date_field)
+        if not isinstance(date_meta, dict):
+            continue
+        date_field_type = str(date_meta.get("fieldType") or "").strip()
+        text_field_type = str(text_meta.get("fieldType") or "").strip()
+        if date_field_type not in {"YearMonth", "LocalDate"} or text_field_type != "String":
+            continue
+        pairs.append(
+            {
+                "date_field": date_field,
+                "date_field_type": date_field_type,
+                "text_field": text_field,
+            }
+        )
+    return pairs
+
+
+def _notice_date_text_alternative(notice_type: str, field: str) -> dict[str, str] | None:
+    """필드가 속한 정본 날짜형-직접입력 택일 쌍을 반환한다.
+
+    반환값은 게이트의 ``needs_user`` 안내가 판정과 같은 쌍을 한 번만 설명하도록
+    쓰인다. 판정 자체는 :func:`_notice_xor_groups` 가 담당한다.
+    """
+    field = str(field or "")
+    for pair in _notice_date_text_pairs(notice_type):
+        if field in (pair["date_field"], pair["text_field"]):
+            return pair
+    return None
+
+
 def _notice_xor_groups(notice_type: str) -> list[list[str]]:
     """특정 고시 타입의 XOR 그룹 리스트를 반환.
 
     Returns:
-        XOR 그룹 리스트. 각 그룹은 필드명 리스트(길이 2 이상).
-        기록된 관계가 없으면 빈 리스트(기존 동작 유지).
+        XOR 그룹 리스트. 날짜형-직접입력 그룹은 정본 ``field_meta`` 에서
+        도출하며, 그 밖에 실측으로 확인된 관계는
+        ``notice_field_relations.json`` 에서 보존한다.
     """
-    relations = _load_notice_field_relations()
-    return relations.get(str(notice_type or "").strip().upper(), [])
+    normalized_type = str(notice_type or "").strip().upper()
+    groups = [
+        [pair["date_field"], pair["text_field"]]
+        for pair in _notice_date_text_pairs(normalized_type)
+    ]
+    groups.extend(_load_notice_field_relations().get(normalized_type, []))
+
+    # 정본에서 도출한 쌍과 기존 실측 기록이 겹칠 수 있다. 한 그룹으로만 남겨
+    # 누락과 "둘 다 채움" 위반이 중복 보고되지 않게 한다.
+    deduplicated: list[list[str]] = []
+    seen: set[frozenset[str]] = set()
+    for group in groups:
+        key = frozenset(group)
+        if len(key) < 2 or key in seen:
+            continue
+        seen.add(key)
+        deduplicated.append(group)
+    return deduplicated
 
 
 def _notice_field_filled(notice_body, field) -> bool:
@@ -1989,6 +2059,8 @@ __all__ = [
     "_notice_field_missing",
     "_notice_field_missing_with_relations",
     "_notice_field_type",
+    "_notice_date_text_alternative",
+    "_notice_date_text_pairs",
     "_notice_field_xor_violations",
     "_notice_type_spec",
     "_notice_xor_groups",

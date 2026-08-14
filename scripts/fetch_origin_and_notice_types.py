@@ -33,6 +33,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -51,7 +52,36 @@ from clossify import naver_client as nc
 
 DATA_DIR = os.path.join(_REPO_ROOT, "src", "clossify", "data")
 ORIGIN_PATH = os.path.join(DATA_DIR, "product_origin_areas.json")
-NOTICE_TYPES_PATH = os.path.join(DATA_DIR, "notice_field_types.json")
+NOTICE_FIELD_TYPES_PATH = os.path.join(DATA_DIR, "notice_field_types.json")
+NOTICE_TYPES_PATH = os.path.join(DATA_DIR, "notice_types.json")
+FIXTURE_NOTICE_PATH = os.path.join(
+    _REPO_ROOT, "tests", "fixtures", "products_for_provided_notice.json"
+)
+NOTICE_API_PATH = "GET /external/v1/products-for-provided-notice"
+COMMON_NOTICE_FIELDS = [
+    "returnCostReason",
+    "noRefundReason",
+    "qualityAssuranceStandard",
+    "compensationProcedure",
+    "troubleShootingContents",
+]
+PREVIOUS_NOTICE_ENTRY_KEYS = (
+    "field_notes",
+    "field_source_note",
+    "required_fields_note",
+)
+UNVERIFIED_NOTICE_TYPES = {
+    "AIRLINE_TICKET": {"node": "airlineTicket", "candidate_ko": "항공권 상품 요약 정보"},
+    "LODGMENT_RESERVATION": {
+        "node": "lodgmentReservation",
+        "candidate_ko": "숙박예약 상품 요약 정보",
+    },
+    "RENT_CAR": {"node": "rentCar", "candidate_ko": "렌터카 상품 요약 정보"},
+    "TRAVEL_PACKAGE": {"node": "travelPackage", "candidate_ko": "여행상품 상품 요약 정보"},
+}
+UNVERIFIED_NOTICE_NOTE = (
+    "2026-08-12 정본 API 목록에 없음 — 여행/항공 계열이라 별도 채널일 가능성(미확인)"
+)
 
 # 429/5xx 재시도: 최대 3회, 지수백오프.
 MAX_RETRIES = 3
@@ -198,8 +228,23 @@ def _api_field_type_to_ours(field_type: str) -> str:
     return mapping.get(str(field_type or "").strip(), "string")
 
 
-def fetch_notice_field_types(tk: str) -> dict:
-    """``GET /external/v1/products-for-provided-notice`` 수집.
+def fetch_notice_response(tk: str) -> list[dict]:
+    """정본 고시 API의 원 응답을 가져온다.
+
+    이 경로는 수동 수집용이다. CI와 오프라인 재생성은 반드시
+    ``--notice-fixture``를 사용하며 이 함수를 호출하지 않는다.
+    """
+    url = nc.BASE + "/external/v1/products-for-provided-notice"
+    data = _get_with_retry(url, tk)
+    if not isinstance(data, list):
+        raise RuntimeError(
+            f"products-for-provided-notice 응답이 JSON 배열이 아님: {type(data).__name__}"
+        )
+    return data
+
+
+def build_notice_field_types_document(data: list[dict]) -> dict:
+    """정본 응답에서 기존 ``notice_field_types.json`` 형식을 만든다.
 
     실측 계약:
       - 응답: ``[{"productInfoProvidedNoticeType": "WEAR",
@@ -213,8 +258,6 @@ def fetch_notice_field_types(tk: str) -> dict:
     반환은 데이터 파일에 쓸 dict. 구조는 기존 field_types 맵(필드명 → 타입 정보)을
     유지하되, API 의 fieldDescription/fieldAddDescription 을 함께 싣는다.
     """
-    url = nc.BASE + "/external/v1/products-for-provided-notice"
-    data = _get_with_retry(url, tk)
     if not isinstance(data, list):
         raise RuntimeError(
             f"products-for-provided-notice 응답이 JSON 배열이 아님: {type(data).__name__}"
@@ -309,7 +352,7 @@ def fetch_notice_field_types(tk: str) -> dict:
     doc = {
         "generated_at": _utc_now_iso(),
         "method": "live API",
-        "source": "GET /external/v1/products-for-provided-notice",
+        "source": NOTICE_API_PATH,
         "source_url": "https://api.commerce.naver.com/external/v1/products-for-provided-notice",
         "api_notice_type_count": len(api_types),
         "api_field_count_total": field_count_total,
@@ -327,12 +370,263 @@ def fetch_notice_field_types(tk: str) -> dict:
     return doc
 
 
+def fetch_notice_field_types(tk: str) -> dict:
+    """하위 호환용: 실응답을 기존 필드 타입 정본 형식으로 정규화한다."""
+    return build_notice_field_types_document(fetch_notice_response(tk))
+
+
+def _node_from_notice_type(notice_type: str) -> str:
+    """알려지지 않은 타입에도 결정론적인 camelCase node 후보를 만든다."""
+    parts = [part.lower() for part in notice_type.split("_") if part]
+    if not parts:
+        raise ValueError("고시 타입이 비어 있어 node 를 만들 수 없습니다.")
+    return parts[0] + "".join(part.title() for part in parts[1:])
+
+
+def build_notice_types_document(response: list[dict], previous: dict) -> dict:
+    """저장된 정본 응답을 런타임 ``notice_types.json`` 스키마로 정규화한다.
+
+    응답이 제공하지 않는 공통 5필드는 기존 표현을 유지한다. 응답이 제공한
+    필드의 타입·최대 길이·설명·추가 설명은 ``field_meta``에 손실 없이 보존한다.
+    """
+    if not isinstance(response, list):
+        raise ValueError("고시 정본 응답은 JSON 배열이어야 합니다.")
+    if not isinstance(previous, dict):
+        raise ValueError("기존 notice_types.json 은 JSON 객체여야 합니다.")
+
+    previous_verified = {
+        str(entry.get("type") or ""): entry
+        for entry in previous.get("verified") or []
+        if isinstance(entry, dict) and entry.get("type")
+    }
+    previous_unverified = {
+        str(entry.get("type") or ""): entry
+        for entry in previous.get("unverified") or []
+        if isinstance(entry, dict) and entry.get("type")
+    }
+
+    verified: list[dict] = []
+    seen_types: set[str] = set()
+    for raw_type in response:
+        if not isinstance(raw_type, dict):
+            raise ValueError("고시 정본 응답의 타입 항목은 객체여야 합니다.")
+        notice_type = str(raw_type.get("productInfoProvidedNoticeType") or "").strip()
+        label_ko = str(raw_type.get("productInfoProvidedNoticeTypeName") or "").strip()
+        contents = raw_type.get("productInfoProvidedNoticeContents")
+        if not notice_type or not label_ko or not isinstance(contents, list):
+            raise ValueError(f"고시 정본 타입 항목이 불완전합니다: {raw_type!r}")
+        if notice_type in seen_types:
+            raise ValueError(f"고시 정본 응답에 중복 타입이 있습니다: {notice_type}")
+        seen_types.add(notice_type)
+
+        previous_entry = previous_verified.get(notice_type) or previous_unverified.get(
+            notice_type, {}
+        )
+        fields = list(COMMON_NOTICE_FIELDS)
+        field_meta: dict[str, dict] = {}
+        for raw_field in contents:
+            if not isinstance(raw_field, dict):
+                raise ValueError(f"{notice_type} 의 필드 항목은 객체여야 합니다.")
+            field_name = str(raw_field.get("fieldName") or "").strip()
+            if not field_name:
+                raise ValueError(f"{notice_type} 의 fieldName 이 비어 있습니다.")
+            if field_name in field_meta:
+                raise ValueError(f"{notice_type} 에 중복 fieldName 이 있습니다: {field_name}")
+            fields.append(field_name)
+            field_meta[field_name] = {
+                "fieldType": raw_field.get("fieldType"),
+                "fieldMaxLength": raw_field.get("fieldMaxLength"),
+                "fieldDescription": raw_field.get("fieldDescription"),
+                "fieldAddDescription": raw_field.get("fieldAddDescription"),
+            }
+
+        entry = {
+            "type": notice_type,
+            "source": NOTICE_API_PATH,
+            "node": previous_entry.get("node") or _node_from_notice_type(notice_type),
+            "label_ko": label_ko,
+            "fields": fields,
+            "field_source": NOTICE_API_PATH,
+            "field_meta": field_meta,
+        }
+        if previous_entry.get("note"):
+            entry["note"] = previous_entry["note"]
+        # 정본 API 값이 있으면 그것을 사용하고, 없을 때만 이전 보조 메모를 잇는다.
+        for key in PREVIOUS_NOTICE_ENTRY_KEYS:
+            if key in raw_type:
+                entry[key] = raw_type[key]
+            elif key in previous_entry:
+                entry[key] = previous_entry[key]
+        verified.append(entry)
+
+    unverified: list[dict] = []
+    for notice_type in sorted(UNVERIFIED_NOTICE_TYPES):
+        if notice_type in seen_types:
+            raise ValueError(f"미검증 타입이 정본 응답에 포함되었습니다: {notice_type}")
+        prior = previous_unverified.get(notice_type, {})
+        info = UNVERIFIED_NOTICE_TYPES[notice_type]
+        unverified.append(
+            {
+                "type": notice_type,
+                "node": prior.get("node") or info["node"],
+                "candidate_ko": prior.get("candidate_ko") or info["candidate_ko"],
+                "note": UNVERIFIED_NOTICE_NOTE,
+            }
+        )
+
+    doc = {
+        "generated_at": "2026-08-12T00:00:00Z",
+        "method": "stored API fixture (offline reproducible)",
+        "source": NOTICE_API_PATH,
+        "sources": [
+            {
+                "source": NOTICE_API_PATH,
+                "what": "저장된 실응답 픽스처에서 오프라인 재생성한 고시 상품군/필드 메타",
+            }
+        ],
+        "coverage_note": (
+            "정본 API 픽스처 36종은 verified 로 보관한다. "
+            "AIRLINE_TICKET·LODGMENT_RESERVATION·RENT_CAR·TRAVEL_PACKAGE 는 "
+            "2026-08-12 정본 API 목록에 없음 — 여행/항공 계열이라 별도 채널일 가능성(미확인)."
+        ),
+        "expected_total": len(verified) + len(unverified),
+        "verified": sorted(verified, key=lambda entry: entry["type"]),
+        "unverified": unverified,
+    }
+    validate_notice_types_document(doc, response)
+    return doc
+
+
+def validate_notice_types_document(document: dict, response: list[dict]) -> None:
+    """정본 응답의 필드·메타가 최종 문서에서 누락되지 않았는지 검증한다."""
+    if not isinstance(document, dict):
+        raise ValueError("검증할 notice_types 문서는 JSON 객체여야 합니다.")
+    verified = document.get("verified")
+    unverified = document.get("unverified")
+    if not isinstance(verified, list) or not isinstance(unverified, list):
+        raise ValueError("notice_types 문서에 verified/unverified 배열이 필요합니다.")
+    by_type = {str(entry.get("type") or ""): entry for entry in verified if isinstance(entry, dict)}
+    response_by_type = {
+        str(entry.get("productInfoProvidedNoticeType") or ""): entry
+        for entry in response
+        if isinstance(entry, dict)
+    }
+    if set(by_type) != set(response_by_type):
+        raise ValueError("verified 타입 집합이 정본 응답 타입 집합과 다릅니다.")
+    for notice_type, raw_type in response_by_type.items():
+        entry = by_type[notice_type]
+        contents = raw_type.get("productInfoProvidedNoticeContents")
+        if not isinstance(contents, list):
+            raise ValueError(f"{notice_type} 의 정본 필드 배열이 없습니다.")
+        expected_fields = COMMON_NOTICE_FIELDS + [
+            str(field.get("fieldName") or "").strip()
+            for field in contents
+            if isinstance(field, dict)
+        ]
+        if entry.get("fields") != expected_fields:
+            raise ValueError(f"{notice_type} 의 fields 가 정본 응답과 다릅니다.")
+        if entry.get("source") != NOTICE_API_PATH or entry.get("field_source") != NOTICE_API_PATH:
+            raise ValueError(f"{notice_type} 의 출처가 API 경로가 아닙니다.")
+        field_meta = entry.get("field_meta")
+        if not isinstance(field_meta, dict):
+            raise ValueError(f"{notice_type} 의 field_meta 가 없습니다.")
+        expected_meta = {
+            str(field.get("fieldName") or "").strip(): {
+                "fieldType": field.get("fieldType"),
+                "fieldMaxLength": field.get("fieldMaxLength"),
+                "fieldDescription": field.get("fieldDescription"),
+                "fieldAddDescription": field.get("fieldAddDescription"),
+            }
+            for field in contents
+            if isinstance(field, dict)
+        }
+        if field_meta != expected_meta:
+            raise ValueError(f"{notice_type} 의 field_meta 가 정본 응답과 다릅니다.")
+
+    unverified_by_type = {
+        str(entry.get("type") or ""): entry for entry in unverified if isinstance(entry, dict)
+    }
+    if set(unverified_by_type) != set(UNVERIFIED_NOTICE_TYPES):
+        raise ValueError("미검증 타입 집합이 보존되지 않았습니다.")
+    for notice_type, entry in unverified_by_type.items():
+        if entry.get("note") != UNVERIFIED_NOTICE_NOTE:
+            raise ValueError(f"{notice_type} 의 미검증 근거 메모가 다릅니다.")
+    if document.get("expected_total") != len(verified) + len(unverified):
+        raise ValueError("expected_total 이 verified/unverified 합계와 다릅니다.")
+
+
+def _load_json(path: str) -> object:
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _write_json(path: str, document: dict) -> None:
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(document, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+
+
 # --------------------------------------------------------------------------- #
 # 메인.
 # --------------------------------------------------------------------------- #
 
 
-def main() -> None:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--notice-fixture",
+        help="저장된 products-for-provided-notice 실응답 JSON. 지정 시 네트워크를 사용하지 않음.",
+    )
+    parser.add_argument(
+        "--notice-output",
+        default=NOTICE_TYPES_PATH,
+        help="오프라인 고시 스펙 출력 경로 (기본: data/notice_types.json).",
+    )
+    parser.add_argument(
+        "--notice-template",
+        default=NOTICE_TYPES_PATH,
+        help="정본에 없는 보조 메모와 기존 node/candidate 라벨을 보존할 notice_types.json 경로.",
+    )
+    parser.add_argument(
+        "--validate-notice",
+        help="기존 출력 파일을 픽스처와 대조만 하고 변경하지 않음 (--notice-fixture 필요).",
+    )
+    args = parser.parse_args(argv)
+    if args.validate_notice and not args.notice_fixture:
+        parser.error("--validate-notice 는 --notice-fixture 와 함께 사용해야 합니다.")
+    return args
+
+
+def _run_offline_notice(args: argparse.Namespace) -> None:
+    response = _load_json(args.notice_fixture)
+    if not isinstance(response, list):
+        raise ValueError("--notice-fixture 파일은 JSON 배열이어야 합니다.")
+    if args.validate_notice:
+        candidate = _load_json(args.validate_notice)
+        if not isinstance(candidate, dict):
+            raise ValueError("--validate-notice 파일은 JSON 객체여야 합니다.")
+        validate_notice_types_document(candidate, response)
+        print(f"[notice fixture] 검증 성공: {args.validate_notice}", flush=True)
+        return
+
+    previous = _load_json(args.notice_template)
+    if not isinstance(previous, dict):
+        raise ValueError("--notice-template 파일은 JSON 객체여야 합니다.")
+    document = build_notice_types_document(response, previous)
+    _write_json(args.notice_output, document)
+    print(
+        f"[notice fixture] {len(document['verified'])} verified / "
+        f"{len(document['unverified'])} unverified → {args.notice_output}",
+        flush=True,
+    )
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = _parse_args(argv)
+    if args.notice_fixture:
+        _run_offline_notice(args)
+        return
+
     os.makedirs(DATA_DIR, exist_ok=True)
     tk = nc.get_token()
 
@@ -348,13 +642,20 @@ def main() -> None:
     )
 
     print("[fetch_origin_and_notice_types] 고시 필드 타입 조회 중...", flush=True)
-    notice_doc = fetch_notice_field_types(tk)
-    with open(NOTICE_TYPES_PATH, "w", encoding="utf-8") as f:
+    notice_response = fetch_notice_response(tk)
+    notice_doc = build_notice_field_types_document(notice_response)
+    with open(NOTICE_FIELD_TYPES_PATH, "w", encoding="utf-8") as f:
         json.dump(notice_doc, f, ensure_ascii=False, indent=2)
+    previous_notice_types = _load_json(NOTICE_TYPES_PATH)
+    if not isinstance(previous_notice_types, dict):
+        raise RuntimeError(f"notice_types.json 구조가 올바르지 않습니다: {NOTICE_TYPES_PATH}")
+    regenerated_notice_types = build_notice_types_document(notice_response, previous_notice_types)
+    _write_json(NOTICE_TYPES_PATH, regenerated_notice_types)
     print(
         f"[fetch_origin_and_notice_types] 고시 필드 타입: "
         f"{notice_doc['api_notice_type_count']} 타입 / "
-        f"{len(notice_doc['field_types'])} 고유 필드명 → {NOTICE_TYPES_PATH}",
+        f"{len(notice_doc['field_types'])} 고유 필드명 → {NOTICE_FIELD_TYPES_PATH}; "
+        f"고시 스펙 {len(regenerated_notice_types['verified'])} verified → {NOTICE_TYPES_PATH}",
         flush=True,
     )
 

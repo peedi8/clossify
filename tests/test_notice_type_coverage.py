@@ -568,19 +568,19 @@ def _build_full_body_for_type(notice_type, spec):
 
 
 # --------------------------------------------------------------------------- #
-# 1. 35개 고시 타입 전수: 선언된 필수 필드를 채운 입력 → 누락 0건.
+# 1. 정본 API 갱신 후 36개 고시 타입 전수: 선언된 필수 필드를 채운 입력 → 누락 0건.
 # --------------------------------------------------------------------------- #
 class TestAllNoticeTypesCompliancePass:
     """각 고시 타입의 선언된 필수 필드를 채운 입력이 컴플라이언스를
-    통과하는지(필수 필드 누락 0건) 확인한다. 35 케이스."""
+    통과하는지(필수 필드 누락 0건) 확인한다. 36 케이스."""
 
-    def test_thirty_five_types_present(self):
-        """verified 타입이 정확히 35종인가."""
+    def test_thirty_six_types_present(self):
+        """verified 타입이 정확히 36종인가."""
         specs = _all_notice_specs()
-        assert len(specs) == 35, f"verified 타입이 35종이 아님: {len(specs)}"
+        assert len(specs) == 36, f"verified 타입이 36종이 아님: {len(specs)}"
 
     def test_real_values_cover_all_types(self):
-        """_TYPE_REAL_VALUES 매핑이 35종 전체를 커버하는가."""
+        """_TYPE_REAL_VALUES 매핑이 36종 전체를 커버하는가."""
         specs = _all_notice_specs()
         for spec in specs:
             t = spec["type"]
@@ -590,7 +590,7 @@ class TestAllNoticeTypesCompliancePass:
                 assert t in _TYPE_REAL_VALUES, "ETC 실질값 매핑이 없음"
 
     def test_each_type_with_filled_required_fields_has_zero_missing(self):
-        """35종 각각: 선언된 필수 필드 전부 채운 입력 → _notice_field_missing
+        """36종 각각: 선언된 필수 필드 전부 채운 입력 → _notice_field_missing
         결과가 빈 리스트(누락 0건). 데이터와 코드가 어긋나면 실패."""
         specs = _all_notice_specs()
         failures = []
@@ -601,7 +601,7 @@ class TestAllNoticeTypesCompliancePass:
             missing = qa_agents._notice_field_missing(body, fields)
             if missing:
                 failures.append(f"{notice_type}: {len(missing)}건 누락 — {missing[:5]}")
-        assert not failures, f"35종 중 {len(failures)}종이 필수 필드 누락:\n  " + "\n  ".join(
+        assert not failures, f"36종 중 {len(failures)}종이 필수 필드 누락:\n  " + "\n  ".join(
             failures
         )
 
