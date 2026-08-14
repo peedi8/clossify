@@ -1494,7 +1494,7 @@ def _notice_field_xor_violations(notice_body, notice_type) -> list[dict]:
 
 
 def _seller_tag_duplication_violation(detail_attr, notice_body) -> dict | None:
-    """판매자 태그 중복(고시 제조사·수입자 필드 중복 + 목록 자기 중복) 검사.
+    """판매자 태그 중복(제조사·수입자 필드 중복 + 목록 자기 중복) 검사.
 
     네이버 태그 규칙은 브랜드·제조사·판매처 같은 상품정보 필드 키워드를 태그에
     중복 입력하지 말라고 안내하지만 **거절하지는 않는다**(가이드라인). 따라서
@@ -1511,6 +1511,7 @@ def _seller_tag_duplication_violation(detail_attr, notice_body) -> dict | None:
         detail_attr: ``originProduct.detailAttribute`` dict.
             ``seoInfo.sellerTags`` 를 관측한다(읽기만 한다).
         notice_body: 고시 본문 dict. ``manufacturer``/``importer`` 값과 비교한다.
+            수입자는 ``detail_attr.originAreaInfo.importer`` 도 함께 비교한다.
 
     Returns:
         겹침이 하나라도 있으면 ``{"rule": "태그 중복", "severity": WARN,
@@ -1552,6 +1553,11 @@ def _seller_tag_duplication_violation(detail_attr, notice_body) -> dict | None:
         value_key = normalize(str(body.get(field_name) or ""))
         if value_key:
             field_keys.append((value_key, label))
+    origin_info = detail_attr.get("originAreaInfo")
+    if isinstance(origin_info, dict):
+        importer_key = normalize(str(origin_info.get("importer") or ""))
+        if importer_key:
+            field_keys.append((importer_key, "수입자"))
 
     def subject_particle(text: str) -> str:
         """보고 문장의 조사(이/가)를 고른다 — 한국어 온전."""

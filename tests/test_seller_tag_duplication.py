@@ -61,7 +61,7 @@ _CFG = {
 }
 
 
-def _build_real_payload(tags, *, cfg_extra=None):
+def _build_real_payload(tags, *, cfg_extra=None, notice=None):
     """실제 build_payload 로 등록 페이로드를 만든다 (실측 모양, 실호출 없음).
 
     ``tags`` 는 판매자 태그 목록. 고시 타입은 ETC — config 의 제조사가
@@ -76,7 +76,8 @@ def _build_real_payload(tags, *, cfg_extra=None):
         "categoryId": "50000001",
         "salePrice": 12000,
         "tags": list(tags),
-        "notice": {
+        "notice": notice
+        or {
             "productInfoProvidedNoticeType": "ETC",
             "etc": {"certificateDetails": "해당사항 없음"},
         },
@@ -117,6 +118,17 @@ def _seller_tags(payload):
 
 # 워크오더 반례 조합 — 제조사 '루아공방' 과 겹치는 태그 + 자기 중복 태그.
 _COUNTEREXAMPLE_TAGS = ["루아", "루아", "미니화병", "루 아", "루아공방"]
+_WEAR_NOTICE_WITHOUT_IMPORTER = {
+    "productInfoProvidedNoticeType": "WEAR",
+    "wear": {
+        "material": "면 100%",
+        "color": "아이보리",
+        "size": "FREE",
+        "caution": "단독 세탁",
+        "packDateText": "2026년 1월",
+        "warrantyPolicy": "관련 법령 및 소비자분쟁해결기준에 따름",
+    },
+}
 
 
 class TestCounterexampleDetected:
@@ -183,6 +195,53 @@ class TestControlGroupClean:
         assert (
             result["verdict"] == qa_agents.PASS
         ), f"통제군 verdict 가 PASS 여야 함: violations={result.get('violations')}"
+
+
+# --------------------------------------------------------------------------- #
+# 원산지 정보 수입자 — 실제 조립기 경로의 반례와 통제군.
+# --------------------------------------------------------------------------- #
+
+
+class TestOriginAreaImporter:
+    """``originAreaInfo.importer`` 는 고시 본문과 함께 태그 비교 대상이다."""
+
+    def test_origin_area_importer_overlap_reports_warn(self):
+        """WEAR 본문에 importer 가 없어도 실제 payload 수입자 겹침을 보고한다."""
+        payload = _build_real_payload(
+            ["수입상사", "미니화병"],
+            cfg_extra={"importer": "수입상사"},
+            notice=_WEAR_NOTICE_WITHOUT_IMPORTER,
+        )
+        detail_attr = payload["originProduct"]["detailAttribute"]
+        assert detail_attr["originAreaInfo"]["importer"] == "수입상사"
+        assert "importer" not in detail_attr["productInfoProvidedNotice"]["wear"]
+
+        found = _tag_dup_violations(_run_compliance(payload))
+
+        assert len(found) == 1, f"원산지 수입자 겹침이 보고되지 않음: {found}"
+        assert found[0]["severity"] == qa_agents.WARN
+        assert "태그 '수입상사'가 수입자와 같습니다" in found[0]["detail"]
+
+    def test_origin_area_importer_control_group_has_no_warning(self):
+        """다른 태그는 같은 원산지 수입자가 있어도 중복으로 보고하지 않는다."""
+        payload = _build_real_payload(
+            ["미니화병", "탁상화병"],
+            cfg_extra={"importer": "수입상사"},
+            notice=_WEAR_NOTICE_WITHOUT_IMPORTER,
+        )
+
+        assert _tag_dup_violations(_run_compliance(payload)) == []
+
+    def test_blank_origin_area_importer_does_not_match_blank_tag(self):
+        """빈 수입자와 빈 태그는 비교 대상에서 제외해 오탐을 막는다."""
+        payload = _build_real_payload(
+            ["", "미니화병"],
+            cfg_extra={"importer": ""},
+            notice=_WEAR_NOTICE_WITHOUT_IMPORTER,
+        )
+
+        assert payload["originProduct"]["detailAttribute"]["originAreaInfo"].get("importer") is None
+        assert _tag_dup_violations(_run_compliance(payload)) == []
 
 
 # --------------------------------------------------------------------------- #
