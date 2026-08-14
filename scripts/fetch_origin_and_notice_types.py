@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -81,6 +82,27 @@ UNVERIFIED_NOTICE_TYPES = {
 }
 UNVERIFIED_NOTICE_NOTE = (
     "2026-08-12 정본 API 목록에 없음 — 여행/항공 계열이라 별도 채널일 가능성(미확인)"
+)
+
+# 정본의 fieldAddDescription 안에서만 조건부 여부를 판정한다. ``경우``라는
+# 낱말만으로는 부족하다. ``운동화인 경우 겉감·안감을 구분``처럼 값의 작성법을
+# 설명하는 문구까지 조건부로 빼면, 실제 필수 필드가 게이트를 통과하지 못한다.
+# 적용 대상 자체가 한정되거나, 해당 사항이 없을 때 필드 전체 생략을 명시한 문구만
+# 조건부로 인정한다. 필드명·타입명 목록을 따로 두지 않아 새 정본 응답도 같은
+# 기준으로 처리한다.
+_CONDITIONAL_FIELD_ADD_DESCRIPTION_RE = re.compile(
+    r"(?:"
+    r"\uc5d0\s*\ud55c\ud568"
+    r"|\uacbd\uc6b0\uc5d0\s*\ud55c\ud558\uba70"
+    r"|\ub300\uc0c1[^.\n]*?\uc758\s*\uacbd\uc6b0"
+    r"|\ud574\ub2f9\s*\uc0ac\ud56d\uc774\s*\uc5c6\uc73c\uba74\s*\uc0dd\ub7b5"
+    r"|\uc7ac\uacf5\uae09\(\ub9ac\ud37c\ube0c\)\s*\uac00\uad6c\uc758\s*\uacbd\uc6b0"
+    r"|\ud06c\uae30\u00b7\uccb4\uc911\uc5d0\s*\uc81c\ud55c\uc774\s*\uc788\ub294\s*\ud488\ubaa9\uc758\s*\uacbd\uc6b0\s*\ubc18\ub4dc\uc2dc\s*\ud45c\uc2dc"
+    r"|^[^.\n]+\uc758\s*\uacbd\uc6b0\s*$"
+    r")"
+)
+_FIELD_WRITING_INSTRUCTION_RE = re.compile(
+    r"(?:^\s*\ub2e8\s*,|\uad6c\ubd84\ud558\uc5ec\s*\ud45c\uc2dc|\ud568\uaed8\s*\ud45c\uae30|\ud568\uaed8\s*\ud45c\uc2dc|\ub300\uccb4\s*\uac00\ub2a5|\uad6c\uc131\ud488\ubcc4)"
 )
 
 # 429/5xx 재시도: 최대 3회, 지수백오프.
@@ -383,6 +405,113 @@ def _node_from_notice_type(notice_type: str) -> str:
     return parts[0] + "".join(part.title() for part in parts[1:])
 
 
+def _is_conditional_notice_field(raw_field: dict) -> bool:
+    """정본의 명시적 적용대상 한정·생략 허용만 조건부로 판정한다."""
+    field_add_description = str(raw_field.get("fieldAddDescription") or "").strip()
+    if _FIELD_WRITING_INSTRUCTION_RE.search(field_add_description):
+        return False
+    return bool(_CONDITIONAL_FIELD_ADD_DESCRIPTION_RE.search(field_add_description))
+
+
+def _notice_field_parts(
+    notice_type: str, contents: list[dict]
+) -> tuple[list[str], dict[str, dict]]:
+    """한 정본 타입의 무조건 필드와 전체 메타를 분리해 반환한다.
+
+    조건부 필드는 ``fields`` 에 넣지 않지만, 안내 근거인 ``fieldAddDescription`` 을
+    포함해 ``field_meta`` 에는 손실 없이 보존한다.
+    """
+    required_fields: list[str] = []
+    field_meta: dict[str, dict] = {}
+    for raw_field in contents:
+        if not isinstance(raw_field, dict):
+            raise ValueError(f"{notice_type} 의 필드 항목은 객체여야 합니다.")
+        field_name = str(raw_field.get("fieldName") or "").strip()
+        if not field_name:
+            raise ValueError(f"{notice_type} 의 fieldName 이 비어 있습니다.")
+        if field_name in field_meta:
+            raise ValueError(f"{notice_type} 에 중복 fieldName 이 있습니다: {field_name}")
+        field_meta[field_name] = {
+            "fieldType": raw_field.get("fieldType"),
+            "fieldMaxLength": raw_field.get("fieldMaxLength"),
+            "fieldDescription": raw_field.get("fieldDescription"),
+            "fieldAddDescription": raw_field.get("fieldAddDescription"),
+        }
+        if not _is_conditional_notice_field(raw_field):
+            required_fields.append(field_name)
+    return required_fields, field_meta
+
+
+def _rental_base_type(response: list[dict]) -> dict | None:
+    """정본 응답에서 렌탈 공통 기반 타입을 안전하게 찾는다.
+
+    관계를 ``RENTAL_HA`` 같은 개별 타입으로 고정하지 않는다. 정본의 ``RENTAL_``
+    타입 중 유일한 ``*_ETC`` 타입만 범용 렌탈 기반으로 인정한다. 렌탈 타입은
+    있는데 그 근거가 없거나 둘 이상이면 상속을 추측하지 않고 재생성을 중단한다.
+    """
+    rental_types = [
+        entry
+        for entry in response
+        if isinstance(entry, dict)
+        and str(entry.get("productInfoProvidedNoticeType") or "").strip().startswith("RENTAL_")
+    ]
+    if not rental_types:
+        return None
+    base_candidates = [
+        entry
+        for entry in rental_types
+        if str(entry.get("productInfoProvidedNoticeType") or "").strip().endswith("_ETC")
+    ]
+    if len(base_candidates) != 1:
+        names = [
+            str(entry.get("productInfoProvidedNoticeType") or "").strip() for entry in rental_types
+        ]
+        raise ValueError(
+            "렌탈 공통 기반을 정본 데이터에서 하나로 판별할 수 없습니다: "
+            f"rental_types={names}, base_candidates={len(base_candidates)}"
+        )
+    return base_candidates[0]
+
+
+def _notice_entry_fields_and_meta(
+    notice_type: str, contents: list[dict], rental_base: dict | None
+) -> tuple[list[str], dict[str, dict]]:
+    """정본 한 타입의 필수 필드와 전체 메타를 만든다.
+
+    렌탈 파생 타입에는 정본에서 판별한 ``*_ETC`` 기반의 무조건 필드와 모든
+    메타를 먼저 붙이고, 해당 타입의 고유 필드를 뒤에 붙인다. 동일 필드가 양쪽에
+    있으면서 메타가 다르면 규제 스키마 충돌이므로 추측으로 합치지 않는다.
+    """
+    direct_fields, direct_meta = _notice_field_parts(notice_type, contents)
+    is_rental_child = (
+        rental_base is not None
+        and notice_type.startswith("RENTAL_")
+        and notice_type != str(rental_base.get("productInfoProvidedNoticeType") or "").strip()
+    )
+    if not is_rental_child:
+        return list(COMMON_NOTICE_FIELDS) + direct_fields, direct_meta
+
+    base_type = str(rental_base.get("productInfoProvidedNoticeType") or "").strip()
+    base_contents = rental_base.get("productInfoProvidedNoticeContents")
+    if not isinstance(base_contents, list):
+        raise ValueError(f"{base_type} 의 정본 필드 배열이 없습니다.")
+    base_fields, base_meta = _notice_field_parts(base_type, base_contents)
+    conflicting_fields = sorted(
+        field_name
+        for field_name in set(base_meta) & set(direct_meta)
+        if base_meta[field_name] != direct_meta[field_name]
+    )
+    if conflicting_fields:
+        raise ValueError(
+            f"{notice_type} 의 렌탈 기반 필드 메타가 {base_type} 와 충돌합니다: "
+            f"{conflicting_fields}"
+        )
+    fields = list(dict.fromkeys(COMMON_NOTICE_FIELDS + base_fields + direct_fields))
+    field_meta = dict(base_meta)
+    field_meta.update(direct_meta)
+    return fields, field_meta
+
+
 def build_notice_types_document(response: list[dict], previous: dict) -> dict:
     """저장된 정본 응답을 런타임 ``notice_types.json`` 스키마로 정규화한다.
 
@@ -405,6 +534,7 @@ def build_notice_types_document(response: list[dict], previous: dict) -> dict:
         if isinstance(entry, dict) and entry.get("type")
     }
 
+    rental_base = _rental_base_type(response)
     verified: list[dict] = []
     seen_types: set[str] = set()
     for raw_type in response:
@@ -422,23 +552,7 @@ def build_notice_types_document(response: list[dict], previous: dict) -> dict:
         previous_entry = previous_verified.get(notice_type) or previous_unverified.get(
             notice_type, {}
         )
-        fields = list(COMMON_NOTICE_FIELDS)
-        field_meta: dict[str, dict] = {}
-        for raw_field in contents:
-            if not isinstance(raw_field, dict):
-                raise ValueError(f"{notice_type} 의 필드 항목은 객체여야 합니다.")
-            field_name = str(raw_field.get("fieldName") or "").strip()
-            if not field_name:
-                raise ValueError(f"{notice_type} 의 fieldName 이 비어 있습니다.")
-            if field_name in field_meta:
-                raise ValueError(f"{notice_type} 에 중복 fieldName 이 있습니다: {field_name}")
-            fields.append(field_name)
-            field_meta[field_name] = {
-                "fieldType": raw_field.get("fieldType"),
-                "fieldMaxLength": raw_field.get("fieldMaxLength"),
-                "fieldDescription": raw_field.get("fieldDescription"),
-                "fieldAddDescription": raw_field.get("fieldAddDescription"),
-            }
+        fields, field_meta = _notice_entry_fields_and_meta(notice_type, contents, rental_base)
 
         entry = {
             "type": notice_type,
@@ -513,16 +627,15 @@ def validate_notice_types_document(document: dict, response: list[dict]) -> None
     }
     if set(by_type) != set(response_by_type):
         raise ValueError("verified 타입 집합이 정본 응답 타입 집합과 다릅니다.")
+    rental_base = _rental_base_type(response)
     for notice_type, raw_type in response_by_type.items():
         entry = by_type[notice_type]
         contents = raw_type.get("productInfoProvidedNoticeContents")
         if not isinstance(contents, list):
             raise ValueError(f"{notice_type} 의 정본 필드 배열이 없습니다.")
-        expected_fields = COMMON_NOTICE_FIELDS + [
-            str(field.get("fieldName") or "").strip()
-            for field in contents
-            if isinstance(field, dict)
-        ]
+        expected_fields, expected_meta = _notice_entry_fields_and_meta(
+            notice_type, contents, rental_base
+        )
         if entry.get("fields") != expected_fields:
             raise ValueError(f"{notice_type} 의 fields 가 정본 응답과 다릅니다.")
         if entry.get("source") != NOTICE_API_PATH or entry.get("field_source") != NOTICE_API_PATH:
@@ -530,16 +643,6 @@ def validate_notice_types_document(document: dict, response: list[dict]) -> None
         field_meta = entry.get("field_meta")
         if not isinstance(field_meta, dict):
             raise ValueError(f"{notice_type} 의 field_meta 가 없습니다.")
-        expected_meta = {
-            str(field.get("fieldName") or "").strip(): {
-                "fieldType": field.get("fieldType"),
-                "fieldMaxLength": field.get("fieldMaxLength"),
-                "fieldDescription": field.get("fieldDescription"),
-                "fieldAddDescription": field.get("fieldAddDescription"),
-            }
-            for field in contents
-            if isinstance(field, dict)
-        }
         if field_meta != expected_meta:
             raise ValueError(f"{notice_type} 의 field_meta 가 정본 응답과 다릅니다.")
 

@@ -255,11 +255,18 @@ class TestSchemaConsistency:
 
     @staticmethod
     def _all_notice_fields() -> set[str]:
-        """notice_types.json 의 모든 타입 fields 를 합친 집합."""
+        """모든 타입의 필수·조건부 실재 필드를 합친 집합.
+
+        조건부 필드는 필수 ``fields`` 에는 없지만 정본 메타 ``field_meta`` 에
+        보존되므로, 고아 필드 검증에서는 둘을 함께 본다.
+        """
         all_fields: set[str] = set()
         for entry in naver_client._load_notice_type_specs():
             for f in entry.get("fields") or []:
                 all_fields.add(f)
+            field_meta = entry.get("field_meta") or {}
+            if isinstance(field_meta, dict):
+                all_fields.update(field_meta)
         return all_fields
 
     def test_d_relation_fields_exist_in_some_notice_type(self):

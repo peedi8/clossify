@@ -740,6 +740,12 @@
       "troubleShootingContents": "소비자피해보상의 처리, 재화 등에 대한 불만 처리 및 소비자와 사업자 사이의 분쟁 처리에 관한 사항"
     },
     "RENTAL_HA": {
+      "customerServicePhoneNumber": "소비자 상담 관련 전화번호",
+      "itemName": "품명",
+      "modelName": "모델명",
+      "ownershipTransferCondition": "소유권 이전 조건",
+      "payingForLossOrDamage": "상품의 고장, 분실, 훼손 시 소비자 책임",
+      "refundPolicyForCancel": "중도 해약 시 환불 기준",
       "maintenance": "유지 보수 조건",
       "specification": "제품 사양"
     },

@@ -378,8 +378,9 @@ class TestF1TopTieAll:
         ("유기농 아몬드 500g", {"likely"}, 21),  # FOOD expirationDate XOR 쌍 추가.
         ("남성 캐주얼 셔츠", {"ambiguous", "likely"}, 11),
         ("수분 크림 50ml", {"likely"}, 19),
-        ("스테인리스 텀블러 500ml", {"likely"}, 17),
-        ("무선 블루투스 이어폰", {"likely"}, 18),
+        # 조건부 필드는 fields 에서 제외되어 두 교집합이 각각 1개·2개 감소했다.
+        ("스테인리스 텀블러 500ml", {"likely"}, 16),
+        ("무선 블루투스 이어폰", {"likely"}, 16),
         ("시계", {"ambiguous"}, 11),
     ]
 
