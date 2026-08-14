@@ -39,6 +39,7 @@ class TestOriginFailClosed:
             "name": "테스트상품",
             "categoryId": "50002366",
             "salePrice": 10000,
+            "as_tel": "070-1234-5678",
         }
 
     def test_missing_origin_area_code_raises(self):
@@ -109,6 +110,7 @@ class TestKCConfigGated:
             "salePrice": 10000,
             "origin_code": "05",
             "made_in": "한국",
+            "as_tel": "02-0000-0000",
         }
 
     def test_kc_absent_no_kc_fields_in_payload(self):
@@ -179,6 +181,7 @@ class TestConfigValuesPropagated:
             "name": "테스트",
             "categoryId": "50002366",
             "salePrice": 5000,
+            "as_tel": "02-0000-0000",
         }
         # "02" = 수입산 (네이버 커머스 API 원산지 화이트리스트의 유효 코드).
         cfg_notice = {"origin_area_code": "02", "origin_content": "일본"}
@@ -196,6 +199,7 @@ class TestConfigValuesPropagated:
             "salePrice": 5000,
             "origin_code": "03",
             "made_in": "미국",
+            "as_tel": "02-0000-0000",
         }
         cfg_notice = {"origin_area_code": "02", "origin_content": "일본"}
         with mock.patch.object(naver_client, "_notice_config", return_value=cfg_notice):
@@ -216,6 +220,7 @@ class TestConfigValuesPropagated:
             "salePrice": 5000,
             "origin_code": "05",
             "made_in": "한국",
+            "as_tel": "02-0000-0000",
         }
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
             with mock.patch.object(naver_client, "_kc_config", return_value=(kc_block, "")):
@@ -245,6 +250,7 @@ class TestModelNameNoExternalPrefix:
             "origin_code": "05",
             "made_in": "한국",
             "num_iid": "999",
+            "as_tel": "02-0000-0000",
         }
         with mock.patch.object(naver_client, "_notice_config", return_value={}):
             with mock.patch.object(naver_client, "_kc_config", return_value=({}, "")):
@@ -261,6 +267,7 @@ class TestModelNameNoExternalPrefix:
             "salePrice": 5000,
             "origin_code": "05",
             "made_in": "한국",
+            "as_tel": "02-0000-0000",
         }
         cfg = {"origin_area_code": "05", "origin_content": "한국", "model_name": "MODEL_X1"}
         with mock.patch.object(naver_client, "_notice_config", return_value=cfg):

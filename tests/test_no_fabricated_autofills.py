@@ -46,6 +46,7 @@ _EMPTY_NOTICE_CFG: dict = {
     #  반례 1/2 를 검증할 수 없다).
     "origin_area_code": "04",
     "origin_content": "중국",
+    "as_tel": "02-0000-0000",
 }
 
 # common.cfg() mock 용 — 컴플라이언스 원산지 일치 검사가 읽는 최소 config.
@@ -141,14 +142,14 @@ class TestNoFabricatedAutofills:
                         token not in val
                     ), f"{node_key}.manufacturer 가 임의문구({token!r}) 를 포함"
 
-    def test_as_telephone_empty_when_config_empty(self):
-        """config 에 as_tel 이 없으면 afterServiceTelephoneNumber 는 빈 문자열이다."""
+    def test_as_telephone_uses_configured_value(self):
+        """설정된 A/S 번호는 임의 치환 없이 그대로 전송된다."""
         payload = _build_payload_minimal()
         as_info = (
             payload.get("originProduct", {}).get("detailAttribute", {}).get("afterServiceInfo", {})
         )
         tel = as_info.get("afterServiceTelephoneNumber")
-        assert tel == "", f"afterServiceTelephoneNumber 가 코드 임의값으로 채워짐: {tel!r}"
+        assert tel == "02-0000-0000", f"afterServiceTelephoneNumber 가 설정값과 다름: {tel!r}"
 
     def test_common_five_fields_absent_when_config_empty(self):
         """공통 5 고시 필드가 config 비어 있을 때 payload 에 임의문구로 들어가지 않는다."""
@@ -206,7 +207,7 @@ class TestComplianceFailOnMinimumInput:
         ), f"최소 입력인데 컴플라이언스가 FAIL 이 아님: {result['verdict']}"
 
     def test_compliance_enumerates_missing_items(self):
-        """최소 입력 → 위반 항목에 고시 필수필드 누락과 AS 연락처 누락이 포함된다."""
+        """정상 A/S 입력에서도 다른 고시 필수필드 누락은 열거된다."""
         payload = _build_payload_minimal()
         with mock.patch.object(common, "cfg", return_value=_COMMON_CFG_EMPTY):
             result = qa_agents._compliance_code_check(
@@ -219,8 +220,10 @@ class TestComplianceFailOnMinimumInput:
         assert any(
             "고시" in r and "필드" in r for r in rules
         ), f"고시 필수필드 누락 지적이 없음: {rules}"
-        # AS 연락처 누락 지적이 있어야 한다 (요구 항목 4).
-        assert any("A/S" in r or "AS" in r for r in rules), f"AS 연락처 누락 지적이 없음: {rules}"
+        # 정상 A/S 번호는 누락 항목으로 보고되면 안 된다.
+        assert not any(
+            "A/S" in r or "AS" in r for r in rules
+        ), f"정상 AS 번호가 누락으로 보고됨: {rules}"
         # 모든 위반의 severity 가 FAIL 인 항목이 하나 이상 있어야 한다.
         fail_severities = [
             v
@@ -439,11 +442,11 @@ class TestKcFullOrOmit:
 # --------------------------------------------------------------------------- #
 # 반례 5 — AS 미설정 → 컴플라이언스 FAIL, 기본 문자열 생성 0.
 # --------------------------------------------------------------------------- #
-class TestAsContactMissingFails:
-    """AS 연락처 미설정 시: 코드가 임의 문자열을 만들지 않고, 컴플라이언스 FAIL 차단."""
+class TestConfiguredAsContactKeepsOtherComplianceFailures:
+    """A/S 번호가 있어도 다른 미제공 고시 항목은 컴플라이언스 FAIL 로 남는다."""
 
-    def test_no_fabricated_as_string_in_payload(self):
-        """config 에 as_tel 이 없으면 afterServiceTelephoneNumber 는 빈 문자열이다."""
+    def test_configured_as_string_is_transmitted_verbatim(self):
+        """설정된 A/S 번호는 코드가 만든 문자열 없이 그대로 전달된다."""
         payload = _build_payload_minimal()
         tel = (
             payload.get("originProduct", {})
@@ -451,13 +454,13 @@ class TestAsContactMissingFails:
             .get("afterServiceInfo", {})
             .get("afterServiceTelephoneNumber")
         )
-        assert tel == "", f"AS 연락처가 임의값으로 채워짐: {tel!r}"
+        assert tel == "02-0000-0000", f"AS 연락처가 설정값과 다름: {tel!r}"
         # 특히 금지된 임의문구가 아니어야 한다.
         for token in _FORBIDDEN_AUTOFILLS:
             assert tel != token, f"AS 연락처가 {token!r} 임의문구로 채워짐"
 
-    def test_as_missing_compliance_fail(self):
-        """AS 연락처 누락 → 컴플라이언스 FAIL (WARN 이 아님)."""
+    def test_configured_as_does_not_hide_compliance_failures(self):
+        """A/S 번호가 있어도 다른 누락 고시 항목은 FAIL 로 남는다."""
         payload = _build_payload_minimal()
         with mock.patch.object(common, "cfg", return_value=_COMMON_CFG_EMPTY):
             result = qa_agents._compliance_code_check(
@@ -470,14 +473,11 @@ class TestAsContactMissingFails:
             for v in result["violations"]
             if "A/S" in str(v.get("rule") or "") or "AS" in str(v.get("rule") or "")
         ]
-        assert as_violations, "AS 연락처 누락 위반이 없음"
-        for v in as_violations:
-            assert (
-                str(v.get("severity") or "").upper() == qa_agents.FAIL
-            ), f"AS 연락처 누락이 FAIL 이 아님 (WARN 잔존): {v}"
+        assert not as_violations, f"설정된 AS 연락처가 누락으로 보고됨: {as_violations}"
+        assert result["verdict"] == qa_agents.FAIL, "다른 필수 고시 항목 누락이 FAIL 로 남아야 함"
 
-    def test_as_missing_severity_is_fail_not_warn(self):
-        """AS 연락처 누락 위반의 severity 가 정확히 'FAIL' 이다 (요구 항목 4)."""
+    def test_configured_as_has_no_missing_violation(self):
+        """설정된 A/S 번호는 컴플라이언스 누락 항목으로 보고되지 않는다."""
         payload = _build_payload_minimal()
         with mock.patch.object(common, "cfg", return_value=_COMMON_CFG_EMPTY):
             result = qa_agents._compliance_code_check(
@@ -486,11 +486,10 @@ class TestAsContactMissingFails:
                 api_payload=payload,
             )
         # AS 관련 위반을 찾아 severity 확인.
-        found_as_fail = False
+        found_as_violation = False
         for v in result["violations"]:
             detail = str(v.get("detail") or "") + str(v.get("rule") or "")
             if "afterServiceTelephoneNumber" in detail or "A/S" in detail or "AS" in detail:
-                if str(v.get("severity") or "").upper() == qa_agents.FAIL:
-                    found_as_fail = True
-                    break
-        assert found_as_fail, "AS 연락처 누락이 FAIL severity 로 보고되지 않음 (WARN 잔존 가능성)"
+                found_as_violation = True
+                break
+        assert not found_as_violation, "설정된 AS 연락처가 누락 위반으로 보고됨"

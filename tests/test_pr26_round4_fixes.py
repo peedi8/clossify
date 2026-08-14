@@ -57,6 +57,8 @@ def _delivery_fee_type(payload: dict) -> str | None:
 
 def _build_payload(p: dict, cfg: dict) -> dict:
     """notice_config 를 cfg 로 고정하고 build_payload 실행. 네트워크 없음."""
+    p = dict(p)
+    p.setdefault("as_tel", "070-1234-5678")
     with (
         mock.patch.object(naver_client, "_notice_config", return_value=cfg),
         mock.patch.object(naver_client, "_kc_config", return_value=({}, "")),
@@ -490,6 +492,7 @@ class TestFloatDeliveryFeeRejected:
             "origin_code": "04",
             "made_in": "중국",
             "delivery_fee": 3000.5,
+            "as_tel": "02-0000-0000",
         }
         cfg = {"origin_area_code": "04", "origin_content": "중국"}
         with (
@@ -507,6 +510,7 @@ class TestFloatDeliveryFeeRejected:
             "salePrice": 30000,
             "origin_code": "04",
             "made_in": "중국",
+            "as_tel": "02-0000-0000",
         }
         cfg = {
             "origin_area_code": "04",
@@ -618,6 +622,7 @@ class TestPreviewApiPayloadMergesDeliveryFee:
                 "salePrice": 30000,
                 "origin_code": "04",
                 "delivery_fee": 5000,
+                "as_tel": "02-0000-0000",
             }
         }
         cfg_notice = {
@@ -643,6 +648,7 @@ class TestPreviewApiPayloadMergesDeliveryFee:
                 "categoryId": "50000000",
                 "salePrice": 30000,
                 "origin_code": "04",
+                "as_tel": "02-0000-0000",
             }
         }
         cfg_notice = {
@@ -672,6 +678,7 @@ class TestPreviewApiPayloadMergesDeliveryFee:
                 "salePrice": 30000,
                 "origin_code": "04",
                 "delivery_fee": 5000,
+                "as_tel": "02-0000-0000",
             }
         }
         cfg_notice = {

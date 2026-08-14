@@ -1037,9 +1037,18 @@ def _diagnose_policy_gaps(cfg: dict[str, Any]) -> list[str]:
     어느 별칭에서든 실질값이 있으면 "설정됨" 으로 본다. 판매자가 camelCase
     ``deliveryFee`` 로 설정했는데 ``delivery_fee`` 만 보고 "미설정" 이라
     진단하면 등록은 값을 쓰면서 진단만 거짓이 된다.
+
+    A/S 는 별칭 목록을 별도로 복제하지 않고, 조립기 및 ``as_tel_configured`` 와
+    같은 ``naver_client._resolve_as_tel`` 로 판정한다. 세 후보 키와
+    자리표시자 규율이 한 곳에만 남도록 한다.
     """
     gaps: list[str] = []
     for path in _POLICY_CONFIG_KEYS:
+        if path == ("smartstore_notice_defaults", "as_tel"):
+            notice_defaults = _cfg_value_at(cfg, ("smartstore_notice_defaults",))
+            if not naver_client._resolve_as_tel({}, notice_defaults):
+                gaps.append(".".join(path))
+            continue
         aliases = _POLICY_CONFIG_ALIASES.get(path, (path,))
         found_present = False
         for alias_path in aliases:
@@ -1743,19 +1752,17 @@ def check_config(
             "등록을 거부합니다."
         )
 
-    # AS 전화번호 정본 위치 점검 항목 추가.
-    # 정본은 smartstore_notice_defaults.as_tel 이다 (naver_client._notice_defaults 가
-    # cfg_notice.get("as_tel") 로 읽는 자리). 값 자체는 반환하지 않고
-    # 채워짐/비어있음만 보고한다. 미설정 시 등록이 거부된다는
-    # 안내를 포함한다.
-    as_tel_set = False
-    if isinstance(notice_defaults, dict):
-        as_tel_value = notice_defaults.get("as_tel")
-        as_tel_set = bool(as_tel_value) and not _is_placeholder(as_tel_value)
+    # A/S 설정은 조립기와 같은 공유 해석기에서 판정한다. as_tel(권장),
+    # seller_tel, customerServicePhoneNumber 중 실질값 하나면 채워짐이다.
+    # 값 자체는 반환하지 않고 채워짐/비어있음만 보고한다.
+    as_tel_set = bool(naver_client._resolve_as_tel({}, notice_defaults))
     result["as_tel_configured"] = as_tel_set
     if not as_tel_set:
         result["as_tel_hint"] = (
-            "AS 전화번호(smartstore_notice_defaults.as_tel)가 설정되지 않았습니다. "
+            "AS 전화번호가 설정되지 않았습니다. "
+            "smartstore_notice_defaults.as_tel(권장), "
+            "smartstore_notice_defaults.seller_tel 또는 "
+            "smartstore_notice_defaults.customerServicePhoneNumber 중 한 곳에 입력하세요. "
             "register_product 가 컴플라이언스 검사에서 등록을 거부합니다. "
             "안내문구/플레이스홀더를 넣으면 거부됩니다 (fail-closed)."
         )
@@ -4363,7 +4370,7 @@ def _infer_template_notice_type(product: dict[str, Any]) -> str:
 
 
 def _build_config_flags() -> dict[str, Any] | None:
-    """config 에서 원산지·A/S 존재 여부만 판정해 플래그를 만든다 (컴플라이언스).
+    """config 에서 원산지·A/S·공통 고시 존재 여부만 판정해 플래그를 만든다.
 
     **config 값을 반환하지 않는다** — 존재 여부(bool)만.
 
@@ -4372,18 +4379,25 @@ def _build_config_flags() -> dict[str, Any] | None:
 
       - 원산지 코드: ``origin_area_code`` (naver_client.py:189 ``_resolve_origin_area_code``)
       - 원산지 표기: ``origin_content`` (naver_client.py:264~265 ``_notice_defaults`` made_in)
-      - A/S 전화: ``as_tel``·``seller_tel``·``customerServicePhoneNumber``
-        (naver_client.py:247~253 ``_notice_defaults`` as_tel)
+       - A/S 전화: ``as_tel``·``seller_tel``·``customerServicePhoneNumber``
+         (naver_client._resolve_as_tel)
 
-    반환 플래그 3종(정확히)::
+    반환 플래그 4종::
 
         {
           "origin_code_configured":    bool | None,  # origin_area_code 존재
           "origin_content_configured": bool | None,  # origin_content 존재
           "as_configured":             bool | None,  # as_tel|seller_tel|customerServicePhoneNumber 존재
+          "common_notice_configured": {              # 공통 고시 5필드의 설정 존재 여부
+            "returnCostReason": bool | None,
+            "noRefundReason": bool | None,
+            "qualityAssuranceStandard": bool | None,
+            "compensationProcedure": bool | None,
+            "troubleShootingContents": bool | None,
+          },
         }
 
-    F6 — 플래그 3값을 정확히:
+    F6 — 플래그를 정확히:
       - 파일이 **확실히 없음**(신규 설치) → 각 플래그 **False** (미설정 확정).
       - 읽기 **오류**(파손·권한) → ``None`` (모름).
       - 있음 → 키 존재 여부로 True/False.
@@ -4398,7 +4412,7 @@ def _build_config_flags() -> dict[str, Any] | None:
     진단은 살아 있어야 한다.
 
     Returns:
-        R2 플래그 dict (위 3키). config 읽기 자체가 실패하면 ``None``
+        R2 플래그 dict (위 4키). config 읽기 자체가 실패하면 ``None``
         (거부 응답을 죽이지 않는다).
     """
     try:
@@ -4409,6 +4423,7 @@ def _build_config_flags() -> dict[str, Any] | None:
                 "origin_code_configured": False,
                 "origin_content_configured": False,
                 "as_configured": False,
+                "common_notice_configured": naver_client._notice_common_configured_flags({}),
             }
         with open(cfg_path, encoding="utf-8-sig") as f:
             cfg = json.load(f)
@@ -4419,10 +4434,12 @@ def _build_config_flags() -> dict[str, Any] | None:
     # R4 — config 루트가 dict 가 아니면(예: ``[]``) 플래그 전부 None.
     # cfg.get 에서 AttributeError 가 나는 것을 막고 진단을 살린다.
     if not isinstance(cfg, dict):
+        common_unknown = dict.fromkeys(naver_client._notice_common_configured_flags({}), None)
         return {
             "origin_code_configured": None,
             "origin_content_configured": None,
             "as_configured": None,
+            "common_notice_configured": common_unknown,
         }
 
     # R3 — naver_client._notice_config() 와 **같은 섹션 해석**을 쓴다.
@@ -4437,6 +4454,7 @@ def _build_config_flags() -> dict[str, Any] | None:
             "origin_code_configured": False,
             "origin_content_configured": False,
             "as_configured": False,
+            "common_notice_configured": naver_client._notice_common_configured_flags({}),
         }
 
     # R2 — 원산지 code (origin_area_code) 와 content (origin_content) 를 별도로.
@@ -4445,20 +4463,15 @@ def _build_config_flags() -> dict[str, Any] | None:
     origin_content = notice_defaults.get("origin_content")
     origin_content_set = bool(origin_content) and not _is_placeholder(origin_content)
 
-    # R2 — A/S 는 as_tel | seller_tel | customerServicePhoneNumber 셋 중 하나.
-    # 조립기(naver_client.py:247~253) 가 config 에서 읽는 키와 동일하게.
-    as_tel_value = ""
-    for _as_key in ("as_tel", "seller_tel", "customerServicePhoneNumber"):
-        _v = notice_defaults.get(_as_key)
-        if _v and not _is_placeholder(_v):
-            as_tel_value = _v
-            break
-    as_tel_set = bool(as_tel_value)
+    # R2 — A/S 판정은 조립기와 같은 공유 해석기를 쓴다. 현재 행 참조는
+    # naver_client.py:488~502 (_resolve_as_tel) 이다.
+    as_tel_set = bool(naver_client._resolve_as_tel({}, notice_defaults))
 
     return {
         "origin_code_configured": origin_code_set,
         "origin_content_configured": origin_content_set,
         "as_configured": as_tel_set,
+        "common_notice_configured": naver_client._notice_common_configured_flags(notice_defaults),
     }
 
 
@@ -4474,9 +4487,15 @@ def _safe_diagnose(product: dict[str, Any] | None) -> dict[str, Any] | None:
     """
     try:
         config_flags = _build_config_flags()
+        deferred_notice_fields = (
+            product.get("deferred_notice_fields") if isinstance(product, dict) else None
+        )
         return _requirements_mod.diagnose(
             product if isinstance(product, dict) else {},
             config_flags=config_flags,
+            deferred_notice_fields=(
+                deferred_notice_fields if isinstance(deferred_notice_fields, list) else None
+            ),
         )
     except Exception:
         return None
@@ -4527,10 +4546,10 @@ def prepare_listing(
         - ``needs_llm`` 의 각 항목은 ``submit_reviews`` 로 회신해야 한다.
         - 회신하지 않으면 PENDING 이 유지되어 등록이 차단된다.
         - 서버 자체는 LLM 을 호출하지 않는다(common._llm_hint 위임).
-        - ``requirements`` 는 **거부됐을 때만** 채워진다(성공 시 ``None``).
-          목적: 막힌 사유 하나만 말하고 끝내지 않고, 그 시점에 알 수 있는
-          필요사항을 한 번에 준다. 호출자는 이걸 보고 **사용자에게 한 번에
-          물어야 한다**(빠진 것 하나씩 왕복하지 마라).
+        - ``requirements`` 는 입력 거부 또는 결정론 컴플라이언스 FAIL 때 채워진다
+          (그 밖의 준비 성공 시 ``None``). 목적: 막힌 사유 하나만 말하고 끝내지
+          않고, 그 시점에 알 수 있는 필요사항을 한 번에 준다. 호출자는 이걸 보고
+          **사용자에게 한 번에 물어야 한다**(빠진 것 하나씩 왕복하지 마라).
         - ``requirements.notice_required_fields.certain`` 은 후보 고시타입들의
           **공통 안전 부분집합**이다. ``is_complete=false`` 면 전체 요구목록이
           아니므로 완료로 취급하지 말고 ``completion_blocked_by`` 를 해결한 뒤
@@ -4629,6 +4648,31 @@ def prepare_listing(
         if isinstance(u, str) and u.strip()
     ]
 
+    # 준비 payload 는 만들어졌어도 결정론 컴플라이언스가 FAIL 이면 등록은
+    # 막혀 있다. 특히 build_payload 가 A/S fail-closed 에서 먼저 멈춘 경우,
+    # 기존 requirements 진단으로 공통 고시 누락까지 함께 반환한다. 등록 조립의
+    # 엄격함은 바꾸지 않고, 준비 응답의 정보량만 보강한다.
+    requirements = None
+    needs_user = list(payload.get("needs_user") or [])
+    qa_agents_rows = (payload.get("qa") or {}).get("agents") or []
+    compliance_failed = any(
+        isinstance(row, dict)
+        and row.get("agent") == "compliance"
+        and qa_agents._clamp_verdict(row.get("verdict")) == qa_agents.FAIL
+        for row in qa_agents_rows
+    )
+    if compliance_failed:
+        requirements = _safe_diagnose(product)
+        if requirements:
+            existing_fields = {
+                str(item.get("field") or "") for item in needs_user if isinstance(item, dict)
+            }
+            for item in requirements.get("missing") or []:
+                field = str(item.get("field") or "") if isinstance(item, dict) else ""
+                if isinstance(item, dict) and field and field not in existing_fields:
+                    needs_user.append(item)
+                    existing_fields.add(field)
+
     # --- 템플릿 저장 (준비 성공 후 — 사용자가 이름을 명시했을 때만) ---
     # 상품 입력에서 안전한 필드만 뽑아 저장한다(화이트리스트). 상품명·가격·재고·
     # 이미지·옵션·비밀값은 어떤 경우에도 담기지 않는다. 저장소 손상 시 조용히
@@ -4671,17 +4715,16 @@ def prepare_listing(
         "ok": True,
         "product_key": payload.get("product_key"),
         "needs_llm": payload.get("needs_llm") or [],
-        "needs_user": payload.get("needs_user") or [],
+        "needs_user": needs_user,
         "qa": payload.get("qa") or {},
         "images": _listing_urls,
         "preview_path": payload.get("preview_path"),
         "template_applied": template_applied,
         "template_saved": template_saved,
         "error": None,
-        # F6: 독스트링이 "requirements 는 거부됐을 때만 채워진다(성공 시 None)" 이라
-        # 약속했으므로, 성공 경로에도 키를 항상 포함한다. 과거에는 이 키가 없어
-        # result["requirements"] 가 KeyError 였다.
-        "requirements": None,
+        # 성공 경로에도 키를 항상 포함한다. 결정론 컴플라이언스 FAIL 이면
+        # 등록에 필요한 누락을 한 번에 넣고, 그 밖에는 None 이다.
+        "requirements": None if requirements is None else requirements,
     }
     _auto_open.maybe_open_screen(
         _result.get("preview_path"),

@@ -85,6 +85,7 @@ def _make_product(extra_product=None, notice_body=None, notice_type="ETC"):
         "name": "테스트상품",
         "categoryId": "50000000",
         "salePrice": 30000,
+        "as_tel": "070-1234-5678",
         "origin_code": "04",
         "made_in": "중국",
     }

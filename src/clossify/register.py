@@ -436,6 +436,7 @@ def _build_product_dict(d, seo_title, category_id):
         "courier": d.get("courier") or "",
         "notice": d.get("notice") or {},
         "as_tel": d.get("as_tel") or "",
+        "seller_tel": d.get("seller_tel") or "",
         "as_guide": d.get("as_guide") or "",
         "origin_code": d.get("origin_code") or "",
         "manufacturer": d.get("manufacturer") or "",
@@ -508,6 +509,7 @@ def _build_register_product_dict(d, name, category_id, *, resolved_tags=None):
     for key in (
         "origin_code",
         "as_tel",
+        "seller_tel",
         "as_guide",
         "manufacturer",
         "importer",
@@ -1818,6 +1820,7 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None, recommend_fn=None, r
             "manufacturer": d.get("manufacturer") or "",
             "importer": d.get("importer") or "",
             "as_tel": d.get("as_tel") or "",
+            "seller_tel": d.get("seller_tel") or "",
             "as_guide": d.get("as_guide") or "",
             "courier": d.get("courier") or "",
             # delivery_fee: 키가 있을 때만 넣는다 (기본값 3000 은 _notice_defaults

@@ -485,12 +485,15 @@ def _build_delivery_fee_block(delivery_fee: int) -> dict:
     }
 
 
-def _notice_defaults(p):
-    cfg_notice = _notice_config()
-    product_name = _first_value(p.get("name"), p.get("title_ko"), default="상품명")
-    # AS 연락처는 규제 신고값. config/상품 입력에 없으면 빈 문자열.
-    # 컴플라이언스 검사가 afterServiceTelephoneNumber 누락을 FAIL 로 차단한다.
-    as_tel = _first_value(
+def _resolve_as_tel(p, cfg_notice) -> str:
+    """A/S 연락처를 상품 입력 우선·설정 세 키 순서로 해석한다.
+
+    자리표시자 판정은 기존 ``_first_value`` 를 그대로 재사용한다. 설정의
+    ``as_tel``(권장)·``seller_tel``·``customerServicePhoneNumber`` 는 모두
+    유효한 A/S 연락처 자리이며, 세 키에 실질값이 없을 때만 fail-closed 한다.
+    """
+    cfg_notice = cfg_notice if isinstance(cfg_notice, dict) else {}
+    return _first_value(
         p.get("as_tel"),
         p.get("seller_tel"),
         cfg_notice.get("as_tel"),
@@ -498,6 +501,23 @@ def _notice_defaults(p):
         cfg_notice.get("customerServicePhoneNumber"),
         default="",
     )
+
+
+def _notice_defaults(p):
+    cfg_notice = _notice_config()
+    product_name = _first_value(p.get("name"), p.get("title_ko"), default="상품명")
+    # AS 연락처는 규제 신고값이다. 상품 입력 → 설정 세 키 순으로만 고르고,
+    # 실질값이 없으면 build_payload 경계에서 등록을 거부한다. 빈 문자열 전송은
+    # 소비자 연락 불가 상품을 만들 수 있다.
+    as_tel = _resolve_as_tel(p, cfg_notice)
+    if not as_tel:
+        raise ValueError(
+            "config 에 AS 연락처 설정이 필요합니다: "
+            "smartstore_notice_defaults.as_tel(권장), "
+            "smartstore_notice_defaults.seller_tel 또는 "
+            "smartstore_notice_defaults.customerServicePhoneNumber 중 한 곳에 "
+            "실질값을 입력하세요."
+        )
     manufacturer = _first_value(
         p.get("manufacturer"), default=_seller_manufacturer_default(p, cfg_notice)
     )
@@ -745,6 +765,62 @@ def _has_text(value) -> bool:
     return not qa_agents._is_placeholder_value(value)
 
 
+def _notice_common_user_bodies(p) -> list[dict]:
+    """공통 고시 필드의 사용자 입력 본문 후보를 조립기와 같은 규칙으로 찾는다."""
+    if not isinstance(p, dict):
+        return []
+    user_notice = p.get("notice")
+    if not isinstance(user_notice, dict):
+        return []
+
+    notice_type = (
+        str(
+            user_notice.get("productInfoProvidedNoticeType")
+            or user_notice.get("notice_type")
+            or p.get("notice_type")
+            or p.get("productInfoProvidedNoticeType")
+            or ""
+        )
+        .strip()
+        .upper()
+    )
+    if not notice_type:
+        notice_type = "ETC"
+    spec = _notice_type_spec(notice_type)
+    node_key = (spec or {}).get("node") or "etc"
+    bodies: list[dict] = []
+    body = user_notice.get(node_key)
+    if isinstance(body, dict):
+        bodies.append(body)
+    for fallback in ("etc", "furniture"):
+        fallback_body = user_notice.get(fallback)
+        if isinstance(fallback_body, dict):
+            bodies.append(fallback_body)
+    return bodies
+
+
+def _notice_common_field_provided_by_product(p, notice_field, product_keys) -> bool:
+    """공통 고시 필드가 상품 입력에 실질값으로 주어졌는지 판정한다.
+
+    조립기의 공통 고시 해석과 준비 진단이 같은 후보·자리표시자 규칙을 쓰게
+    하는 공유 지점이다. 설정값은 여기서 보지 않는다.
+    """
+    if not isinstance(p, dict):
+        return False
+    if any(_has_text(p.get(key)) for key in product_keys):
+        return True
+    return any(_has_text(body.get(notice_field)) for body in _notice_common_user_bodies(p))
+
+
+def _notice_common_configured_flags(cfg_notice) -> dict[str, bool]:
+    """공통 고시 5필드의 config 존재 여부만 반환한다 (값 노출 금지)."""
+    config = cfg_notice if isinstance(cfg_notice, dict) else {}
+    return {
+        notice_field: any(_has_text(config.get(key)) for key in config_keys)
+        for notice_field, _product_keys, config_keys in _NOTICE_COMMON_FIELD_CANDIDATES
+    }
+
+
 def _notice_common_filled_from_config(p, cfg_notice) -> list:
     """공통 5필드 + 상품마다 달라야 하는 규제값 중 "config 에서만 채워진" 필드명 목록.
 
@@ -777,42 +853,10 @@ def _notice_common_filled_from_config(p, cfg_notice) -> list:
     반환값은 페이로드 빌드 결과 메타(notice_filled_from_config)에 실려
     사용자에게 전달된다 — 묻지 않고 채워진 값이 조용히 딸려가면 잘못 신고된다.
     """
-    # 사용자 고시 본문 노드(etc/wear/...) 의 모든 후보 본문을 모은다.
-    # _merge_notice 의 node_key 선택 규칙을 따라 같은 node 를 찾는다.
-    user_bodies: list = []
-    user_notice = p.get("notice") if isinstance(p, dict) else None
-    if isinstance(user_notice, dict):
-        # 같은 node_key 우선, 없으면 etc/furniture 폴백 — _merge_notice 규칙.
-        notice_type = (
-            str(
-                user_notice.get("productInfoProvidedNoticeType")
-                or user_notice.get("notice_type")
-                or p.get("notice_type")
-                or p.get("productInfoProvidedNoticeType")
-                or ""
-            )
-            .strip()
-            .upper()
-        )
-        if not notice_type:
-            notice_type = "ETC"
-        spec = _notice_type_spec(notice_type)
-        node_key = (spec or {}).get("node") or "etc"
-        body = user_notice.get(node_key)
-        if isinstance(body, dict):
-            user_bodies.append(body)
-        for fallback in ("etc", "furniture"):
-            fb = user_notice.get(fallback)
-            if isinstance(fb, dict):
-                user_bodies.append(fb)
-
+    user_bodies = _notice_common_user_bodies(p)
     filled: list = []
     for notice_field, p_keys, cfg_keys in _NOTICE_COMMON_FIELD_CANDIDATES:
-        # (1) top-level common 키 우선.
-        if any(_has_text(p.get(k)) for k in p_keys):
-            continue
-        # (2) 사용자 고시 본문 노드에 같은 camelCase 필드가 있으면 명시값.
-        if any(_has_text(b.get(notice_field)) for b in user_bodies):
+        if _notice_common_field_provided_by_product(p, notice_field, p_keys):
             continue
         if any(_has_text(cfg_notice.get(k)) for k in cfg_keys):
             filled.append(notice_field)
