@@ -675,3 +675,175 @@ class TestUnconfirmedTypeBehaviorUnchanged:
             assert (
                 violations == []
             ), f"미기재 타입 {t} 에 XOR 위반이 보고됨 (추측 금지 위반): {violations}"
+
+
+# =========================================================================== #
+# (h) 빈 XOR 그룹의 보고 주체 — group[0] 이 fields 에 없어도 그룹당 1건.
+# =========================================================================== #
+
+
+class TestEmptyXorGroupReportsOncePerGroup:
+    """(h) 빈 XOR 그룹은 그룹 단위로 1건 보고 — 보고 주체를 group[0] 에 묶지 않는다.
+
+    결함(실측): 누락 보고를 ``group[0]`` 일 때만 하도록 묶었더니, ``group[0]`` 이
+    ``notice_types.json`` 의 ``fields`` 목록에 없는 타입에서 그룹 전원이 비어
+    있어도 아무도 보고하지 않았다. 반례가 BIOCHEMISTRY — ``expirationDate`` 는
+    정본 ``field_meta`` 에만 있고 ``fields`` 에는 ``expirationDateText`` 만 있다.
+    정본 API 는 이 필드에 "해당 사항이 없으면 생략하고 expirationDateText 에
+    '해당사항 없음' 입력" 이라고 안내한다 (그냥 빠뜨려도 되는 필드가 아니다).
+
+    계약:
+      - 빈 그룹은 **그룹당 정확히 1건** 보고한다 (기존 중복 방지 계약 유지).
+      - 보고되는 필드명은 판매자가 알아볼 수 있는 것: ``group[0]`` 이 ``fields``
+        에 있으면 그걸 쓰고, 없으면 ``fields`` 에 실제로 있는 멤버를 쓴다.
+      - ``notice_types.json`` 의 ``fields`` 는 건드리지 않는다 — 조건부 필드를
+        필수에서 뺀 것은 의도된 설계이므로 데이터가 아니라 판정 로직을 고친다.
+    """
+
+    def test_h_biochemistry_both_empty_reports_once(self):
+        """BIOCHEMISTRY expirationDate/expirationDateText 둘 다 공석 → 1건.
+
+        보고 주체는 fields 에 실제로 있는 expirationDateText 다.
+        """
+        spec = qa_agents._notice_type_spec("BIOCHEMISTRY")
+        fields = spec.get("fields") or []
+        # 전제 실측: group[0](expirationDate) 은 필수 목록에 없다.
+        assert "expirationDate" not in fields
+        assert "expirationDateText" in fields
+        missing = qa_agents._notice_field_missing_with_relations(
+            {}, fields, notice_type="BIOCHEMISTRY"
+        )
+        reported = [m for m in missing if m in ("expirationDate", "expirationDateText")]
+        assert reported == [
+            "expirationDateText"
+        ], f"빈 XOR 그룹이 조용히 통과했거나 보고 수가 잘못됨: {reported}"
+
+    def test_h_biochemistry_text_filled_reports_zero(self):
+        """expirationDateText 만 채우면 expiration 그룹 누락 0건."""
+        spec = qa_agents._notice_type_spec("BIOCHEMISTRY")
+        fields = spec.get("fields") or []
+        body = {"expirationDateText": "제조 후 36개월까지"}
+        missing = qa_agents._notice_field_missing_with_relations(
+            body, fields, notice_type="BIOCHEMISTRY"
+        )
+        reported = [m for m in missing if m in ("expirationDate", "expirationDateText")]
+        assert reported == [], f"한쪽을 채웠는데 누락 보고됨: {reported}"
+
+    def test_h_biochemistry_date_filled_reports_zero(self):
+        """expirationDate 만 채워도(fields 에 없는 멤버) 그룹 누락 0건."""
+        spec = qa_agents._notice_type_spec("BIOCHEMISTRY")
+        fields = spec.get("fields") or []
+        body = {"expirationDate": "2026-08"}
+        missing = qa_agents._notice_field_missing_with_relations(
+            body, fields, notice_type="BIOCHEMISTRY"
+        )
+        reported = [m for m in missing if m in ("expirationDate", "expirationDateText")]
+        assert reported == [], f"한쪽을 채웠는데 누락 보고됨: {reported}"
+
+    def test_h_biochemistry_deferred_path_reports_once(self):
+        """_field_missing_with_deferred 의 XOR 경로도 빈 그룹을 1건 보고한다.
+
+        미루기 선택이 있는 호출(deferred 비어있지 않음)은 별도 코드 경로를
+        도므로 같은 성질의 미탐이 없는지 따로 확인한다.
+        """
+        spec = qa_agents._notice_type_spec("BIOCHEMISTRY")
+        fields = spec.get("fields") or []
+        missing = qa_agents._field_missing_with_deferred(
+            {}, fields, ["qualityAssuranceStandard"], notice_type="BIOCHEMISTRY"
+        )
+        reported = [m for m in missing if m in ("expirationDate", "expirationDateText")]
+        assert reported == [
+            "expirationDateText"
+        ], f"deferred XOR 경로에서 빈 그룹 미탐/중복: {reported}"
+
+    def test_h_biochemistry_gate_flags_missing_expiration(self):
+        """게이트 수준 — 유통기한을 양쪽 다 비운 채 컴플라이언스 검사.
+
+        나머지 필수 필드를 전부 채우고 expirationDateText 만 비우면
+        "고시 필수필드" 위반이 정확히 1건이고 expirationDateText 를 지적한다.
+        """
+        spec = qa_agents._notice_type_spec("BIOCHEMISTRY")
+        node = spec.get("node")
+        body = {f: f"substantive value for {f}" for f in spec.get("fields") or []}
+        body.pop("expirationDateText")
+        result = qa_agents._compliance_code_check(
+            "xor-empty-group-probe",
+            {
+                "category_id": None,
+                "origin_content": "Korea",
+                "notice": {
+                    "productInfoProvidedNoticeType": "BIOCHEMISTRY",
+                    node: body,
+                },
+            },
+        )
+        required_violations = [v for v in result["violations"] if v.get("rule") == "고시 필수필드"]
+        assert (
+            len(required_violations) == 1
+        ), f"고시 필수필드 위반이 1건이어야 함: {required_violations}"
+        assert "expirationDateText" in str(
+            required_violations[0].get("detail") or ""
+        ), f"위반 상세가 expirationDateText 를 지적해야 함: {required_violations[0]}"
+
+    def test_h_group0_reported_when_in_fields_regardless_of_order(self):
+        """group[0] 이 fields 에 있으면 그걸 쓴다 — 순서와 무관하게 (기존 계약).
+
+        fields 에서 group[0] 이 뒤에 나와도(루프에서 나중에 만나도) 보고되는
+        이름은 group[0] 이다.
+        """
+        groups = qa_agents._notice_xor_groups("KITCHEN_UTENSILS")
+        group = next(g for g in groups if set(g) == {"releaseDate", "releaseDateText"})
+        missing = qa_agents._notice_field_missing_with_relations(
+            {}, ["releaseDateText", "releaseDate"], notice_type="KITCHEN_UTENSILS"
+        )
+        assert missing == [
+            group[0]
+        ], f"group[0]({group[0]}) 이 fields 에 있으면 그걸 보고해야 함: {missing}"
+
+    def test_h_general_food_pack_pair_reports_once(self):
+        """멤버 둘 다 fields 에 있는 타입 — 그룹당 1건 (중복 보고 없음).
+
+        GENERAL_FOOD 의 packDate/packDateText 는 둘 다 필수 목록에 있다.
+        전원 공석이어도 packDate 1건만 보고되고 packDateText 는 중복으로
+        붙지 않는다.
+        """
+        spec = qa_agents._notice_type_spec("GENERAL_FOOD")
+        fields = spec.get("fields") or []
+        assert "packDate" in fields and "packDateText" in fields
+        missing = qa_agents._notice_field_missing_with_relations(
+            {}, fields, notice_type="GENERAL_FOOD"
+        )
+        reported = [m for m in missing if m in ("packDate", "packDateText")]
+        assert reported == ["packDate"], f"그룹당 1건이어야 함 (중복 방지): {reported}"
+
+    def test_h_all_xor_types_report_every_empty_group(self):
+        """회귀 — XOR 쌍을 가진 모든 타입에서 그룹 전원 공석 시 쌍마다 1건.
+
+        실측 기준: XOR 쌍 보유 타입은 23종(수확 19 + KITCHEN_UTENSILS/ETC
+        기존 기록분 + field_meta 유래 BIOCIDAL/WEAR), 총 29쌍. 워크오더 통제군
+        22타입의 상위집합이다. 빈 그룹마다 정확히 1건이 보고되어야 한다
+        (0건 = 미탐, 2건 이상 = 중복).
+        """
+        checked_types = 0
+        total_groups = 0
+        failures: list[str] = []
+        for spec in qa_agents._load_notice_types():
+            notice_type = spec.get("type")
+            groups = qa_agents._notice_xor_groups(notice_type)
+            if not groups:
+                continue
+            checked_types += 1
+            fields = spec.get("fields") or []
+            missing = qa_agents._notice_field_missing_with_relations(
+                {}, fields, notice_type=notice_type
+            )
+            for group in groups:
+                total_groups += 1
+                reported = [m for m in missing if m in group]
+                if len(reported) != 1:
+                    failures.append(f"{notice_type} {group}: 보고 {len(reported)}건 {reported}")
+        # 숫자를 명시적으로 고정한다 — 이 검사가 "쌍 개수만큼" 을 검증함을
+        # 보여준다. 데이터가 늘면 상한도 같이 올려야 한다 (의도적 상한).
+        assert checked_types >= 22, f"XOR 타입이 22종 미만: {checked_types}"
+        assert total_groups >= 22, f"XOR 쌍이 22쌍 미만: {total_groups}"
+        assert not failures, "빈 그룹 보고 수가 1건이 아닌 경우:\n  " + "\n  ".join(failures)

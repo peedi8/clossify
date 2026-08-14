@@ -73,16 +73,22 @@
   호출은 전혀 하지 않음**(API 호출 로그 0건).
 - **범위**: `productInfoProvidedNoticeType` enum 값 목록과 타입별 하위
   노드/필드 구조.
-  - `verified`(35종): 공식 `create-product-product` 문서의 enum 정의에서
-    직접 관측된 값. 각 항목은 출처 URL과 필드 목록을 함께 기록.
-    16종이 먼저 verified로 확보됐고, 나머지 19종을 공식 문서로 확인해
-    승격함. 두 타입은 이름 정정: `FASHION_ITEM` ->
-    `FASHION_ITEMS`(복수), `MICRO_ELECTRONICS` -> `MICROELECTRONICS`
-    (underscore 제거). `CELLPHONE`의 필드도 같은 시기에 채움.
-  - `unverified`(5종): `RENTAL_HA`, `LODGMENT_RESERVATION`,
-    `TRAVEL_PACKAGE`, `AIRLINE_TICKET`, `RENT_CAR`. 공식
-    `create-product-product` 문서의 enum 리스트에서 새로 발견했으나
-    필드 구조는 아직 읽지 않은 타입.
+  - `verified`(**36종**, 2026-08-12 갱신): **정본 API**
+    `GET /external/v1/products-for-provided-notice` 응답에서 직접 받은 값.
+    각 항목은 `field_meta`(필드별 `fieldType`·`fieldMaxLength`·`fieldDescription`·
+    `fieldAddDescription`)를 함께 보관한다.
+    ~~35종 · 공식 문서 enum 정의에서 관측~~ — **superseded**: 문서 조사 기반
+    목록을 정본 API 응답으로 교체했다. 두 타입 이름 정정(`FASHION_ITEM` ->
+    `FASHION_ITEMS`, `MICRO_ELECTRONICS` -> `MICROELECTRONICS`)은 그대로 유효.
+  - `unverified`(**4종**): `LODGMENT_RESERVATION`, `TRAVEL_PACKAGE`,
+    `AIRLINE_TICKET`, `RENT_CAR`. 정본 API 응답 36종에서 **찾지 못했다**
+    (범위: 위 엔드포인트 응답 1건) — *존재하지 않는다는 뜻이 아니다.*
+    `RENTAL_HA` 는 정본에 있어 **verified 로 승격**됐다.
+
+  ★ **필드 목록이 둘이라는 것에 주의**: `field_meta` 는 정본 그대로이고,
+  `fields` 는 **우리 게이트가 하드 필수로 요구하는** 목록이라 정본보다 짧다
+  (35개 적음 · 21타입 — 그중 33개는 `~에 한함` 조건부라 의도적으로 제외).
+  **통계·표를 뽑을 땐 `field_meta` 를 써라.** `fields` 로 뽑으면 과소 집계된다.
 - **총 개수**: 공식 `create-product-product` 문서의 정적 enum 정의에는
   40개 값이 노출됨. 본 파일은 35/40 verified, 5/40 unverified.
   참고: 공식 maintainer 응답(#3490)에서는 GET
