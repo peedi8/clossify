@@ -1266,6 +1266,11 @@ def _field_missing_with_deferred(
     missing_x: list[str] = []
     if not isinstance(notice_body, dict):
         return list(fields)
+    fields_lookup = set(fields)
+    # 누락 보고한 XOR 그룹 추적 — 그룹당 정확히 1건만 보고한다.
+    # (group[0] 이 fields 에 없을 때 아무도 보고하지 않는 미탐 방지 —
+    # _notice_field_missing_with_relations 와 같은 성질의 결함이다.)
+    reported_groups: set[tuple[str, ...]] = set()
     for field in fields:
         group = member_to_group.get(field)
         if group is not None and group in satisfied:
@@ -1280,8 +1285,13 @@ def _field_missing_with_deferred(
             ):
                 satisfied.add(group)
                 continue
-            if field == group[0]:
-                missing_x.append(field)
+            # 그룹 전체가 비어있으면 — 그룹 단위로 한 번만 누락으로 보고.
+            # 보고 필드명 규칙은 _notice_field_missing_with_relations 와 동일:
+            # group[0] 이 fields 에 있으면 그걸, 없으면 fields 에 있는 멤버를 쓴다.
+            if group in reported_groups:
+                continue
+            reported_groups.add(group)
+            missing_x.append(group[0] if group[0] in fields_lookup else field)
             continue
         if _field_is_deferred(field, deferred_set) and _is_field_deferrable(field):
             continue
@@ -1405,8 +1415,11 @@ def _notice_field_missing_with_relations(notice_body, fields, notice_type=None):
     missing: list[str] = []
     if not isinstance(notice_body, dict):
         return list(fields)
+    fields_lookup = set(fields)
     # 이미 "충족" 처리된 XOR 그룹을 추적 (중복 누락 보고 방지).
     satisfied_groups: set[tuple[str, ...]] = set()
+    # 이미 누락 보고한 XOR 그룹을 추적 — 그룹당 정확히 1건만 보고한다.
+    reported_groups: set[tuple[str, ...]] = set()
     for field in fields:
         group = member_to_group.get(field)
         if group is not None and group in satisfied_groups:
@@ -1417,11 +1430,18 @@ def _notice_field_missing_with_relations(notice_body, fields, notice_type=None):
             if any(_notice_field_filled(notice_body, m) for m in group):
                 satisfied_groups.add(group)
                 continue
-            # 그룹 전체가 비어있으면 — 각 멤버를 한 번만 누락으로 보고.
-            # 호출자가 그룹 전체 멤버를 fields 에 넣었더라도 중복을 피하기 위해
-            # 첫 멤버만 보고한다.
-            if field == group[0]:
-                missing.append(field)
+            # 그룹 전체가 비어있으면 — 그룹 단위로 한 번만 누락으로 보고.
+            # 보고 주체를 group[0] 에 묶지 않는다: 루프가 도는 fields 는
+            # notice_types.json 의 필수 목록이라 group[0] 이 없을 수 있다
+            # (실측 반례: BIOCHEMISTRY 는 expirationDate 가 field_meta 에만
+            # 있고 fields 에는 expirationDateText 만 있다). group[0] 이
+            # fields 에 없을 때 아무도 보고하지 않으면 그룹이 통째로 비어도
+            # 조용히 통과하는 미탐이 된다. group[0] 이 fields 에 있으면 그걸
+            # 쓰고(기존 계약 유지), 없으면 fields 에 실제로 있는 멤버를 쓴다.
+            if group in reported_groups:
+                continue
+            reported_groups.add(group)
+            missing.append(group[0] if group[0] in fields_lookup else field)
             continue
         # XOR 그룹에 속하지 않는 필드 — 기존 판정.
         raw = notice_body.get(field)
