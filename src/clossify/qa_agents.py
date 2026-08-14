@@ -1493,6 +1493,95 @@ def _notice_field_xor_violations(notice_body, notice_type) -> list[dict]:
     return violations
 
 
+def _seller_tag_duplication_violation(detail_attr, notice_body) -> dict | None:
+    """판매자 태그 중복(고시 제조사·수입자 필드 중복 + 목록 자기 중복) 검사.
+
+    네이버 태그 규칙은 브랜드·제조사·판매처 같은 상품정보 필드 키워드를 태그에
+    중복 입력하지 말라고 안내하지만 **거절하지는 않는다**(가이드라인). 따라서
+    이 검사는 ``WARN`` 하나로 가시화만 하고 페이로드에서 태그를 지우지 않는다
+    (조용한 절삭 금지 — WARN 을 FAIL 로 승격하면 가이드라인 위반이 판매자
+    손해로 돌아간다). 제한어 자동 제거(``naver_client._strip_seller_tags`` +
+    재시도)는 API 가 실제로 거절하는 경우라 성격이 달라 그대로 둔다.
+
+    비교 정규화는 ``naver_client._normalize_seller_tag_text`` 를 재사용한다
+    (공백 제거 + '#' 접두 제거 + 소문자화) — 제한어 경로와 같은 눈으로 태그를
+    본다. 정규화 뒤 같은 말만 같은 말로 본다('루아' 와 '루 아' 는 겹침).
+
+    Args:
+        detail_attr: ``originProduct.detailAttribute`` dict.
+            ``seoInfo.sellerTags`` 를 관측한다(읽기만 한다).
+        notice_body: 고시 본문 dict. ``manufacturer``/``importer`` 값과 비교한다.
+
+    Returns:
+        겹침이 하나라도 있으면 ``{"rule": "태그 중복", "severity": WARN,
+        "detail": ...}`` dict — 겹침 전체를 한 violation 에 모은다. 없으면
+        ``None``. 같은 겹침은 두 번 보고하지 않는다(정규화 키당 1회).
+    """
+    # 지연 import — naver_client 는 함수 안에서 qa_agents 를 역방향 참조하므로
+    # 모듈 최상단에서 잡으면 의존 방향 문서(qa_agents 하위 계층)를 어긴다.
+    from . import naver_client
+
+    if not isinstance(detail_attr, dict):
+        return None
+    seo_info = detail_attr.get("seoInfo")
+    if not isinstance(seo_info, dict):
+        return None
+    raw_tags = seo_info.get("sellerTags")
+    if not isinstance(raw_tags, list):
+        return None
+
+    normalize = naver_client._normalize_seller_tag_text
+    # 첫 등장 순서를 보존하면서 정규화 키로 묶는다. 공백·'#' 만으로 정규화되는
+    # 빈 태그는 비교 대상이 될 수 없으므로 세지 않는다.
+    first_seen: list[tuple[str, str]] = []
+    counts: dict[str, int] = {}
+    for tag in raw_tags:
+        text = naver_client._seller_tag_text(tag)
+        key = normalize(text)
+        if not key:
+            continue
+        if key not in counts:
+            first_seen.append((text, key))
+        counts[key] = counts.get(key, 0) + 1
+    if not first_seen:
+        return None
+
+    body = notice_body if isinstance(notice_body, dict) else {}
+    field_keys: list[tuple[str, str]] = []
+    for field_name, label in (("manufacturer", "제조사"), ("importer", "수입자")):
+        value_key = normalize(str(body.get(field_name) or ""))
+        if value_key:
+            field_keys.append((value_key, label))
+
+    def subject_particle(text: str) -> str:
+        """보고 문장의 조사(이/가)를 고른다 — 한국어 온전."""
+        last = text[-1] if text else ""
+        if "가" <= last <= "힣":
+            return "이" if (ord(last) - 0xAC00) % 28 else "가"
+        return "이(가)"
+
+    findings: list[str] = []
+    # 1) 필드 중복 — 태그가 고시 본문의 제조사/수입자와 같은 말.
+    for text, key in first_seen:
+        for value_key, label in field_keys:
+            if key == value_key:
+                findings.append(f"태그 '{text}'{subject_particle(text)} {label}와 같습니다")
+                break
+    # 2) 자기 중복 — 태그 목록 안에서 같은 말이 두 번 이상.
+    for text, key in first_seen:
+        if counts[key] >= 2:
+            findings.append(
+                f"태그 '{text}'{subject_particle(text)} 목록에 {counts[key]}번 있습니다"
+            )
+    if not findings:
+        return None
+    return {
+        "rule": "태그 중복",
+        "severity": WARN,
+        "detail": " / ".join(findings),
+    }
+
+
 def _compliance_code_check(name, context, api_payload=None, deferred_notice_fields=None):
     """컴플라이언스 코드검사 (데이터 기반 재작성).
 
@@ -1622,6 +1711,13 @@ def _compliance_code_check(name, context, api_payload=None, deferred_notice_fiel
                     "detail": str(xv.get("detail") or ""),
                 }
             )
+
+    # --- 태그 중복 검사 (제조사·수입자 필드 중복 + 목록 자기 중복, WARN) ---
+    # 가이드라인 위반이지 API 거절 사유가 아니므로 차단하지 않고 가시화만
+    # 한다. 태그를 지우지 않는다 — 페이로드는 손대지 않는다(조용한 절삭 금지).
+    tag_dup_violation = _seller_tag_duplication_violation(detail_attr, notice_body)
+    if tag_dup_violation:
+        violations.append(tag_dup_violation)
 
     # --- 원산지 검사: config 값과 payload 값의 일치 (값 판정 X) ---
     origin_info = (
