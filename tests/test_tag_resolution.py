@@ -209,6 +209,16 @@ def _run_prepare_with_tags(d_extra, *, recommend_fn, restricted_fn, isolated_pre
         "notice": d_extra.get("notice", _WEAR_NOTICE_OK),
         "tags": d_extra.get("tags", []),
     }
+    for key in (
+        "brand",
+        "brand_name",
+        "brandName",
+        "category_name",
+        "category_path",
+        "categoryPath",
+    ):
+        if key in d_extra:
+            d[key] = d_extra[key]
     with (
         mock.patch.object(naver_client, "_notice_config", return_value=_NOTICE_CFG_FULL),
         mock.patch.object(naver_client, "_kc_config", return_value=({}, "")),
@@ -222,6 +232,30 @@ def _run_prepare_with_tags(d_extra, *, recommend_fn, restricted_fn, isolated_pre
             recommend_fn=recommend_fn,
             restricted_fn=restricted_fn,
         )
+
+
+class TestFieldDuplicatePrecheckReachability:
+    """prepare_listing 응답 meta 까지 필드 중복 제거가 도달하는지 확인."""
+
+    def test_prepare_listing_removes_and_reports_field_duplicates(self, isolated_prepared_dir):
+        payload = _run_prepare_with_tags(
+            {
+                "name": "여성 니트 풀오버",
+                "brand": "WarmCo",
+                "category_name": "패션의류 > 여성의류 > 스웨터",
+                "tags": ["니트", "WARMCO", "스웨터", "보온"],
+            },
+            recommend_fn=_make_recommend_ok([]),
+            restricted_fn=_make_restricted_ok(),
+            isolated_prepared_dir=isolated_prepared_dir,
+        )
+
+        assert payload["product"]["tags"] == ["보온"]
+        assert payload["tags_meta"]["field_duplicates"] == [
+            {"tag": "니트", "reason": "name"},
+            {"tag": "WARMCO", "reason": "brand"},
+            {"tag": "스웨터", "reason": "category"},
+        ]
 
 
 # --------------------------------------------------------------------------- #
@@ -303,7 +337,12 @@ class TestUserTagRestrictedNotDeleted:
         recommend_fn = _make_recommend_ok([])
         restricted_fn = _make_restricted_ok()
         payload = _run_prepare_with_tags(
-            {"name": "니트제한테스트", "tags": ["니트"]},
+            {
+                "name": "니트제한테스트",
+                "tags": ["니트"],
+                # 이 시험은 필드 중복이 아닌 제한어 처리만 검증한다.
+                "category_name": "패션의류 > 여성의류 > 티셔츠",
+            },
             recommend_fn=recommend_fn,
             restricted_fn=restricted_fn,
             isolated_prepared_dir=isolated_prepared_dir,
@@ -328,7 +367,12 @@ class TestUserTagRestrictedNotDeleted:
         recommend_fn = _make_recommend_ok([])
         restricted_fn = _make_restricted_ok()
         payload = _run_prepare_with_tags(
-            {"name": "니트알림테스트", "tags": ["니트"]},
+            {
+                "name": "니트알림테스트",
+                "tags": ["니트"],
+                # 이 시험은 필드 중복이 아닌 제한어 처리만 검증한다.
+                "category_name": "패션의류 > 여성의류 > 티셔츠",
+            },
             recommend_fn=recommend_fn,
             restricted_fn=restricted_fn,
             isolated_prepared_dir=isolated_prepared_dir,
@@ -498,14 +542,8 @@ class TestNitTrapRecommendedAndRestricted:
             f"'니트' 가 추천이면서 restricted:true 인데 final_tags 에 있음: "
             f"{result['final_tags']}"
         )
-        # tags_meta.restricted 에 source="recommend" 로 기록되어야 한다.
-        recommend_restricted = [
-            r for r in (result.get("restricted") or []) if r.get("source") == "recommend"
-        ]
-        assert any(r["tag"] == "니트" for r in recommend_restricted), (
-            f"tags_meta 에 추천 제한 태그 '니트' 가 source=recommend 로 없음: "
-            f"{result.get('restricted')}"
-        )
+        # 새 결정론 사전 검사가 제한어 API보다 먼저 상품명 중복을 제거·보고한다.
+        assert {"tag": "니트", "reason": "name"} in result["field_duplicates"]
 
     def test_e_nit_not_in_recommended_tags(self):
         """(e) "니트" 는 recommended_tags(최종에 들어간 추천) 에 없다."""

@@ -1118,7 +1118,15 @@ def inject_prepared_qa(d):
 MAX_SELLER_TAGS = 10
 
 
-def _resolve_tags(name, user_tags, *, recommend_fn=None, restricted_fn=None):
+def _resolve_tags(
+    name,
+    user_tags,
+    *,
+    brand=None,
+    category_name=None,
+    recommend_fn=None,
+    restricted_fn=None,
+):
     """태그 조립: 추천 조회 → 제한 검사 → ``restricted:false`` 만 사용.
 
     흐름:
@@ -1137,6 +1145,8 @@ def _resolve_tags(name, user_tags, *, recommend_fn=None, restricted_fn=None):
     Args:
         name: 상품명(추천 키워드 후보).
         user_tags: 사용자가 직접 준 태그 리스트.
+        brand: 브랜드명. 같은 문자가 태그에 있으면 사전 제거·보고한다.
+        category_name: 카테고리명/경로. 같은 문자가 태그에 있으면 사전 제거·보고한다.
         recommend_fn: ``naver_client.recommend_tags`` 대체(테스트 주입용).
         restricted_fn: ``naver_client.restricted_tags`` 대체(테스트 주입용).
 
@@ -1145,6 +1155,7 @@ def _resolve_tags(name, user_tags, *, recommend_fn=None, restricted_fn=None):
            "restricted": [{"tag": str, "source": "user"|"recommend"}, ...],
            "recommend_lookup": {"ok": bool, ...} | None,
            "restricted_lookup": {"ok": bool, ...} | None,
+           "field_duplicates": [{"tag": str, "reason": str}, ...],
            "error": str | None}`` —
         ``final_tags`` 는 ``product.tags`` 에 들어갈 최종 태그(사용자 우선,
         추천으로 남은 슬롯 채움, 최대 ``MAX_SELLER_TAGS`` 개). ``restricted`` 는
@@ -1157,11 +1168,17 @@ def _resolve_tags(name, user_tags, *, recommend_fn=None, restricted_fn=None):
     restricted = restricted_fn if restricted_fn is not None else _nc.restricted_tags
 
     clean_user = [str(t).strip() for t in (user_tags or []) if str(t or "").strip()]
+    user_field_check = qa_agents.filter_duplicate_field_tags(
+        clean_user, name=name, brand=brand, category_name=category_name
+    )
+    clean_user = list(user_field_check["tags"])
     result = {
         "final_tags": list(clean_user),
         "user_tags": list(clean_user),
         "recommended_tags": [],
         "restricted": [],
+        # 응답 메타 — 중복 태그 자동 제거는 반드시 이 목록으로 보고한다.
+        "field_duplicates": list(user_field_check["removed"]),
         "recommend_lookup": None,
         "restricted_lookup": None,
         "error": None,
@@ -1206,6 +1223,14 @@ def _resolve_tags(name, user_tags, *, recommend_fn=None, restricted_fn=None):
                 "detail": str(exc)[:200],
             }
             result["error"] = f"추천 조회 실패: {exc}"[:300]
+
+    # 추천 태그도 제한어 API 호출 전에 같은 결정론 검사로 거른다. 이 검사는
+    # 후보를 새로 만들지 않으며, 불필요한 네이버 왕복을 막는다.
+    recommended_field_check = qa_agents.filter_duplicate_field_tags(
+        recommend_candidates, name=name, brand=brand, category_name=category_name
+    )
+    recommend_candidates = list(recommended_field_check["tags"])
+    result["field_duplicates"].extend(recommended_field_check["removed"])
 
     # 제한 검사 대상: 사용자 태그 + 추천 후보(중복 제거, 순서 보존).
     # 사용자 태그는 제한이어도 삭제하지 않지만, 제한 검사에는 태운다(알림용).
@@ -1376,7 +1401,7 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None, recommend_fn=None, r
             포함한다 (``IMAGE_GENERATION_PRICE_POLICY.md`` 단위 규약 준수).
           - ``tags_meta``: 태그 추천·제한 검사 결과. ``final_tags``/
             ``user_tags``/``recommended_tags``/``restricted``/``recommend_lookup``/
-            ``restricted_lookup``/``error`` 키를 담는다(네이버 태그 API 연동 — ``_resolve_tags``
+            ``restricted_lookup``/``field_duplicates``/``error`` 키를 담는다(네이버 태그 API 연동 — ``_resolve_tags``
             참조). 추천·제한 검사를 통과한 최종 태그가 ``product.tags`` 에 들어간다.
           - ``version``: ``common.PREPARED_PAYLOAD_VERSION``.
 
@@ -1557,19 +1582,33 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None, recommend_fn=None, r
         # version 불일치 등 — 기존 것을 무시하고 새로 쓴다(스키마 변경 시).
         overwrite_warning = "기존 prepared payload 의 version 이 불일치한다. 덮어쓴다(스키마 변경)."
 
-    # --- 3.5. 태그 추천·제한 검사 (네이버 태그 API 연동) ---
+    # --- 3.5. 태그 필드중복·추천·제한 검사 (네이버 태그 API 연동) ---
     # prepare_listing 본체가 _resolve_tags 를 호출해 최종 태그를 산출한다.
     # 흐름: ①상품명으로 추천 조회 → ②후보+사용자 태그를 제한 검사 →
-    # ③restricted:false 인 추천 태그로 남은 슬롯 채움. 사용자 태그는 항상
-    # 우선이고 삭제되지 않는다(제한이면 needs_user 로 알리기만 한다).
+    # ③상품명·브랜드·카테고리와 문자 그대로 겹치는 태그는 사전 제거·보고 →
+    # ④restricted:false 인 추천 태그로 남은 슬롯 채움. 제한어는 기존 정책대로
+    # 사용자 태그를 삭제하지 않고 알리기만 한다.
     # 실패 시 강등(fail-open) — prepare_listing 본체는 죽지 않는다.
     #
     # ★ 컴플라이언스 일치: 산출된 final_tags 를 컴플라이언스 검사용 임시
     # 페이로드와 저장용 payload 양쪽에 같은 값으로 넣는다 — 준비 단계가
     # 등록 단계와 같은 태그를 본다.
+    brand = str(d.get("brand") or d.get("brand_name") or d.get("brandName") or "").strip()
+    category_name = str(
+        d.get("category_name") or d.get("category_path") or d.get("categoryPath") or ""
+    ).strip()
+    if not category_name and category_id:
+        try:
+            category_name = _category_path_for(category_id)
+        except Exception:
+            # 아래 컴플라이언스 경로도 같은 조회를 하며 실패를 사용자에게 보고한다.
+            # 태그 사전 검사가 그 기존 fail-closed 보고 경로를 예외로 바꾸면 안 된다.
+            category_name = ""
     tag_resolution = _resolve_tags(
         name,
         d.get("tags") or [],
+        brand=brand,
+        category_name=category_name,
         recommend_fn=recommend_fn,
         restricted_fn=restricted_fn,
     )

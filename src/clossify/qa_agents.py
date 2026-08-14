@@ -48,6 +48,64 @@ _BLOCKING_VERDICTS = frozenset({FAIL, PENDING})  # PENDING 도 게이트 차단
 _DELEGATION_HINT_KEYS = frozenset({"needs_llm", "task", "instruction", "input"})
 
 
+def filter_duplicate_field_tags(tags, *, name=None, brand=None, category_name=None):
+    """다른 상품 필드에 이미 있는 판매자 태그를 결정론적으로 제거·보고한다.
+
+    입력을 변이하지 않고 ``{"tags": [...], "removed": [...]}`` 를 반환한다.
+    ``removed`` 의 각 항목은 ``{"tag": str, "reason": "name"|"brand"|
+    "category"}`` 형태다. 빈 입력과 ``None`` 은 예외 없이 빈 제거 목록을
+    반환한다.
+
+    비교 정책은 공백 연속을 한 칸으로 줄이고 대소문자를 무시한 뒤의 **문자
+    그대로의** 포함 검사다. 단어 경계가 양쪽에서 확인될 때만 일치로 본다.
+    따라서 ``니트`` 는 ``여성 니트 풀오버`` 와는 겹치지만 ``니트류`` 또는
+    ``니트풀오버`` 와는 겹치지 않는다. 후자는 형태소 분석 없이 의도를 확정할 수
+    없는 부분 일치이므로, 판매자 검색어를 과잉 제거하지 않는 쪽을 택한다.
+    """
+    if not isinstance(tags, list | tuple):
+        return {"tags": [], "removed": []}
+
+    def normalize(value):
+        return re.sub(r"\s+", " ", str(value or "").strip()).casefold()
+
+    def has_literal_term(field_text, tag_text):
+        if not field_text or not tag_text:
+            return False
+        start = field_text.find(tag_text)
+        while start >= 0:
+            end = start + len(tag_text)
+            before_is_boundary = start == 0 or not field_text[start - 1].isalnum()
+            after_is_boundary = end == len(field_text) or not field_text[end].isalnum()
+            if before_is_boundary and after_is_boundary:
+                return True
+            start = field_text.find(tag_text, start + 1)
+        return False
+
+    fields = (
+        ("name", normalize(name)),
+        ("brand", normalize(brand)),
+        ("category", normalize(category_name)),
+    )
+    kept = []
+    removed = []
+    for tag in tags:
+        tag_text = str(tag or "").strip()
+        normalized_tag = normalize(tag_text)
+        reason = next(
+            (
+                field_name
+                for field_name, field_text in fields
+                if has_literal_term(field_text, normalized_tag)
+            ),
+            None,
+        )
+        if reason is None:
+            kept.append(tag)
+        else:
+            removed.append({"tag": tag_text, "reason": reason})
+    return {"tags": kept, "removed": removed}
+
+
 def _is_delegation_descriptor(data):
     """``data`` 가 위임 미회신 디스크립터(``llm_hint``)인지 판정.
 
