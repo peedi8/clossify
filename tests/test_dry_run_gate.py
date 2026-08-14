@@ -131,6 +131,15 @@ def _make_noncompliant_payload_empty_image() -> dict:
     return payload
 
 
+def _make_tag_warning_payload() -> dict:
+    """제조사와 겹치는 판매자 태그 WARN 하나가 있는 정상 페이로드를 만든다."""
+    payload = _make_compliant_payload()
+    detail_attr = payload["originProduct"]["detailAttribute"]
+    manufacturer = detail_attr["productInfoProvidedNotice"]["wear"]["manufacturer"]
+    detail_attr["seoInfo"] = {"sellerTags": [{"text": manufacturer}]}
+    return payload
+
+
 def _dry_run_naver_register(payload):
     """DRY_RUN 모드의 ``naver_client.register_product`` 대체."""
     return {"ok": True, "originProductNo": "test-no"}
@@ -141,6 +150,96 @@ def _apply_common_mocks(monkeypatch):
     monkeypatch.setattr(naver_client, "_notice_config", lambda: _NOTICE_MOCK)
     monkeypatch.setattr(naver_client, "_kc_config", lambda: ({}, ""))
     monkeypatch.setattr(common, "cfg", lambda: _COMMON_CFG_MOCK)
+
+
+# =========================================================================== #
+# WARN 가시화 — WARN 은 등록을 막지 않지만 게이트·등록 응답에 남아야 한다.
+# =========================================================================== #
+class TestComplianceWarningsRemainVisible:
+    """결정론 WARN 이 계산만 되고 버려지지 않는지 검증한다."""
+
+    def test_gate_returns_tag_warning_without_blocking(self, monkeypatch):
+        """태그 중복 WARN 단독은 warnings 에 남고 차단하지 않는다."""
+        _apply_common_mocks(monkeypatch)
+
+        result = mcp_server._run_compliance_gate(
+            "경고상품", "50021299", _make_tag_warning_payload()
+        )
+
+        assert result["blocked"] is False
+        assert result["violations"] == []
+        assert result["needs_user"] == []
+        assert result["warnings"] == [
+            {
+                "rule": "태그 중복",
+                "detail": "태그 '테스트제조사'가 제조사와 같습니다",
+            }
+        ]
+
+    def test_gate_separates_fail_and_warning(self, monkeypatch):
+        """FAIL 과 WARN 이 같이 있으면 violations/warnings 로 분리한다."""
+        _apply_common_mocks(monkeypatch)
+        payload = _make_tag_warning_payload()
+        payload["originProduct"]["images"]["representativeImage"]["url"] = ""
+
+        result = mcp_server._run_compliance_gate("차단경고상품", "50021299", payload)
+
+        assert result["blocked"] is True
+        assert len(result["violations"]) == 1
+        assert result["violations"][0]["rule"] == "원본 이미지"
+        assert result["warnings"] == [
+            {
+                "rule": "태그 중복",
+                "detail": "태그 '테스트제조사'가 제조사와 같습니다",
+            }
+        ]
+
+    def test_dry_run_success_without_prepared_includes_warnings(
+        self, isolated_prepared_dir, monkeypatch
+    ):
+        """prepared 없이 직접 dry-run 등록해도 성공 응답에 WARN 이 남는다."""
+        monkeypatch.setenv("COMMERCE_DRY_RUN", "1")
+        _apply_common_mocks(monkeypatch)
+        monkeypatch.setattr(
+            naver_client, "build_payload", lambda *a, **kw: _make_tag_warning_payload()
+        )
+        monkeypatch.setattr(naver_client, "register_product", _dry_run_naver_register)
+
+        result = mcp_server.register_product(
+            name="경고성공상품",
+            price=10000,
+            category_id="50021299",
+            image_urls=["http://cdn/x.png"],
+            detail_html="<html></html>",
+            preview_confirmed=True,
+        )
+
+        assert result["ok"] is True
+        assert result["dry_run"] is True
+        assert result["filled_from_prepared"] == []
+        assert result["warnings"][0]["rule"] == "태그 중복"
+
+    def test_dry_run_blocked_response_includes_warnings(self, isolated_prepared_dir, monkeypatch):
+        """prepared 없이 직접 dry-run 차단돼도 WARN 을 함께 돌려준다."""
+        monkeypatch.setenv("COMMERCE_DRY_RUN", "1")
+        _apply_common_mocks(monkeypatch)
+        payload = _make_tag_warning_payload()
+        payload["originProduct"]["images"]["representativeImage"]["url"] = ""
+        monkeypatch.setattr(naver_client, "build_payload", lambda *a, **kw: payload)
+
+        result = mcp_server.register_product(
+            name="경고차단상품",
+            price=10000,
+            category_id="50021299",
+            image_urls=["http://cdn/x.png"],
+            detail_html="<html></html>",
+            preview_confirmed=True,
+        )
+
+        assert result["ok"] is False
+        assert result["blocked_by"] == "compliance"
+        assert result["dry_run"] is True
+        assert result["warnings"][0]["rule"] == "태그 중복"
 
 
 # =========================================================================== #

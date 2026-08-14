@@ -860,11 +860,12 @@ def _run_compliance_gate(
     이미 거부되었으므로 이 함수에서는 받은 리스트를 그대로 믿는다.
 
     Returns:
-        ``{"blocked": bool, "violations": [...], "needs_user": [...],
-        "pending_reviews": [...]}``
+        ``{"blocked": bool, "violations": [...], "warnings": [...],
+        "needs_user": [...], "pending_reviews": [...]}``
 
         - ``blocked``: FAIL 심각도 위반이 하나라도 있으면 True.
         - ``violations``: FAIL 심각도 위반 항목(사용자 가독 형태).
+        - ``warnings``: FAIL 이 아닌 위반 항목(사용자 가독 형태).
         - ``needs_user``: 비어 있는 고시 필수 필드에서 산출한 사용자 입력 요청.
         - ``pending_reviews``: LLM 판단이 필요해 대기 중인 검사 항목.
     """
@@ -892,14 +893,18 @@ def _run_compliance_gate(
     )
 
     fail_violations = []
+    warnings = []
     for row in check_result.get("violations") or []:
-        if isinstance(row, dict) and str(row.get("severity") or "").upper() == qa_agents.FAIL:
-            fail_violations.append(
-                {
-                    "rule": str(row.get("rule") or "컴플라이언스"),
-                    "detail": str(row.get("detail") or ""),
-                }
-            )
+        if not isinstance(row, dict):
+            continue
+        visible_violation = {
+            "rule": str(row.get("rule") or "컴플라이언스"),
+            "detail": str(row.get("detail") or ""),
+        }
+        if str(row.get("severity") or "").upper() == qa_agents.FAIL:
+            fail_violations.append(visible_violation)
+        else:
+            warnings.append(visible_violation)
 
     # needs_user: 결정론 위반 중 "고시 필수필드" / "고시 필드 상호배제" 위반에서
     # 사용자 입력 요청을 조립. 요구되는 구조:
@@ -983,6 +988,7 @@ def _run_compliance_gate(
     return {
         "blocked": bool(fail_violations),
         "violations": fail_violations,
+        "warnings": warnings,
         "needs_user": needs_user,
         "pending_reviews": pending_reviews,
     }
@@ -3170,6 +3176,7 @@ def register_product(
             "seller_tags": None,
             "blocked_by": "compliance",
             "violations": violations,
+            "warnings": gate.get("warnings") or [],
             "needs_user": needs_user,
             "filled_from_prepared": filled_from_prepared,
             "prepared_lookup": prepared_lookup,
@@ -3299,6 +3306,7 @@ def register_product(
                     "blocked_by": "approval_edit_compliance",
                     "gate": "approval_edited",
                     "violations": _edit_gate["violations"],
+                    "warnings": _edit_gate.get("warnings") or [],
                     "needs_user": _edit_gate["needs_user"],
                     "approval_edits_applied": dict(_approval_edits_applied),
                     "approval_edits_rejected": list(_approval_edits_rejected),
@@ -3334,6 +3342,7 @@ def register_product(
                         "blocked_by": "approval_edit_copy",
                         "gate": "approval_edited",
                         "violations": _copy_recheck.get("violations") or [],
+                        "warnings": gate.get("warnings") or [],
                         "approval_edits_applied": dict(_approval_edits_applied),
                         "approval_edits_rejected": list(_approval_edits_rejected),
                         "filled_from_prepared": filled_from_prepared,
@@ -3390,6 +3399,7 @@ def register_product(
             "seller_tags": None,
             "gate": gate_label,
             "pending_reviews": gate["pending_reviews"],
+            "warnings": gate.get("warnings") or [],
             "filled_from_prepared": filled_from_prepared,
             "prepared_lookup": prepared_lookup,
             "notice_filled_from_config": notice_filled,
@@ -3529,6 +3539,7 @@ def register_product(
         "seller_tags": seller_tags_meta,
         "gate": gate_label,
         "pending_reviews": gate["pending_reviews"],
+        "warnings": gate.get("warnings") or [],
         "filled_from_prepared": filled_from_prepared,
         "prepared_lookup": prepared_lookup,
         "notice_filled_from_config": notice_filled,
