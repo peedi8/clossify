@@ -889,7 +889,7 @@ def _is_placeholder_value(raw):
 DEFERRED_NOTICE_PLACEHOLDER = "상세페이지 참조"
 
 # ---------------------------------------------------------------------------
-# 고시 35종에 공통으로 등장하는 5개 필드(returnCostReason · noRefundReason ·
+# 정본에 정의된 모든 고시 타입에 공통으로 등장하는 5개 필드(returnCostReason · noRefundReason ·
 # qualityAssuranceStandard · compensationProcedure · troubleShootingContents) 를
 # 미룰 때 naver_client 가 채우는 **둘째 표준 문구**.
 #
@@ -905,7 +905,7 @@ DEFERRED_NOTICE_PLACEHOLDER = "상세페이지 참조"
 # (``_deferred_value_for_field``)만 고치면 되돌릴 수 있다.
 #
 # 이 5필드는 **하드코딩하지 않는다** — ``_common_notice_deferred_fields`` 가
-# ``notice_types.json`` 35종의 교집합에서 유도한다(현재 정확히 5개).
+# ``notice_types.json`` 에 정의된 모든 타입의 교집합에서 유도한다(현재 정확히 5개).
 # ---------------------------------------------------------------------------
 DEFERRED_COMMON_NOTICE_VALUE = "1"
 
@@ -957,7 +957,7 @@ def _field_is_deferred(field: str, deferred: list[str] | tuple[str, ...] | set[s
 # "적용됐다" 고 믿게 두고, 네이버 스키마에 없는 키를 실제로 전송했다. 대소문자
 # 변형·오타·별칭(originAreaInfo.content.value, country_of_origin, madein 등) 이
 # 각각 HTTP POST 1회씩 일으키며 "상세페이지 참조" 값이 임의 키로 딸려 나갔다.
-# 본 allowlist 는 이를 막는다 — **수동 목록이 아니라** notice_types.json 의 35종
+# 본 allowlist 는 이를 막는다 — **수동 목록이 아니라** notice_types.json 에 정의된 전체 타입의
 # 전체 fields 배열의 합집합에서 유도한다(고시 정의가 바뀌면 자동으로 따라감).
 #
 # 원산지 필드는 ORIGIN_FIELDS_NOT_DEFERRABLE 이 별도로 거르므로, 본 집합에
@@ -969,7 +969,7 @@ _DEFERRABLE_NOTICE_FIELDS_CACHE: frozenset[str] | None = None
 def _deferrable_notice_fields() -> frozenset[str]:
     """미루기 대상이 될 수 있는 고시 필드명의 allowlist 를 반환.
 
-    **수동 목록이 아니다** — ``data/notice_types.json`` 의 35종 전체에서
+    **수동 목록이 아니다** — ``data/notice_types.json`` 에 정의된 전체 타입에서
     ``fields`` 배열을 합집합으로 모아 반환한다(고시 정의가 단일 진실 공급원).
     새 고시 타입이나 필드가 데이터에 추가되면 본 집합이 자동으로 따라간다.
 
@@ -1000,7 +1000,7 @@ def _deferrable_notice_fields() -> frozenset[str]:
 
 
 # ---------------------------------------------------------------------------
-# 고시 35종 전체에 **공통으로 등장하는** 필드 — 교집합에서 유도.
+# 정본에 정의된 모든 고시 타입에 **공통으로 등장하는** 필드 — 교집합에서 유도.
 #
 # 2026-08-06 실측: 이 교집합은 정확히 5개다 (returnCostReason · noRefundReason ·
 # qualityAssuranceStandard · compensationProcedure · troubleShootingContents).
@@ -1012,9 +1012,9 @@ _COMMON_NOTICE_DEFERRED_FIELDS_CACHE: frozenset[str] | None = None
 
 
 def _common_notice_deferred_fields() -> frozenset[str]:
-    """고시 35종 전체에 공통으로 등장하는 고시 필드명의 교집합을 반환.
+    """정본에 정의된 모든 고시 타입에 공통으로 등장하는 고시 필드명의 교집합을 반환.
 
-    **수동 목록이 아니다** — ``data/notice_types.json`` 의 35종 각각의 ``fields``
+    **수동 목록이 아니다** — ``data/notice_types.json`` 에 정의된 모든 타입 각각의 ``fields``
     배열의 **교집합**(intersection)을 계산한다. 모든 타입에 등장하는 필드만 반환.
 
     2026-08-06 현재 이 교집합은 정확히 5개다:
@@ -1027,7 +1027,7 @@ def _common_notice_deferred_fields() -> frozenset[str]:
     본 함수는 "의미" 를 단정하지 않는다 — **데이터에서 유도되는 자리 집합**이다.
 
     Returns:
-        35종 전체에 공통인 고시 필드명 ``frozenset``. 데이터가 바뀌면 자동으로
+        정본에 정의된 모든 고시 타입에 공통인 고시 필드명 ``frozenset``. 데이터가 바뀌면 자동으로
         따라간다.
 
     Raises:
@@ -1058,7 +1058,7 @@ def _deferred_value_for_field(field: str) -> str:
     """필드별 미루기(deferred) 전송값을 반환 — **단일 분기 지점**.
 
     본 함수가 **유일한** 분기 지점이다 — 한 곳만 고치면 되돌릴 수 있다:
-      - 고시 35종에 공통인 5필드(``_common_notice_deferred_fields``) →
+      - 모든 고시 타입에 공통인 5필드(``_common_notice_deferred_fields``) →
         ``DEFERRED_COMMON_NOTICE_VALUE`` (현재 ``"1"``).
       - 그 외 모든 고시 필드 → ``DEFERRED_NOTICE_PLACEHOLDER``
         (현재 ``"상세페이지 참조"``).
