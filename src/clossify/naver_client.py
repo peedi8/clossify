@@ -648,7 +648,7 @@ def _notice_defaults(p):
     }
 
 
-# data/notice_types.json 을 단일 진실 공급원으로 사용해 35종 전체 고시
+# data/notice_types.json 을 단일 진실 공급원으로 사용해 정본에 정의된 전체 고시
 # 타입을 동적 생성한다. 타입·노드명·필드를 코드에 하드코딩하지 않는다.
 _NOTICE_TYPES_CACHE: list | None = None
 _NOTICE_TYPE_INDEX: dict | None = None
@@ -697,7 +697,7 @@ def _notice_type_spec(notice_type: str) -> dict | None:
     return _NOTICE_TYPE_INDEX.get(key) if _NOTICE_TYPE_INDEX else None
 
 
-# 고시 35종 전체에 공통인 5개 필드. config 의 판매자 기본값에서 채운다.
+# 정본에 정의된 모든 고시 타입에 공통인 5개 필드. config 의 판매자 기본값에서 채운다.
 # 사용자가 상품별로 값을 주면 그 값이 우선.
 _NOTICE_COMMON_FIELDS = (
     "returnCostReason",
@@ -1080,7 +1080,7 @@ def _base_etc_notice(defaults):
     cert = defaults["cert_detail"]
     notice: dict = {"itemName": defaults["item_name"]}
     if cert:
-        # 정본 필드명은 certificateDetails 다 (data/notice_types.json 의 ETC·
+        # 정본 필드명은 certificateDetails 다 (src/clossify/data/notice_types.json 의 ETC·
         # ETC_SERVICE). 과거에 실었던 certDetail/certificationDetails 는 정본에
         # 없는 키라 네이버에 보낼 이유가 없다 — 값을 줘도 게이트가 누락으로
         # 오판하는 결함의 원인이었다.
@@ -1307,7 +1307,7 @@ def _merge_notice(default_notice, user_notice):
 
 
 def _product_info_notice(p, defaults):
-    """고시 payload 조립 (35종 전체 지원).
+    """고시 payload 조립 (정본에 정의된 전체 고시 타입 지원).
 
     고시 타입이 무엇이든 ``data/notice_types.json`` 에서 해당 타입의 ``node``
     이름을 찾아 그 이름으로 본문을 싣는다. 타입이 데이터에 없으면 에러.
@@ -2714,7 +2714,7 @@ def _fill_deferred_notice_fields(notice, deferred_notice_fields):
             continue
         raw = body.get(field)
         # 빈 값/placeholder 인 자리만 채운다. 실값이 있으면 건드리지 않는다.
-        # 필드별 값 분기: 고시 35종 공통 5필드는 "1", 그 외는 "상세페이지 참조".
+        # 필드별 값 분기: 모든 고시 타입에 공통인 5필드는 "1", 그 외는 "상세페이지 참조".
         # 분기 단일 지점은 qa_agents._deferred_value_for_field 이다.
         if qa_agents._is_placeholder_value(raw):
             body[field] = qa_agents._deferred_value_for_field(field)

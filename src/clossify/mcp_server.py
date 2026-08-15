@@ -2027,7 +2027,7 @@ def _validate_deferred_notice_fields(
       - 문자열 리스트 여부, 비문자열/빈 문자열 항목 거부.
       - 원산지 필드(made_in, originAreaInfo.* 등)는 법적 선언이므로 어떤 요청이든
         거부. 부분 적용 금지.
-      - allowlist 검증 — 고시 정의(35종 fields 합집합)에 없는 키는 거부.
+      - allowlist 검증 — 고시 정의 전체 타입의 fields 합집합에 없는 키는 거부.
         대소문자 변형·오타·별칭이 네이버에 임의 키로 딸려 나가는 것을 막는다.
 
     Args:
@@ -2363,7 +2363,7 @@ def register_product(
     # "적용됐다" 고 믿게 두고, 네이버 스키마에 없는 키를 전송했다. 대소문자 변형·
     # 오타·별칭(country_of_origin, madein, originAreaInfo.content.value 등)이
     # 각각 네이버 POST 1회씩을 일으키며 "상세페이지 참조" 값이 임의 키로 딸려
-    # 나갔다. 본 allowlist 는 notice_types.json 의 35종 전체 fields 배열의 합집합에서
+    # 나갔다. 본 allowlist 는 notice_types.json 에 정의된 전체 타입의 fields 배열의 합집합에서
     # 유도한다(수동 목록 아님). allowlist 밖의 키는 거부하고 사유를 반환한다 —
     # 조용히 무시하지도, 전송하지도 않는다.
     _deferred_clean: list[str] = []
@@ -3038,7 +3038,7 @@ def register_product(
     # "이 필드를 미뤘다" 고 믿는데 실제로는 실값이 전송되면 잘못 신고다).
     # 적용 여부는 페이로드의 notice 본문에서 해당 필드값이 미루기 sentinel 값
     # (``DEFERRED_NOTICE_PLACEHOLDER`` 또는 ``DEFERRED_COMMON_NOTICE_VALUE``) 인지로
-    # 판정한다 — 고시 35종 공통 5필드는 ``"1"`` 이, 그 외는 ``"상세페이지 참조"``
+    # 판정한다 — 모든 고시 타입에 공통인 5필드는 ``"1"`` 이, 그 외는 ``"상세페이지 참조"``
     # 가 채워진다. 두 값을 모두 sentinel 로 인식해야 미루기 보고가 누락되지 않는다.
     _deferred_report: list[str] = []
     if _deferred_clean:
