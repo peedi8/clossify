@@ -216,6 +216,86 @@ class TestExistingBannedTermsRegression:
 
 
 # --------------------------------------------------------------------------- #
+# 11. T207 — 표시광고법 위험 가격 표현 3종 (국내 최저 / 최저 가격 / 가격 파괴).
+#
+# 기존 ``BANNED_CLAIM_RE`` 가 ``국내최저``·``최저 가격``(공백 삽입)·``가격파괴``
+# 를 놓쳤다. 기존 항목과 같은 형태(``\s*`` + ``_kr_tail()`` 경계) 로 3종만
+# 추가한다. ``유일`` 은 정상 문맥(``유일무이``) 오탐 위험으로 범위 제외.
+# --------------------------------------------------------------------------- #
+
+
+class TestT207PriceClaimsCaught:
+    """T207 적발군 6종 — 전부 CAUGHT 여야 한다."""
+
+    def test_gungnae_choeo_nospace_caught(self):
+        """``국내최저`` → 걸림."""
+        assert BANNED_CLAIM_RE.search("국내최저") is not None
+
+    def test_gungnae_choeo_space_caught(self):
+        """``국내 최저`` → 걸림."""
+        assert BANNED_CLAIM_RE.search("국내 최저") is not None
+
+    def test_choeo_gyogeok_nospace_caught(self):
+        """``최저가격`` → 걸림."""
+        assert BANNED_CLAIM_RE.search("최저가격") is not None
+
+    def test_choeo_gyogeok_space_caught(self):
+        """``최저 가격`` → 걸림 (공백 삽입 회피)."""
+        assert BANNED_CLAIM_RE.search("최저 가격") is not None
+
+    def test_gyogeok_pagoae_nospace_caught(self):
+        """``가격파괴`` → 걸림."""
+        assert BANNED_CLAIM_RE.search("가격파괴") is not None
+
+    def test_gyogeok_pagoae_space_caught(self):
+        """``가격 파괴`` → 걸림 (공백 삽입 회피)."""
+        assert BANNED_CLAIM_RE.search("가격 파괴") is not None
+
+
+class TestT207ControlGroupNotCaught:
+    """T207 통제군 — ``최고급`` (기존 금지어) 만 CAUGHT, 나머지는 안 걸림."""
+
+    def test_gungnaesan_choegogeup_hanwoo_only_choegogeup_caught(self):
+        """``국내산 최고급 한우`` → ``최고급`` 만 걸림 (기존 금지어 — 정상)."""
+        m = BANNED_CLAIM_RE.search("국내산 최고급 한우")
+        assert m is not None and m.group() == "최고급"
+
+    def test_choeoimgeum_ansaem_not_caught(self):
+        """``최저임금 인상 안내`` → 안 걸림."""
+        assert BANNED_CLAIM_RE.search("최저임금 인상 안내") is None
+
+    def test_gyogeokpyo_pagoeryeok_not_caught(self):
+        """``가격표 파괴력 테스트기`` → 안 걸림 (``가격표`` ≠ ``가격 파괴``)."""
+        assert BANNED_CLAIM_RE.search("가격표 파괴력 테스트기") is None
+
+    def test_gungnae_baesong_choeo_3il_not_caught(self):
+        """``국내 배송 최저 3일`` → 안 걸림 (``국내``+``최저`` 비인접)."""
+        assert BANNED_CLAIM_RE.search("국내 배송 최저 3일") is None
+
+    def test_joryeomhan_gyogeokdae_not_caught(self):
+        """``저렴한 가격대 상품`` → 안 걸림."""
+        assert BANNED_CLAIM_RE.search("저렴한 가격대 상품") is None
+
+    def test_gyogeok_bigyopyo_not_caught(self):
+        """``가격 비교표`` → 안 걸림."""
+        assert BANNED_CLAIM_RE.search("가격 비교표") is None
+
+
+class TestT207SanitizationRemoves:
+    """T207 — ``_strip_banned_claims`` 가 신규 3종을 실제로 제거하는지."""
+
+    def test_gungnae_choeo_stripped(self):
+        from clossify.text_props import _strip_banned_claims
+
+        assert "최저" not in _strip_banned_claims("국내 최저 도전")
+
+    def test_gyogeok_pagoae_stripped(self):
+        from clossify.text_props import _strip_banned_claims
+
+        assert "파괴" not in _strip_banned_claims("가격 파괴 세일")
+
+
+# --------------------------------------------------------------------------- #
 # 4. 정규식 단일 정의 — text_props.py 한 곳.
 # --------------------------------------------------------------------------- #
 
