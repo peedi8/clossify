@@ -1253,7 +1253,9 @@ def apply_template(
              "not_found": str|None,  # 템플릿이 없을 때 사유
              "skipped_existing": [...],  # 사용자가 이미 준 값이라 안 덮은 필드
              "deferred_from_template": [...],  # 템플릿에서 채운 미루기 필드명
-             "deferred_dropped_invalid": [...]}  # 템플릿의 낡은 불가 필드(제외+보고)
+             "deferred_dropped_invalid": [...],  # 템플릿의 낡은 불가 필드(제외+보고)
+             "stale_certificate_details": bool,  # 낡은 템플릿 신호(인증 정보 누락)
+             "stale_certificate_details_reason": str | None}  # 신호 사유+해소 안내
 
     Raises:
         TemplateNameError: 이름이 형식을 벗어날 때(빈 문자열 아님).
@@ -1270,6 +1272,8 @@ def apply_template(
             "deferred_from_template": [],
             "deferred_dropped_invalid": [],
             "reason": "이름이 주어지지 않았습니다 — 어떤 템플릿도 적용하지 않습니다.",
+            "stale_certificate_details": False,
+            "stale_certificate_details_reason": None,
         }
     if not isinstance(product, dict):
         raise ValueError("apply_template: product 는 dict 여야 합니다.")
@@ -1290,6 +1294,8 @@ def apply_template(
             "skipped_existing": [],
             "deferred_from_template": [],
             "deferred_dropped_invalid": [],
+            "stale_certificate_details": False,
+            "stale_certificate_details_reason": None,
         }
 
     fields = entry.get("fields") if isinstance(entry.get("fields"), dict) else {}
@@ -1431,6 +1437,37 @@ def apply_template(
                 if dropped:
                     deferred_dropped_invalid = dropped
 
+    # 낡은 템플릿 신호 — 정본 필드명(certificateDetails) 으로 인증 정보를
+    # 싣기 *이전에* 저장된 템플릿은 인증 정보가 빠진 채 저장돼 있다. 마이그레이션
+    # 절차가 없으므로, 이 템플릿으로 만드는 신규 상품마다 인증 정보가 계속
+    # 누락된다. **고치지 않는다 — 알리기만 한다**(조용한 자동 채움 금지).
+    #
+    # 조건(오탐 금지):
+    #   1. 적용된 템플릿의 고시 타입이 정본에서 certificateDetails 를 *쓰는*
+    #      타입이어야 한다(ETC/ETC_SERVICE 등). 안 쓰는 타입(BAG 등) 은 신호 X.
+    #   2. 저장된 고시 본문에 certificateDetails 가 비어있을 때만. 이미 들어
+    #      있으면(재저장된 템플릿) 신호 X.
+    stale_certificate_details = False
+    stale_certificate_details_reason: str | None = None
+    if "certificateDetails" in _notice_type_fields_for(sane_type):
+        stored_body = fields.get("productInfoProvidedNotice")
+        cert_keys = (
+            "certificateDetails",
+            *_NOTICE_BODY_SNAKE_ALIASES.get("certificateDetails", ()),
+        )
+        has_cert = isinstance(stored_body, dict) and any(
+            _has_text(stored_body.get(key)) for key in cert_keys
+        )
+        if not has_cert:
+            stale_certificate_details = True
+            stale_certificate_details_reason = (
+                f"템플릿 '{sane_name}'(고시타입 {sane_type}) 은 인증 정보"
+                "(certificateDetails) 를 쓰는 고시 타입인데 저장된 본문에 인증"
+                " 정보가 없습니다 — 정본 필드명으로 싣기 전에 저장된 낡은"
+                " 템플릿입니다. 이 템플릿을 다시 저장하면 해소됩니다"
+                "(자동으로 채우지 않습니다)."
+            )
+
     return {
         "applied": bool(filled),
         "template_name": sane_name,
@@ -1440,6 +1477,8 @@ def apply_template(
         "skipped_existing": skipped_existing,
         "deferred_from_template": deferred_from_template,
         "deferred_dropped_invalid": deferred_dropped_invalid,
+        "stale_certificate_details": stale_certificate_details,
+        "stale_certificate_details_reason": stale_certificate_details_reason,
     }
 
 

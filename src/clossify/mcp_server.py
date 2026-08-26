@@ -4646,6 +4646,18 @@ def prepare_listing(
                 ),
             }
 
+    # 낡은 템플릿 안내 — 인증 정보(certificateDetails) 를 쓰는 고시 타입의
+    # 템플릿인데 저장된 본문에 인증 정보가 없으면, 그 사실과 해소 방법(재저장)을
+    # 결과 최상위에도 실어 사용자 눈에 띄게 한다. 메타(template_applied) 에만
+    # 조용히 있고 안 나가면 실패다. 자동으로 채우지 않는다(알리기만 한다).
+    stale_template_notice: str | None = None
+    if isinstance(template_applied, dict) and template_applied.get("stale_certificate_details"):
+        stale_template_notice = str(
+            template_applied.get("stale_certificate_details_reason")
+            or "적용한 템플릿에 인증 정보(certificateDetails) 가 없습니다 — "
+            "이 템플릿을 다시 저장하면 해소됩니다."
+        )
+
     try:
         payload = _register_mod.prepare_listing(product)
     except ValueError as exc:
@@ -4657,6 +4669,7 @@ def prepare_listing(
             "needs_user": _diag.get("missing", []) if _diag else [],
             "qa": {},
             "template_applied": template_applied,
+            "stale_template_notice": stale_template_notice,
             "requirements": _diag,
             "error": _sanitize_text(str(exc)),
         }
@@ -4669,6 +4682,7 @@ def prepare_listing(
             "needs_user": _diag.get("missing", []) if _diag else [],
             "qa": {},
             "template_applied": template_applied,
+            "stale_template_notice": stale_template_notice,
             "requirements": _diag,
             "error": f"prepare_listing 중 오류: {_sanitize_error(exc)}",
         }
@@ -4754,6 +4768,7 @@ def prepare_listing(
         "images": _listing_urls,
         "preview_path": payload.get("preview_path"),
         "template_applied": template_applied,
+        "stale_template_notice": stale_template_notice,
         "template_saved": template_saved,
         "error": None,
         # 성공 경로에도 키를 항상 포함한다. 결정론 컴플라이언스 FAIL 이면
