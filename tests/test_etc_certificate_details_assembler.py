@@ -73,6 +73,9 @@ def _make_etc_product(cert_detail: str = "") -> dict:
         "origin_code": "04",
         "made_in": "중국",
         "model_name": "TEST-MODEL-1",
+        # 품명(itemName) 은 상품명에서 자동으로 뽑지 않는다(사용자 결정
+        # 2026-08-26) — ETC 필수필드를 명시로 준다.
+        "item_name": "테스트 품목",
         "notice": {"productInfoProvidedNoticeType": "ETC"},
     }
     if cert_detail:

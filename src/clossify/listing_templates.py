@@ -177,7 +177,8 @@ _TEMPLATE_FIELD_KEYS: tuple[str, ...] = (
 )
 
 # 고시 본문 노드에서 **상품 특정값이라 담지 않는** 키.
-# itemName(=상품명) 은 상품마다 다르고, productInfoProvidedNoticeType 은
+# itemName(품명) 은 상품명과 다른 규제 신고값이며 상품마다 다르다.
+# productInfoProvidedNoticeType 은
 # 템플릿의 notice_type 메타로 이미 저장하므로 본문에서는 뺀다.
 # 정책: "상품마다 달라지는 식별값만 뺀다." 이 목록 외에 새로 제외할 필드를
 # 늘리지 않는다 — 무엇을 뺄지는 정책이고, 지금 정책은 이 세 가지다.

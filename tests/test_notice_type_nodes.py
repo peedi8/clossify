@@ -217,13 +217,25 @@ class TestEtcFurnitureRegression:
         assert "furniture" in notice
 
     def test_etc_body_has_legacy_fields(self):
-        """ETC 본문에 기존 필드(itemName, manufacturer 등)가 있는가."""
-        p = _make_product(notice_type="ETC")
+        """ETC 본문에 기존 필드(manufacturer 등)와 명시 품명이 실리는가.
+
+        품명(itemName) 은 상품명에서 자동으로 뽑지 않는다(사용자 결정
+        2026-08-26) — 상품 입력의 명시값(item_name) 만 실린다.
+        """
+        p = _make_product(notice_type="ETC", extra_product={"item_name": "후드티"})
         notice = _build_notice(p)
         etc = notice["etc"]
-        assert "itemName" in etc
+        assert etc.get("itemName") == "후드티"
         assert "manufacturer" in etc
         assert "returnCostReason" in etc
+
+    def test_etc_body_omits_item_name_when_not_given(self):
+        """품명을 주지 않으면 itemName 을 조용히 채우지 않고 생략한다."""
+        p = _make_product(notice_type="ETC")
+        notice = _build_notice(p)
+        assert "itemName" not in notice["etc"], (
+            "상품명 기반 자동채움이 남아 있음: " f"itemName={notice['etc'].get('itemName')!r}"
+        )
 
 
 # --------------------------------------------------------------------------- #

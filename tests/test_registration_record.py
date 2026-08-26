@@ -64,7 +64,13 @@ _NOTICE_CFG_FULL = {
 # ETC 고시 타입의 필수 필드(modelName, certificateDetails) 를 채운 notice 본문.
 _ETC_NOTICE_BODY = {
     "productInfoProvidedNoticeType": "ETC",
-    "etc": {"modelName": "TEST-MODEL-REC", "certificateDetails": "KW 인증"},
+    # itemName(품명) 은 상품명에서 자동으로 뽑지 않는다(사용자 결정
+    # 2026-08-26) — ETC 필수필드를 완비해 게이트에 막히지 않게 명시로 준다.
+    "etc": {
+        "itemName": "테스트품목",
+        "modelName": "TEST-MODEL-REC",
+        "certificateDetails": "KW 인증",
+    },
 }
 
 

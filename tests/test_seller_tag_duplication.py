@@ -52,6 +52,9 @@ _CFG = {
     "as_tel": "070-1234-5678",
     "manufacturer": "루아공방",
     "model_name": "LUA-MINI-001",
+    # itemName(품명) 은 상품명에서 자동으로 뽑지 않는다(사용자 결정
+    # 2026-08-26) — ETC 필수필드 완비를 위해 config 값으로 준다.
+    "item_name": "미니 화병",
     "cert_detail": "해당사항 없음",
     "return_cost_reason": "[CFG] 반품 배송비 안내",
     "no_refund_reason": "[CFG] 환불 불가 안내",

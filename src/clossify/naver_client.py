@@ -505,7 +505,6 @@ def _resolve_as_tel(p, cfg_notice) -> str:
 
 def _notice_defaults(p):
     cfg_notice = _notice_config()
-    product_name = _first_value(p.get("name"), p.get("title_ko"), default="상품명")
     # AS 연락처는 규제 신고값이다. 상품 입력 → 설정 세 키 순으로만 고르고,
     # 실질값이 없으면 build_payload 경계에서 등록을 거부한다. 빈 문자열 전송은
     # 소비자 연락 불가 상품을 만들 수 있다.
@@ -582,7 +581,18 @@ def _notice_defaults(p):
     # 사용자에게 전달된다 — 묻지 않고 채워진 값이 조용히 딸려가면 잘못 신고된다.
     notice_filled_from_config = _notice_common_filled_from_config(p, cfg_notice)
     return {
-        "item_name": product_name[:50],
+        # 품명(itemName) 은 규제 신고값이고 상품명(name) 은 마케팅 문구다 —
+        # 서로 다른 값이므로 상품명에서 품명을 자동으로 뽑지 않는다(사용자
+        # 결정 2026-08-26).
+        # 상품 입력 또는 config 의 명시값만 실으며, 값이 없으면 빈 문자열
+        # (→ payload 에서 생략, 컴플라이언스 검사가 필수 항목 누락으로 지적).
+        "item_name": _first_value(
+            p.get("item_name"),
+            p.get("itemName"),
+            cfg_notice.get("item_name"),
+            cfg_notice.get("itemName"),
+            default="",
+        )[:50],
         "model_name": _first_value(
             p.get("modelName"),
             p.get("model_name"),
@@ -1078,7 +1088,12 @@ def _base_etc_notice(defaults):
     항목 누락으로 FAIL 지적한다. 조용한 채움 금지.
     """
     cert = defaults["cert_detail"]
-    notice: dict = {"itemName": defaults["item_name"]}
+    notice: dict = {}
+    # 품명(itemName) 은 명시값이 있을 때만 싣는다. 상품명에서 자동으로 뽑지
+    # 않으므로(사용자 결정 2026-08-26) 값이 없으면 생략하고 컴플라이언스 검사가
+    # 필수 항목 누락으로 FAIL 지적한다(조용한 채움 금지).
+    if defaults.get("item_name"):
+        notice["itemName"] = defaults["item_name"]
     if cert:
         # 정본 필드명은 certificateDetails 다 (src/clossify/data/notice_types.json 의 ETC·
         # ETC_SERVICE). 과거에 실었던 certDetail/certificationDetails 는 정본에
