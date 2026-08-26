@@ -296,6 +296,115 @@ class TestT207SanitizationRemoves:
 
 
 # --------------------------------------------------------------------------- #
+# 11b. T207 수리 감리 — 정상 합성어 오탐 0 · 접두 우선 잔여물 0 ·
+# 음절 공백 회피 적발. ``_kr_tail()`` 의 조사 lookahead 가 합성어 머리
+# (임·요·이·가) 와 겹쳐 ``국내최저임금`` → ``임금 인상 안내`` 처럼 텍스트를
+# 훼손하던 결함(사고 기록의 합성어 훼손과 동일 유형) 을 예외 목록으로
+# 막았는지 검증한다.
+# --------------------------------------------------------------------------- #
+
+
+class TestT207FixCompoundNounsNotCaught:
+    """T207 수리 — 정상 합성어 12종, 전부 안 걸리고 원문 그대로 보존."""
+
+    def test_gungnae_choeo_imgeum_not_caught(self):
+        """``국내 최저임금 인상 안내`` → 안 걸림 (``임금`` 합성어)."""
+        from clossify.text_props import _strip_banned_claims
+
+        assert BANNED_CLAIM_RE.search("국내 최저임금 인상 안내") is None
+        assert _strip_banned_claims("국내 최저임금 인상 안내") == "국내 최저임금 인상 안내"
+
+    def test_gungnaechoeo_imgeum_not_caught(self):
+        """``국내최저임금`` → 안 걸림."""
+        assert BANNED_CLAIM_RE.search("국내최저임금") is None
+
+    def test_gungnae_choeo_yogeumje_not_caught(self):
+        """``국내 최저요금제`` → 안 걸림 (``요금`` 합성어)."""
+        assert BANNED_CLAIM_RE.search("국내 최저요금제") is None
+
+    def test_gungnaechoeo_ijayul_not_caught(self):
+        """``국내최저이자율`` → 안 걸림 (``이자`` 합성어)."""
+        assert BANNED_CLAIM_RE.search("국내최저이자율") is None
+
+    def test_gungnaechoeo_seonban_not_caught(self):
+        """``국내최저선반`` → 안 걸림 (``선`` 비조사 — 원래 보호되던 통제군)."""
+        assert BANNED_CLAIM_RE.search("국내최저선반") is None
+
+    def test_gungnaechoeo_geup_not_caught(self):
+        """``국내최저급 소재`` → 안 걸림."""
+        assert BANNED_CLAIM_RE.search("국내최저급 소재") is None
+
+    def test_choeo_gyogeokdae_not_caught(self):
+        """``최저가격대`` → 안 걸림 (``가격`` 뒤 ``대`` 비조사)."""
+        assert BANNED_CLAIM_RE.search("최저가격대") is None
+
+    def test_gyogeok_pagoaeja_not_caught(self):
+        """``가격파괴자`` → 안 걸림 (``파괴`` 뒤 ``자`` 비조사)."""
+        assert BANNED_CLAIM_RE.search("가격파괴자") is None
+
+    def test_gungnaechoeo_sujun_not_caught(self):
+        """``국내최저수준`` → 안 걸림 (``수`` 비조사)."""
+        assert BANNED_CLAIM_RE.search("국내최저수준") is None
+
+    def test_choeoimgeum_wiwonhoe_not_caught(self):
+        """``최저임금위원회`` → 안 걸림 (``국내`` 없음 + ``임`` 뒤 합성어)."""
+        assert BANNED_CLAIM_RE.search("최저임금위원회") is None
+
+    def test_gungnae_choeo_gion_not_caught(self):
+        """``국내 최저 기온`` → 안 걸림 (공백 뒤 정상 명사 — 예외 목록)."""
+        assert BANNED_CLAIM_RE.search("국내 최저 기온") is None
+
+    def test_choeo_gajisaek_not_caught_t207(self):
+        """``최저 가지색 액자`` → 안 걸림 (``최저 가격`` 아님 — 기존 회귀)."""
+        assert BANNED_CLAIM_RE.search("최저 가지색 액자") is None
+
+
+class TestT207FixPrefixPriorityNoResidue:
+    """T207 수리 — ``국내 최저`` 가 먼저 매치돼 ``가 보장``·``가격 보장``
+    같은 잔여물을 남기던 접두 우선 결함. 더 긴 가격 표현을 먼저 소비한다."""
+
+    def test_gungnae_choeoga_bojang_no_residue(self):
+        """``국내 최저가 보장`` → ``가 보장`` 잔여물 없음."""
+        from clossify.text_props import _strip_banned_claims
+
+        result = _strip_banned_claims("국내 최저가 보장")
+        assert "가 보장" not in result
+        assert "최저" not in result
+
+    def test_gungnae_choeo_gyogeok_bojang_no_residue(self):
+        """``국내 최저가격 보장`` → ``가격 보장`` 잔여물 없음."""
+        from clossify.text_props import _strip_banned_claims
+
+        result = _strip_banned_claims("국내 최저가격 보장")
+        assert "가격 보장" not in result
+        assert "가격" not in result
+
+
+class TestT207FixSyllableSpaceEvasionCaught:
+    r"""T207 수리 — 음절 공백 회피 4종, 전부 CAUGHT.
+
+    기존 ``정\s+품``·``최\s+고\s+급`` (WO 7라운드) 방식을 따른다:
+    첫 글자 앞 한글이 아니고 + 글자 사이 공백이 있을 때만 매치.
+    """
+
+    def test_gungnae_choeo_spacesyllable_caught(self):
+        """``국내 최 저`` → 걸림."""
+        assert BANNED_CLAIM_RE.search("국내 최 저") is not None
+
+    def test_choeo_gyogeok_spacesyllable_caught(self):
+        """``최 저 가격`` → 걸림."""
+        assert BANNED_CLAIM_RE.search("최 저 가격") is not None
+
+    def test_choeoga_gyeok_spacesyllable_caught(self):
+        """``최저 가 격`` → 걸림 (``최저`` 붙어 있고 ``가 격`` 분리)."""
+        assert BANNED_CLAIM_RE.search("최저 가 격") is not None
+
+    def test_gyogeok_pagoae_spacesyllable_caught(self):
+        """``가격 파 괴`` → 걸림."""
+        assert BANNED_CLAIM_RE.search("가격 파 괴") is not None
+
+
+# --------------------------------------------------------------------------- #
 # 4. 정규식 단일 정의 — text_props.py 한 곳.
 # --------------------------------------------------------------------------- #
 
