@@ -115,6 +115,58 @@ def _sanitize_text(text: str) -> str:
     return common.sanitize_text(text)
 
 
+def _api_error_message(status_code: Any, body: Any) -> str:
+    """실패한 API 호출의 사용자 오류 메시지 조립 — 400 상세를 버리지 않는다.
+
+    네이버 커머스 API 는 실패 원인을 ``invalidInputs[]`` (``name``/``type``/
+    ``message``) 로 정확히 알려준다. 과거에는 ``"API 반환 상태 400"`` 만
+    남겨 어느 필드가 왜 거부됐는지가 조용히 사라졌다(조용한 정보 손실).
+
+    계약:
+      - 최소한 ``invalidInputs[].name`` 과 ``message`` 가 드러나야 한다.
+        **필드 경로(name) 를 잘라먹지 않는다** — 어느 노드의 어느 필드인지가
+        핵심이다.
+      - 모든 조각은 ``_sanitize_text`` 를 거친다 — 오류 상세를 노출하되
+        토큰·키·시크릿은 기존과 같이 가린다.
+      - 상세가 없거나 본문 파싱이 불가하면 **그 사실을 밝힌다**(조용히
+        빈 메시지로 두지 않는다).
+    """
+    prefix = f"API 반환 상태 {status_code}"
+    if not isinstance(body, dict):
+        return f"{prefix} — 오류 상세 없음(응답 본문이 dict 형식이 아님: {type(body).__name__})"
+
+    parts: list[str] = []
+
+    # 최상위 message/detail/reason — 있으면 함께 드러낸다.
+    for key in ("message", "detail", "reason"):
+        value = body.get(key)
+        if isinstance(value, str) and value.strip():
+            parts.append(_sanitize_text(value.strip()))
+
+    # invalidInputs[] — 각 항목의 name(전체 필드 경로)·message.
+    invalid_inputs = body.get("invalidInputs")
+    if isinstance(invalid_inputs, list):
+        for item in invalid_inputs:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            message = item.get("message")
+            item_type = item.get("type")
+            fragments: list[str] = []
+            if isinstance(name, str) and name.strip():
+                fragments.append(f"필드 {_sanitize_text(name.strip())}")
+            if isinstance(item_type, str) and item_type.strip():
+                fragments.append(f"타입 {_sanitize_text(item_type.strip())}")
+            if isinstance(message, str) and message.strip():
+                fragments.append(f"사유 {_sanitize_text(message.strip())}")
+            if fragments:
+                parts.append("(" + ", ".join(fragments) + ")")
+
+    if not parts:
+        return f"{prefix} — 오류 본문에서 필드 상세(invalidInputs) 를 찾지 못했다"
+    return f"{prefix}: " + " | ".join(parts)
+
+
 def _sanitize_error(exc: BaseException) -> str:
     """``common.sanitize_error`` 의 단일 진실 공급원 재노출(호환 별칭)."""
     return common.sanitize_error(exc)
@@ -3518,6 +3570,12 @@ def register_product(
                 category_id=category_id,
                 requested_status=status,
                 applied_status=applied_status or status,
+                # 미루기 정보 — 이 등록에서 실제로 적용된 미루기 목록과 그때의
+                # 고시 타입을 기록에 남긴다(거부된 미루기는 이 경로에서 등록
+                # 자체가 거부되므로 항상 빈 목록). 키는 항상 명시적으로 남는다.
+                deferred_notice_fields=list(_deferred_clean or []),
+                deferred_rejected=[],
+                notice_type=_payload_notice_type(payload) if isinstance(payload, dict) else None,
             )
         except Exception:
             # 기록 저장 실패가 등록 자체를 실패시키지는 않는다. 단, 기록 파일이
@@ -3560,7 +3618,7 @@ def register_product(
         "approval_edits_rejected": list(_approval_edits_rejected),
         "approval_edits_unreviewed": list(approval_edits_unreviewed),
         "sent_name": name,
-        "error": None if ok else _sanitize_text(f"API 반환 상태 {status_code}"),
+        "error": None if ok else _api_error_message(status_code, body),
     }
 
 
@@ -5603,6 +5661,26 @@ def manage_products(
             listings = []
         products = [_extract_product_summary(item) for item in listings]
         total_returned = len(products)
+
+        # 등록 기록의 미루기 정보 회수 — 각 상품의 origin_product_no 로
+        # registration_record.json 을 읽어 요약을 얹는다(새 MCP 도구 금지:
+        # 기존 list 조회 반환에 얹는다). 키는 항상 명시적으로 남긴다 —
+        # 기록 없음 · 구형 기록(키 없음) · 미루기 0건 을 서로 다른 상태로
+        # 보고한다(summarize_recorded_deferred 가 구별). 읽기 실패는 목록을
+        # 죽이지 않되 note 로 드러낸다(fail-open 이지만 조용하지 않다).
+        for _prod in products:
+            _opn = str(_prod.get("origin_product_no") or "").strip()
+            _rec = None
+            _read_error = None
+            if _opn:
+                try:
+                    _rec = _register_mod.read_registration_record(origin_product_no=_opn)
+                except Exception as _exc:
+                    _read_error = _sanitize_error(_exc)
+            _prod["registration_deferred"] = _register_mod.summarize_recorded_deferred(_rec)
+            if _read_error:
+                _prod["registration_deferred"] = dict(_prod["registration_deferred"])
+                _prod["registration_deferred"]["note"] = f"등록 기록 읽기 실패: {_read_error}"
 
         # 검수 조회 — fail-open (목록은 나왔지만 검수는 실패할 수 있다).
         inspections = _query_inspections()

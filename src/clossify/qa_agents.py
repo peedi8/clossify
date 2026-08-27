@@ -1678,14 +1678,24 @@ def _compliance_code_check(name, context, api_payload=None, deferred_notice_fiel
         node_key = (spec or {}).get("node") or "etc"
         body = notice.get(node_key)
         if isinstance(body, dict):
-            notice_body = body
+            notice_body = dict(body)
         else:
             # node_key 가 없으면 etc/furniture 중 존재하는 것 사용.
             for fallback_key in ("etc", "furniture"):
                 fb = notice.get(fallback_key)
                 if isinstance(fb, dict):
-                    notice_body = fb
+                    notice_body = dict(fb)
                     break
+        # 하위 호환(T3): 필드가 notice 최상위에 평평하게 와도 받는다 — 노드
+        # 본문에 없는 필드만 최상위 값으로 채운다(노드 값이 우선). 검사 대상
+        # 필드는 spec.fields 에서 정해지므로 노드 밖 키가 흘러들어도 판정은
+        # 필드 목록 안에서만 일어난다. 노드(dict) 값은 본문 후보가 아니므로
+        # 제외하고, 타입 키(productInfoProvidedNoticeType/notice_type) 도 값이
+        # 아니다. 값을 바꾸지 않는다 — 있는 값을 올바른 자리에서 볼 뿐이다.
+        for key, value in notice.items():
+            if key in ("productInfoProvidedNoticeType", "notice_type") or isinstance(value, dict):
+                continue
+            notice_body.setdefault(key, value)
     required_fields = (spec or {}).get("fields") or []
     if required_fields:
         # XOR 인지 누락 판정: 하나만 채워져도 그룹 전체가 충족으로 인정.

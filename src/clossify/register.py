@@ -322,6 +322,9 @@ def write_registration_record(
     category_id,
     requested_status,
     applied_status,
+    deferred_notice_fields=None,
+    deferred_rejected=None,
+    notice_type=None,
 ):
     """등록 결과를 디스크에 기록한다.
 
@@ -333,6 +336,14 @@ def write_registration_record(
     드러낸다(이후 수정이 불가능해진다는 뜻이므로 사용자가 알아야 한다). 파일은
     채널번호가 있을 때만 기록한다.
 
+    **미루기 정보 기록**: 판매자가 "상세페이지 참조" 로 미루기로 선언한 고시
+    필드(``deferred_notice_fields``) 와 미루려 했으나 거부된 목록
+    (``deferred_rejected``), 그때의 고시 타입(``notice_type``) 을 항상 기록한다.
+    미루기가 없어도 **빈 리스트를 명시적으로** 남긴다(키 자체가 없는 것과
+    "미룬 것 없음" 을 구별 — ``missing_channel_no`` 와 같은 결). 이 키들이 없는
+    구형 기록은 ``summarize_recorded_deferred`` 가 "기록되지 않음(이 변경 이전)"
+    로 구별해 보고한다.
+
     Returns:
         기록 결과 dict::
             {"written": bool, "path": str | None,
@@ -343,6 +354,12 @@ def write_registration_record(
         raise ValueError("product_key 가 필요합니다 (등록 기록 저장).")
     sane_key = _sanitize_product_key(key)
     ch_no = str(channel_product_no or "").strip() or None
+    _sane_deferred = [
+        str(f or "").strip() for f in (deferred_notice_fields or []) if str(f or "").strip()
+    ]
+    _sane_rejected = [
+        str(f or "").strip() for f in (deferred_rejected or []) if str(f or "").strip()
+    ]
     record = {
         "product_key": sane_key,
         "origin_product_no": origin_product_no,
@@ -352,6 +369,10 @@ def write_registration_record(
         "categoryId": category_id,
         "requested_status": requested_status,
         "applied_status": applied_status,
+        # 미루기 정보 — 키 항상 존재(조용한 빈 값 금지). 없으면 빈 리스트.
+        "deferred_notice_fields": _sane_deferred,
+        "deferred_rejected": _sane_rejected,
+        "notice_type": str(notice_type).strip() if str(notice_type or "").strip() else None,
         "registered_at": _utc_now_iso(),
     }
     path = _registration_record_path(sane_key)
@@ -401,6 +422,54 @@ def read_registration_record(*, product_key=None, origin_product_no=None):
         if isinstance(data, dict) and str(data.get("origin_product_no") or "") == origin_no:
             return data
     return None
+
+
+def summarize_recorded_deferred(record):
+    """등록 기록에 남은 미루기 정보를 상태 구별과 함께 요약한다.
+
+    서로 다른 상태를 같은 값으로 뭉개지 않는다(조용한 폴백 금지):
+      - 기록 파일 자체가 없음(``record is None``) → ``record_present: False``.
+      - 기록은 있으나 미루기 키가 없음(이 변경 이전 기록) →
+        ``deferred_recorded: False`` + 안내 문구. "미루기 0건" 으로 단정하지
+        않는다.
+      - 새 형식 기록 → 실제 목록·고시 타입을 그대로 돌려준다(빈 리스트는
+        "미룬 것 없음" 의 명시적 표현).
+
+    Args:
+        record: ``read_registration_record`` 반환 dict(없으면 ``None``).
+
+    Returns:
+        ``{record_present, deferred_recorded, deferred_notice_fields,
+        deferred_rejected, notice_type, note}`` dict.
+    """
+    if not isinstance(record, dict):
+        return {
+            "record_present": False,
+            "deferred_recorded": False,
+            "deferred_notice_fields": [],
+            "deferred_rejected": [],
+            "notice_type": None,
+            "note": "등록 기록 파일이 없다 — 미루기 정보를 알 수 없다.",
+        }
+    if "deferred_notice_fields" not in record or "deferred_rejected" not in record:
+        return {
+            "record_present": True,
+            "deferred_recorded": False,
+            "deferred_notice_fields": [],
+            "deferred_rejected": [],
+            "notice_type": None,
+            "note": "미루기 정보가 기록되지 않음(이 변경 이전 기록) — 0건으로 단정할 수 없다.",
+        }
+    _deferred = record.get("deferred_notice_fields")
+    _rejected = record.get("deferred_rejected")
+    return {
+        "record_present": True,
+        "deferred_recorded": True,
+        "deferred_notice_fields": list(_deferred) if isinstance(_deferred, list) else [],
+        "deferred_rejected": list(_rejected) if isinstance(_rejected, list) else [],
+        "notice_type": record.get("notice_type") if "notice_type" in record else None,
+        "note": None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -506,25 +575,31 @@ def _build_register_product_dict(d, name, category_id, *, resolved_tags=None):
     if notice is not None:
         product["notice"] = notice
     # 원산지/AS/제조사/수입자 등 규제값 — 빌더가 config 폴백으로 읽는 후보 키.
-    for key in (
-        "origin_code",
-        "as_tel",
-        "seller_tel",
-        "as_guide",
-        "manufacturer",
-        "importer",
-        "made_in",
-        "origin_content",
-        "cert_detail",
-        "quality_assurance_standard",
-        "return_cost_reason",
-        "no_refund_reason",
-        "compensation_procedure",
-        "trouble_shooting_contents",
-    ):
+    # 진짜 조립기(naver_client._notice_defaults/_resolve_*)가 읽는 키 목록
+    # (snake_case/camelCase 별칭 포함)을 공유해 두 조립기의 입력 규약이
+    # 갈라지지 않게 한다(T3-A). 판매자가 camelCase 로 준 고시값이 임시
+    # 조립기에서만 사라지는 결함의 재발 방지.
+    from .naver_client import NOTICE_INPUT_KEY_ALIASES as _notice_input_keys
+
+    for key in _notice_input_keys:
         value = d.get(key)
         if value:
             product[key] = value
+    # 타입별 고시 필드(releaseDateText/size 등) — 정본이 정의한 필드의 입력
+    # 키 후보 합집합(naver_client.notice_typed_input_keys — 정본에서 읽는
+    # 공유 헬퍼)을 통째로 넘긴다. 진짜 조립기(build_payload → _product_info
+    # _notice → _carry_typed_fields_from_input)가 해당 타입의 정본 필드만
+    # 걸러 싣으므로 두 조립기의 본문이 같아진다(T3 구조 — 임시 조립기에서만
+    # 타입별 필드가 사라지는 결함의 재발 방지).
+    from .naver_client import notice_typed_input_keys as _typed_keys
+
+    for key in _typed_keys():
+        if key in product:
+            continue
+        value = d.get(key)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            continue
+        product[key] = value
     return product
 
 
@@ -780,6 +855,12 @@ def register_prepared_listing(d):
                 category_id=str(_prod.get("categoryId") or ""),
                 requested_status=status,
                 applied_status=status,
+                # 미루기 정보 — prepared payload 에 준비 단계가 남긴 값 그대로.
+                # deferred_notice_fields 키가 없는 구형 prepared 는 빈 리스트로
+                # 기록한다(그때 실제로 미루기가 없었다).
+                deferred_notice_fields=payload.get("deferred_notice_fields") or [],
+                deferred_rejected=payload.get("deferred_rejected") or [],
+                notice_type=payload.get("notice_type"),
             )
         except Exception:
             # 기록 저장 실패가 등록 자체를 실패시키지는 않는다 — 하지만 채널번호가
@@ -1706,6 +1787,7 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None, recommend_fn=None, r
     # 필요하다. 컴플라이언스 검사 경로에서 만들어지지만, 예외 시에는
     # None 로 떨어뜨린다 — 미리보기는 있으면 좋고 없어도 준비는 산다.
     tentative_payload = None
+    inferred_type = None
     try:
         tentative_payload = _build_tentative_register_payload(
             d, name, category_id, listing_urls, detail_html, resolved_tags=final_tags
@@ -1907,6 +1989,15 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None, recommend_fn=None, r
         payload["product"]["attributes"] = list(_attributes_raw)
     if sane_deferred:
         payload["deferred_notice_fields"] = list(sane_deferred)
+    # deferred_rejected: 미루려 했으나 원산지/allowlist/boolean-date 규칙으로
+    # 거부된 필드 목록. 등록 단계가 등록 기록(registration_record.json) 에
+    # "거부된 미루기" 로 남기기 위해 필요하다 — 조용히 버리면 판매자는 미뤘다고
+    # 믿는데 실제로는 안 미뤄진 상태가 된다. **빈 리스트도 명시적으로** 남긴다
+    # (키 없음 ≠ 거부 0건, 조용한 빈 값 금지).
+    payload["deferred_rejected"] = list(deferred_rejected)
+    # notice_type: 준비 단계에서 추론한 고시 타입. 등록 기록에 "그때의 고시
+    # 타입" 으로 남는다(이후 그 타입의 필수필드와 대조 가능). 추론 실패 시 None.
+    payload["notice_type"] = inferred_type
     if image_generation_meta is not None:
         payload["image_generation"] = image_generation_meta
     if overwrite_warning is not None:
@@ -2097,6 +2188,7 @@ __all__ = [
     "resolve_prepared_for_register",
     "resolve_product_key",
     "submit_reviews",
+    "summarize_recorded_deferred",
     "write_prepared_payload",
     "write_registration_record",
 ]

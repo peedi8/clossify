@@ -30,6 +30,8 @@ _SRC = _PROJECT_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
+from typing import Any, ClassVar
+
 from clossify import common, naver_client, qa_agents
 
 # --------------------------------------------------------------------------- #
@@ -700,6 +702,115 @@ class TestEtcComplianceEndToEnd:
             v for v in result.get("violations", []) if v.get("rule") == "고시 필수필드"
         ]
         assert notice_violations == [], f"ETC 고시 필수필드 위반: {notice_violations}"
+
+
+# --------------------------------------------------------------------------- #
+# 2.5 중첩 본문 + 평평한 본문 모두 읽는가 (T3 — 검사가 올바른 자리를 보게).
+# --------------------------------------------------------------------------- #
+class TestNestedAndFlatNoticeBody:
+    """필수필드 검사가 타입 하위 노드와 최상위 평평 형태 둘 다 읽는지 확인.
+
+    - 중첩: ``{productInfoProvidedNoticeType, sportsEquipment: {...}}`` — 조립기가
+      만드는 정상 형태. 값이 노드 안에 있으면 누락으로 잡지 않는다.
+    - 평평(하위 호환): 필드가 notice 최상위에 직접 와도 받는다. 노드 값이 우선.
+    - 진짜 누락은 여전히 잡는다 — 검사를 느슨하게 만드는 게 아니라 올바른
+      자리를 보게 하는 것.
+    """
+
+    _CATEGORY_FALLBACK_CONTEXT: ClassVar[dict[str, Any]] = {
+        "origin_content": "중국",
+        "as_tel": "070-1234-5678",
+        "category_id": None,  # KC 검사 우회(불명 차단 방지).
+    }
+
+    def _notice_violations(self, notice):
+        context = dict(self._CATEGORY_FALLBACK_CONTEXT)
+        context["notice"] = notice
+        with mock.patch.object(common, "cfg", return_value=_COMMON_CFG_ORIGIN_ONLY):
+            result = qa_agents._compliance_code_check("테스트스포츠용품", context)
+        return [
+            str(v.get("detail") or "")
+            for v in result.get("violations", [])
+            if v.get("rule") == "고시 필수필드"
+        ]
+
+    @staticmethod
+    def _missing_fields_from(details):
+        fields: list[str] = []
+        for text in details:
+            if "누락:" in text:
+                for f in text.split("누락:", 1)[1].split(","):
+                    f = f.strip()
+                    if f and f not in fields:
+                        fields.append(f)
+        return fields
+
+    def test_nested_node_values_not_flagged(self):
+        """중첩(sportsEquipment 노드) 값이 있으면 누락으로 잡지 않는다."""
+        spec = naver_client._notice_type_spec("SPORTS_EQUIPMENT")
+        body = _build_full_body_for_type("SPORTS_EQUIPMENT", spec)
+        notice = {
+            "productInfoProvidedNoticeType": "SPORTS_EQUIPMENT",
+            "sportsEquipment": body,
+        }
+        details = self._notice_violations(notice)
+        assert details == [], f"노드에 값이 있는데 누락 판정: {details}"
+
+    def test_nested_true_missing_still_flagged(self):
+        """중첩 형태에서 진짜 없는 필드는 여전히 누락으로 잡는다."""
+        notice = {
+            "productInfoProvidedNoticeType": "SPORTS_EQUIPMENT",
+            "sportsEquipment": {
+                "returnCostReason": "단순변심 반품비용 구매자부담",
+                "noRefundReason": "주문제작 청약철회 제한",
+                "qualityAssuranceStandard": "관련법에 따름",
+                "compensationProcedure": "소비자분쟁해결기준",
+                "troubleShootingContents": "고객센터 문의",
+            },
+        }
+        missing = self._missing_fields_from(self._notice_violations(notice))
+        assert missing, "진짜 누락(size 등)이 지적되지 않음 — 검사가 죽었음"
+        for truly_missing in ("size", "weight", "color", "material", "itemName"):
+            assert truly_missing in missing, f"진짜 안 준 {truly_missing} 가 지적에 없음: {missing}"
+        for provided in ("returnCostReason", "compensationProcedure"):
+            assert provided not in missing, f"값을 준 {provided} 를 누락으로 잡음: {missing}"
+
+    def test_flat_top_level_values_not_flagged(self):
+        """평평하게 최상위에 온 값도 받는다(하위 호환) — 노드가 비어있을 때."""
+        spec = naver_client._notice_type_spec("SPORTS_EQUIPMENT")
+        body = _build_full_body_for_type("SPORTS_EQUIPMENT", spec)
+        notice = {"productInfoProvidedNoticeType": "SPORTS_EQUIPMENT", **body}
+        details = self._notice_violations(notice)
+        assert details == [], f"최상위 평평 값이 있는데 누락 판정: {details}"
+
+    def test_node_value_takes_precedence_over_flat(self):
+        """노드 값이 우선한다 — 노드에 유효값, 최상위에 placeholder 조합."""
+        notice = {
+            "productInfoProvidedNoticeType": "SPORTS_EQUIPMENT",
+            "sportsEquipment": {
+                "returnCostReason": "단순변심 반품비용 구매자부담",
+                "noRefundReason": "주문제작 청약철회 제한",
+                "qualityAssuranceStandard": "관련법에 따름",
+                "compensationProcedure": "소비자분쟁해결기준",
+                "troubleShootingContents": "고객센터 문의",
+                "material": "스테인리스",  # 노드 값(유효) 이 우선.
+            },
+            # 최상위 평평 값: material 은 placeholder — 노드 값이 이긴다.
+            "material": "상세페이지 참조",
+        }
+        missing = self._missing_fields_from(self._notice_violations(notice))
+        assert "material" not in missing, f"노드 유효값이 평평 placeholder 에 덮였음: {missing}"
+
+    def test_inspection_does_not_mutate_input_notice(self):
+        """검사가 입력 notice dict 를 변이하지 않는지 확인(부작용 가드)."""
+        notice = {
+            "productInfoProvidedNoticeType": "SPORTS_EQUIPMENT",
+            "sportsEquipment": {"returnCostReason": "단순변심 반품비용 구매자부담"},
+            "size": "가로 20cm",
+        }
+        before = {k: dict(v) if isinstance(v, dict) else v for k, v in notice.items()}
+        self._notice_violations(notice)
+        assert notice == before, "검사가 입력 notice 를 변이했음"
 
 
 # --------------------------------------------------------------------------- #

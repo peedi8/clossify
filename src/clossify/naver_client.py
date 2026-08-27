@@ -503,6 +503,44 @@ def _resolve_as_tel(p, cfg_notice) -> str:
     )
 
 
+# 상품 입력(dict)에서 ``_notice_defaults``/각 해석기가 읽는 규제값 키 전부 —
+# snake_case/camelCase 별칭을 함께 나열한다. 진짜 조립기(build_payload)가 읽는
+# 후보 키와 임시 조립기(register._build_register_product_dict)가 전달하는 키가
+# 같은 목록에서 나와야 두 조립기의 입력 규약이 갈라지지 않는다(T3-A).
+# 새 규칙을 만들지 않고 _notice_defaults/_resolve_* 가 이미 읽는 키를 그대로
+# 열거한다.
+NOTICE_INPUT_KEY_ALIASES = (
+    "origin_code",
+    "as_tel",
+    "seller_tel",
+    "as_guide",
+    "manufacturer",
+    "importer",
+    "made_in",
+    "origin_content",
+    "cert_detail",
+    "item_name",
+    "itemName",
+    "model_name",
+    "modelName",
+    "manufacture_date",
+    "manufacturedDate",
+    "quality_assurance_standard",
+    "qualityAssuranceStandard",
+    "return_cost_reason",
+    "returnCostReason",
+    "no_refund_reason",
+    "noRefundReason",
+    "compensation_procedure",
+    "compensationProcedure",
+    "trouble_shooting_contents",
+    "troubleShootingContents",
+    "courier",
+    "delivery_company",
+    "deliveryCompany",
+)
+
+
 def _notice_defaults(p):
     cfg_notice = _notice_config()
     # AS 연락처는 규제 신고값이다. 상품 입력 → 설정 세 키 순으로만 고르고,
@@ -1194,20 +1232,147 @@ def _enforce_notice_as_contact_exclusive(notice_body, user_fields=None):
         notice_body.pop("customerServicePhoneNumber", None)
 
 
+def _spec_carry_fields(spec) -> list[str]:
+    """값 통로가 볼 정본 필드 합집합 — ``fields`` 와 ``field_meta`` 의 합집합 키.
+
+    정본(``data/notice_types.json``) 의 각 타입은 ``fields``(배열) 와
+    ``field_meta``(객체) 두 필드 목록을 갖는다. 실측 결과 ``field_meta``
+    에만 있고 ``fields`` 에는 없는 필드가 20개다(certificationType 등) —
+    이 필드들은 네이버가 NotNull 400 으로 요구하는데도 값 통로가 없어
+    사용자가 준 값이 조용히 버려졌다.
+
+    계약:
+      - **합집합은 여기(값 통로) 에만** 쓴다. 필수 판정(qa_agents 의
+        ``spec["fields"]``) 에는 넣지 않는다 — 요구 여부를 우리는 모르며,
+        추측으로 필수를 늘리면 멀쩡한 등록을 막는 오탐이 된다.
+      - 합집합 **밖의 임의 키는 절대 만들지 않는다**(하드코딩 금지 — 정본이
+        늘면 자동으로 따라간다).
+    """
+    spec = spec if isinstance(spec, dict) else {}
+    fields: list[str] = []
+    seen: set[str] = set()
+    for field in spec.get("fields") or ():
+        if isinstance(field, str) and field.strip() and field not in seen:
+            fields.append(field)
+            seen.add(field)
+    field_meta = spec.get("field_meta")
+    if isinstance(field_meta, dict):
+        for key in field_meta:
+            if isinstance(key, str) and key.strip() and key not in seen:
+                fields.append(key)
+                seen.add(key)
+    return fields
+
+
+def _typed_field_input_candidates(fields) -> dict:
+    """정본 필드 목록에서 ``{camelCase 필드: 입력 키 후보 튜플}`` 매핑을 만든다.
+
+    앞 티켓(T3-C)이 정한 규약과 **동일한 헬퍼**를 쓴다 —
+    ``listing_templates._NOTICE_BODY_SNAKE_ALIASES`` 우선, 없으면
+    ``listing_templates._camel_to_snake`` 자동 변환. 새 별칭 규칙을
+    만들지 않는다(단일 진실 공급원). 각 필드의 후보는
+    ``(camelCase, snake_case...)`` 순서다.
+    """
+    from .listing_templates import _NOTICE_BODY_SNAKE_ALIASES, _camel_to_snake
+
+    out: dict[str, tuple[str, ...]] = {}
+    for field in fields or ():
+        if not isinstance(field, str):
+            continue
+        camel = field.strip()
+        if not camel:
+            continue
+        aliases = _NOTICE_BODY_SNAKE_ALIASES.get(camel)
+        if aliases is None:
+            snake = _camel_to_snake(camel)
+            aliases = (snake,) if snake and snake != camel else ()
+        out[camel] = (camel, *aliases)
+    return out
+
+
+_TYPED_INPUT_KEYS_CACHE: tuple[str, ...] | None = None
+
+
+def notice_typed_input_keys() -> tuple[str, ...]:
+    """verified 전체 고시 타입의 필드 입력 키 후보 **합집합** (캐싱).
+
+    임시 조립기(``register._build_register_product_dict``)가 상품 입력의
+    타입별 고시 필드를 진짜 조립기로 통째로 넘길 때 쓴다. 어느 타입의
+    필드인지는 진짜 조립기가 정본(``data/notice_types.json``) 스펙으로
+    걸러 싣으므로, 여기 합집합에 있어도 정본에 없는 키는 본문에 실리지
+    않는다(임의 키 유출 금지).
+    """
+    global _TYPED_INPUT_KEYS_CACHE
+    if _TYPED_INPUT_KEYS_CACHE is not None:
+        return _TYPED_INPUT_KEYS_CACHE
+    keys: list[str] = []
+    for entry in _load_notice_type_specs():
+        if not isinstance(entry, dict):
+            continue
+        for candidates in _typed_field_input_candidates(_spec_carry_fields(entry)).values():
+            for key in candidates:
+                if key not in keys:
+                    keys.append(key)
+    _TYPED_INPUT_KEYS_CACHE = tuple(keys)
+    return _TYPED_INPUT_KEYS_CACHE
+
+
+def _carry_typed_fields_from_input(p, body, fields) -> dict:
+    """상품 입력(p) 에서 정본이 그 타입에 정의한 필드를 본문에 싣는다 (T3 구조).
+
+    구조 결함 수정 — 과거에는 공통 필드 + 코드가 특수처리하는 몇 개
+    (itemName/modelName 등)만 실려, 정본이 정의한 나머지 타입별 필드
+    (releaseDateText 등)는 상품 입력에 줘도 본문에 실리지 않았다.
+
+    규율:
+      - **정본(spec.fields)에 있는 필드만** 싣는다. 정본에 없는 키는 절대
+        싣지 않는다(과거 임의 키가 네이버로 나간 사고 — qa_agents 미루기
+        allowlist 주석 참조).
+      - 이미 본문에 있는 필드(공통 기본값·명시 처리 결과)는 덮지 않는다.
+      - **값이 없으면 싣지 않는다**(None/빈 문자열/공백) — 컴플라이언스
+        검사가 누락으로 지적하게 둔다(조용한 채움 금지). 빈 문자열로
+        채우지 않는다.
+      - **자동채움 금지(영구 규율)**: 어떤 필드도 다른 값에서 유도하지
+        않는다. 특히 품명(itemName) 은 상품명에서 유도 금지(2026-08-26 결정).
+    """
+    if not isinstance(p, dict):
+        return body
+    for camel, candidates in _typed_field_input_candidates(fields).items():
+        if camel in body:
+            continue
+        for key in candidates:
+            value = p.get(key)
+            if value is None or (isinstance(value, str) and not value.strip()):
+                continue
+            # 필드 타입 검증(boolean 필드에 문자열이면 거부) — 사용자
+            # notice 경로(_merge_notice)와 같은 규칙을 적용한다.
+            body[camel] = _validate_notice_field_type(camel, value)
+            break
+    return body
+
+
 def _base_notice_body_for_type(p, defaults, notice_type, spec):
     """고시 타입별 기본 본문을 생성.
 
     ETC/FURNITURE 는 기존 빌더를 그대로 사용(회귀 없이 보존).
     그 외 33종은 공통 5필드 + 빈 타입별 필드로 시작 — 값을 지어내지 않는다.
     사용자 입력이 _merge_notice 에서 덮어쓴다.
+    모든 타입 공통으로 마지막에 ``_carry_typed_fields_from_input`` 이 정본이
+    정의한 타입별 필드를 상품 입력에서 본문으로 싣는다(T3 구조 — 정본에
+    있는 필드만, 값이 있을 때만).
     """
+    fields = spec.get("fields") or []
+    # 값 통로가 볼 필드는 fields 와 field_meta 의 합집합 — field_meta 에만 있는
+    # 필드(certificationType 등 20종) 도 값이 있으면 실어야 네이버 400 을
+    # 막는다. 합집합은 값 통로에만 쓰고, 아래 연락처/제조사 게이팅은 기존
+    # ``fields`` 판정을 유지한다(필수 판정 확장 금지).
+    carry_fields = _spec_carry_fields(spec)
     if notice_type == "ETC":
-        return _base_etc_notice(defaults)
+        return _carry_typed_fields_from_input(p, _base_etc_notice(defaults), carry_fields)
     if notice_type == "FURNITURE":
-        return _base_furniture_notice(p, defaults)
+        return _carry_typed_fields_from_input(p, _base_furniture_notice(p, defaults), carry_fields)
     # 나머지 33종: 공통 5필드 + afterServiceDirector(있는 타입만)로 시작.
     body = _common_notice_defaults(defaults)
-    fields = spec.get("fields") or []
     # afterServiceDirector/customerServicePhoneNumber 는 제조사·AS 전화가
     # 모두 있을 때만 합성/입력한다. 어느 한쪽이라도 비면 임의 문자열을 넣지
     # 않고 컴플라이언스 검사가 필수 항목 누락으로 FAIL 지적한다.
@@ -1220,7 +1385,19 @@ def _base_notice_body_for_type(p, defaults, notice_type, spec):
         body["manufacturer"] = defaults["manufacturer"]
     if "importer" in fields and defaults.get("importer"):
         body["importer"] = defaults["importer"]
-    return body
+    # 품명(itemName)/모델명(modelName) — 명시값이 있고 정본 필드에 해당 필드가
+    # 있을 때만 싣는다(T3-B). 상품명에서 자동으로 뽑지 않는다(2026-08-26 결정
+    # 유지). 값이 없으면 생략하고 컴플라이언스 검사가 필수 항목 누락으로 FAIL
+    # 지적한다(조용한 채움 금지). 정본에 없는 필드를 임의로 추가하지도 않는다.
+    if "itemName" in fields and defaults.get("item_name"):
+        body["itemName"] = defaults["item_name"]
+    if "modelName" in fields and defaults.get("model_name"):
+        body["modelName"] = defaults["model_name"]
+    # 나머지 타입별 필드(size/releaseDateText 등)는 상품 입력에서 정본이
+    # 정의한 것만 싣는다(공유 헬퍼 — ETC/FURNITURE 도 같은 헬퍼를 경유한다).
+    # fields 와 field_meta 의 합집합 — field_meta 에만 있는 필드도 값 통로가
+    # 연결된다(값이 있을 때만, 합집합 밖 임의 키 금지).
+    return _carry_typed_fields_from_input(p, body, carry_fields)
 
 
 def _validate_notice_field_type(field, value):
@@ -1292,7 +1469,11 @@ def _merge_notice(default_notice, user_notice):
         "productInfoProvidedNoticeType": notice_type,
         node_key: default_body,
     }
-    # 사용자 본문: 같은 node_key 우선, 없으면 etc/furniture.
+    # 사용자 본문: 같은 node_key 우선, 없으면 etc/furniture, 마지막으로
+    # 평탄 입력(노드 키 없이 고시 필드만 담은 dict)을 본문으로 받는다(T3-C).
+    # 우선순위: node 키 본문 > etc/furniture 폴백 > 평탄 본문.
+    # 과거에는 평탄 입력을 조용히 버렸다 — 판매자가 notice dict 로 준 값이
+    # 어디에도 알리지 않고 사라졌다(조용한 무시 금지 위반).
     user_body = user_notice.get(node_key)
     if not isinstance(user_body, dict):
         for fallback in ("etc", "furniture"):
@@ -1301,7 +1482,8 @@ def _merge_notice(default_notice, user_notice):
                 user_body = fb
                 break
     if not isinstance(user_body, dict):
-        user_body = {}
+        flat = {k: v for k, v in user_notice.items() if k != "productInfoProvidedNoticeType"}
+        user_body = flat if flat else {}
     user_fields = set()
     for field, value in user_body.items():
         # 사용자가 명시적으로 제공한 값은 그대로 싣는다.
