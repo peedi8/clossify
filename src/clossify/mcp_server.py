@@ -48,6 +48,7 @@ from . import register as _register_mod
 from . import requirements as _requirements_mod
 from .attribute_suggestions import suggest_category_attributes
 from .text_props import desc_html_to_text
+from .ui.loader import load_ui as _load_ui
 
 
 def _resolve_version() -> str:
@@ -69,6 +70,33 @@ mcp = MCPServer("clossify", version=_resolve_version())
 # 설정 파일 경로 — naver_client.config_path() 의 단일 진실 공급원을 따른다.
 # (CLOSSIFY_CONFIG 환경변수 오버라이드 포함)
 _CONFIG_PATH = naver_client.config_path()
+
+# --------------------------------------------------------------------------- #
+# MCP UI 리소스 — 설정 화면을 대화창 안으로.
+#
+# 호스트가 도구 결과의 ``resource_uri`` 를 보고 ``ui://`` 리소스를 가져와
+# 인라인 렌더하는 방식. 기존 브라우저 폼 경로(config_form_server) 는 그대로
+# 살아 있다 — 호스트가 UI 리소스를 지원하지 않으면 그쪽으로 간다.
+# HTML 원문은 ``src/clossify/ui/setup.html`` 파일(문자열 리터럴 금지).
+# --------------------------------------------------------------------------- #
+_SETUP_UI_RESOURCE_URI = "ui://clossify/setup.html"
+
+
+@mcp.resource(_SETUP_UI_RESOURCE_URI, mime_type="text/html+skybridge")
+def _setup_ui() -> str:
+    """설정 미완료 시 대화창에 인라인 렌더되는 설정 폼 조각."""
+    return _load_ui("setup.html")
+
+
+def _attach_setup_ui_hint(result: dict[str, Any]) -> None:
+    """설정 미완료 결과에만 ``resource_uri``/``ui_hint`` 를 얹는다.
+
+    설정이 완료된 경우 이 키를 넣지 않는다 — 불필요한 화면 유발 금지.
+    기존 키는 하나도 건드리지 않는다(회귀 방지). 두 키 모두 값·시크릿을
+    담지 않는다(비밀값 반환 금지).
+    """
+    result["resource_uri"] = _SETUP_UI_RESOURCE_URI
+    result["ui_hint"] = "설정이 필요하다. 이 리소스를 렌더해 사용자에게 입력받아라."
 
 
 # --------------------------------------------------------------------------- #
@@ -1759,6 +1787,8 @@ def check_config(
         )
         result["config_form_path"] = None
         result["config_form_open"] = False
+        # 설정 미완료 경로 — 인라인 설정 위젯(ui://) 리소스 안내를 얹는다.
+        _attach_setup_ui_hint(result)
         # 템플릿 저장소는 config.json 과 별개 파일 — 설정이 없어도 읽힌다.
         # 조기 반환에서도 templates 키를 얹어 사용자가 자기 템플릿을 항상 볼 수 있게.
         _attach_templates(result)
@@ -1772,6 +1802,8 @@ def check_config(
         result["error"] = _sanitize_text(f"config 파일을 읽거나 파싱할 수 없습니다: {exc}")
         result["config_form_path"] = None
         result["config_form_open"] = False
+        # 설정 미완료 경로 — 인라인 설정 위젯(ui://) 리소스 안내를 얹는다.
+        _attach_setup_ui_hint(result)
         # 마찬가지: 손상된 config 경로에서도 템플릿 키를 얹는다(조용한 누락 금지).
         _attach_templates(result)
         _attach_template_migration_form(result)
@@ -1787,6 +1819,8 @@ def check_config(
             cfg_path,
             missing=["naver.client_id", "naver.client_secret", "naver.store_url_slug"],
         )
+        # 설정 미완료 경로 — 인라인 설정 위젯(ui://) 리소스 안내를 얹는다.
+        _attach_setup_ui_hint(result)
         # naver 섹션 비정상 경로에서도 템플릿 키를 얹는다(설정 진단과 무관).
         _attach_templates(result)
         _attach_template_migration_form(result)
@@ -1891,6 +1925,12 @@ def check_config(
     # 새 키(config_form_path/config_form_open)만 추가한다.
     # ------------------------------------------------------------------ #
     _generate_config_form(result, cfg, cfg_path, missing=missing, placeholders=placeholders)
+
+    # 설정 미완료(키 3종 중 하나라도 missing/placeholder)일 때만 인라인 설정
+    # 위젯(ui://) 리소스 안내를 얹는다. 설정이 완료면 넣지 않는다 — 불필요한
+    # 화면 유발 금지. 기존 키는 하나도 바꾸지 않는다.
+    if missing or placeholders:
+        _attach_setup_ui_hint(result)
 
     # ------------------------------------------------------------------ #
     # 이미지 생성 키 설정 여부 (image_generation_configured).

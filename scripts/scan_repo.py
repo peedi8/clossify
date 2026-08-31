@@ -200,6 +200,22 @@ ALLOWED_MASKING_PAIRS: list[tuple[str, str]] = [
     (r"^scripts/mock_field_allowlist\.json$", "internal_ticket_id_n"),
 ]
 
+# 층 2 (local_word) 의 유일한 **정확일치** 예외.
+# 예외는 (파일경로, URL 전체 문자열) 쌍으로, 그 파일 안에서 해당 URL 이
+# **정확히 이 형태로 등장하는 부분만** 검사에서 제외한다. 즉 URL 전체를
+# 통째로 지운 뒤 남은 본문을 검사하므로, 같은 금지단어가 이 URL 이 아닌
+# 형태로 등장하면 여전히 위반으로 잡힌다. 단어 자체를 목록에서 빼거나
+# 파일 전체를 제외하는 방식은 쓰지 않는다.
+# 허용 사유: 저장소가 이미 이 주소로 공개돼 있어 URL 이 추가로 노출하는
+# 정보가 없다는 사용자 승인 (설정 위젯은 iframe 안에서 렌더되므로 상대경로
+# 링크는 죽은 링크다 — 절대 URL 이 필요했다).
+ALLOWED_LOCAL_EXACT_SUBSTRINGS: list[tuple[str, str]] = [
+    (
+        "src/clossify/ui/setup.html",
+        "https://github.com/peedi8/clossify/blob/main/docs/SETUP_GUIDE.md",
+    ),
+]
+
 # CJK 통합한자 코드포인트 범위 — 한글은 제외.
 CJK_RANGES = [
     (0x4E00, 0x9FFF),  # CJK Unified Ideographs
@@ -360,6 +376,18 @@ def _is_allowed(path: str, pattern_name: str) -> bool:
     return False
 
 
+def _strip_local_exceptions(rel: str, line: str) -> str:
+    """층 2 local_word 검사 직전, 해당 경로에 허용된 **정확일치 URL** 부분만 지운다.
+
+    URL 전체 문자열이 정확히 일치하는 부분만 제거하므로, 같은 단어가
+    그 URL 밖의 형태로 남아 있으면 여전히 매칭된다.
+    """
+    for allowed_path, exact in ALLOWED_LOCAL_EXACT_SUBSTRINGS:
+        if rel == allowed_path and exact in line:
+            line = line.replace(exact, "")
+    return line
+
+
 def _is_self_file(path: str) -> bool:
     """검사 대상 파일이 이 스캐너 자신인지 여부.
 
@@ -446,7 +474,11 @@ def scan_patterns(local_rx: re.Pattern[str] | None) -> list[str]:
                         continue
                     if _is_allowed(path, pname):
                         continue
-                    for m in rx.finditer(line):
+                    # 층 2 는 정확일치 URL 예외 적용 후 검사.
+                    scan_line = (
+                        _strip_local_exceptions(rel, line) if layer_name == "local" else line
+                    )
+                    for m in rx.finditer(scan_line):
                         violations.append(
                             f"{rel}:{lineno}: {layer_name}_pattern={pname} "
                             f"(raw match: {m.group(0)!r})"
@@ -461,7 +493,11 @@ def scan_patterns(local_rx: re.Pattern[str] | None) -> list[str]:
                         continue
                     if _is_allowed(path, pname):
                         continue
-                    for m in rx.finditer(line):
+                    # 층 2 는 정확일치 URL 예외 적용 후 검사 (디코드본 동일).
+                    scan_line = (
+                        _strip_local_exceptions(rel, line) if layer_name == "local" else line
+                    )
+                    for m in rx.finditer(scan_line):
                         violations.append(
                             f"{rel}:{lineno}: {layer_name}_pattern={pname} "
                             f"(decoded match: {m.group(0)!r})"

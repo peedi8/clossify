@@ -1,0 +1,97 @@
+<div style="background: var(--surface-2, #fff); border: 0.5px solid var(--border, #e3e2dd); border-radius: 12px; padding: 1.25rem 1.5rem; max-width: 560px; margin: 0.5rem auto; font-family: var(--font-sans, system-ui, sans-serif); color: var(--text-primary, #1a1a18);">
+  <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 4px;">
+    <div style="width: 40px; height: 40px; border-radius: 8px; background: #e06000; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 500;">C</div>
+    <div>
+      <p style="font-weight: 500; font-size: 15px; margin: 0;">클로시파이 최초 설정</p>
+      <p style="font-size: 13px; color: var(--text-secondary, #6b6a65); margin: 0;">스토어 연결에 필요한 키 2개 · 로컬에만 저장됩니다</p>
+    </div>
+  </div>
+  <div style="border-top: 0.5px solid var(--border, #e3e2dd); margin: 12px 0 16px;"></div>
+
+  <div style="background: var(--bg-accent, #e6f1fb); border-radius: 8px; padding: 10px 12px; margin: 0 0 14px; font-size: 13px; color: var(--text-accent, #185fa5); line-height: 1.6;">
+    <p style="margin: 0; font-weight: 500;">발급 전 확인 — 이 조건이 안 되면 키를 못 받습니다</p>
+    <ul style="margin: 4px 0 0; padding-left: 18px;">
+      <li>로그인 계정이 스토어의 <span style="font-weight:500;">통합매니저 권한</span>이어야 함 — 확인: 스마트스토어센터 &gt; 내정보 &gt; 서비스 정보</li>
+      <li>권한자가 없으면 <span style="font-weight:500;">통합매니저 위임프로세스</span>를 먼저 진행</li>
+      <li>스토어가 심사중·거부·이용정지·탈퇴신청중이면 제한 · 해외개인/해외사업자 제한</li>
+    </ul>
+    <p style="margin: 6px 0 0;"><a id="guide" href="https://github.com/peedi8/clossify/blob/main/docs/SETUP_GUIDE.md" style="color: inherit; font-weight: 500;">시작 가이드 자세히 보기 →</a></p>
+  </div>
+
+  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+    <label for="cid" style="font-size: 13px; font-weight: 500;">애플리케이션 ID <span style="color: var(--text-danger, #a32d2d);">*</span></label>
+    <a id="go-cid" href="https://apicenter.commerce.naver.com/ko/member/home" style="font-size: 12px; color: var(--text-secondary, #6b6a65);">키 받으러 가기 ↗</a>
+  </div>
+  <input id="cid" type="text" autocomplete="off" spellcheck="false" placeholder="내스토어 애플리케이션에서 발급한 ID" style="width: 100%; box-sizing: border-box; height: 36px; padding: 0 10px; border: 0.5px solid var(--border, #e3e2dd); border-radius: 8px; background: transparent; color: inherit; font-family: var(--font-mono, monospace); font-size: 13px;" />
+  <p id="cid-err" style="font-size: 13px; color: var(--text-danger, #a32d2d); margin: 4px 0 0; display: none;">애플리케이션 ID를 입력하세요</p>
+
+  <div style="display: flex; align-items: center; justify-content: space-between; margin: 14px 0 6px;">
+    <label for="csec" style="font-size: 13px; font-weight: 500;">애플리케이션 시크릿 <span style="color: var(--text-danger, #a32d2d);">*</span></label>
+    <span style="display: flex; gap: 10px; align-items: center;">
+      <a id="go-csec" href="https://apicenter.commerce.naver.com/ko/member/home" style="font-size: 12px; color: var(--text-secondary, #6b6a65);">키 받으러 가기 ↗</a>
+      <button id="toggle" type="button" aria-label="시크릿 표시 전환" style="font-size: 12px; padding: 2px 10px; border: 0.5px solid var(--border, #e3e2dd); border-radius: 8px; background: transparent; color: inherit; cursor: pointer;">표시</button>
+    </span>
+  </div>
+  <input id="csec" type="password" autocomplete="off" spellcheck="false" placeholder="발급 화면에 표시되는 시크릿 문자열" style="width: 100%; box-sizing: border-box; height: 36px; padding: 0 10px; border: 0.5px solid var(--border, #e3e2dd); border-radius: 8px; background: transparent; color: inherit; font-family: var(--font-mono, monospace); font-size: 13px;" />
+  <p id="csec-err" style="font-size: 13px; color: var(--text-danger, #a32d2d); margin: 4px 0 0; display: none;">애플리케이션 시크릿을 입력하세요</p>
+
+  <details style="margin: 14px 0 0; font-size: 13px; color: var(--text-secondary, #6b6a65);">
+    <summary style="cursor: pointer;">발급 순서 — 두 키가 같은 화면에서 함께 나옵니다</summary>
+    <ol style="margin: 8px 0 0; padding-left: 18px; line-height: 1.7;">
+      <li>키 받으러 가기 → 통합매니저 계정으로 로그인</li>
+      <li>첫 화면의 "솔루션 마켓 입점"은 무시(솔루션 판매 사업자용) → [애플리케이션] &gt; [내스토어 애플리케이션]</li>
+      <li>애플리케이션 등록 — <span style="font-weight:500;">API 호출 IP</span> 입력 필수 (빠뜨리면 키를 받아도 호출이 조용히 막힘)</li>
+      <li>발급된 ID·시크릿을 위 칸에 붙여넣기 (스토어당 애플리케이션 1개)</li>
+    </ol>
+  </details>
+
+  <div style="display: flex; align-items: center; gap: 10px; margin-top: 18px; flex-wrap: wrap;">
+    <button id="save" type="button" style="background: #e06000; color: #fff; border: none; border-radius: 8px; height: 36px; font-weight: 500; padding: 0 18px; cursor: pointer; font-size: 14px;">스토어 연결</button>
+    <span id="status" style="font-size: 13px;"></span>
+  </div>
+  <p style="font-size: 12px; color: var(--text-muted, #8f8e88); margin: 12px 0 0;">값은 내 PC 의 설정 파일에만 저장됩니다. 외부 서버로 전송되지 않습니다.</p>
+</div>
+<script>
+(function(){
+  var cid=document.getElementById('cid'),csec=document.getElementById('csec');
+  var cidErr=document.getElementById('cid-err'),csecErr=document.getElementById('csec-err');
+  var toggle=document.getElementById('toggle'),save=document.getElementById('save'),status=document.getElementById('status');
+  toggle.addEventListener('click',function(){
+    var show=csec.type==='password';
+    csec.type=show?'text':'password';
+    toggle.textContent=show?'숨김':'표시';
+  });
+  cid.addEventListener('input',function(){cidErr.style.display='none';});
+  csec.addEventListener('input',function(){csecErr.style.display='none';});
+  function host(){
+    var w=window;
+    if(w.openai&&typeof w.openai.callTool==='function')return w.openai.callTool.bind(w.openai);
+    if(w.mcp&&typeof w.mcp.callTool==='function')return w.mcp.callTool.bind(w.mcp);
+    if(w.parent&&w.parent!==w&&typeof w.parent.postMessage==='function')return null;
+    return null;
+  }
+  save.addEventListener('click',function(){
+    var a=cid.value.trim(),b=csec.value.trim(),bad=false;
+    if(!a){cidErr.style.display='block';bad=true;}
+    if(!b){csecErr.style.display='block';bad=true;}
+    if(bad)return;
+    var call=host();
+    if(call){
+      save.disabled=true;
+      status.style.color='var(--text-secondary, #6b6a65)';
+      status.textContent='전달 중…';
+      Promise.resolve(call('save_config',{client_id:a,client_secret:b})).then(function(){
+        status.style.color='var(--text-success, #3b6d11)';
+        status.textContent='저장됨 — 대화에서 이어집니다';
+      }).catch(function(){
+        save.disabled=false;
+        status.style.color='var(--text-danger, #a32d2d)';
+        status.textContent='전달 실패 — 값을 복사해 대화에 붙여넣어 주세요';
+      });
+    }else{
+      status.style.color='var(--text-danger, #a32d2d)';
+      status.textContent='이 호스트에서는 자동 전달이 안 됩니다 — 값을 복사해 대화에 붙여넣어 주세요';
+    }
+  });
+})();
+</script>
