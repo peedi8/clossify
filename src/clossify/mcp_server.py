@@ -39,6 +39,7 @@ from importlib.metadata import version as _pkg_version
 from typing import Any
 
 from mcp.server import MCPServer
+from mcp.server.apps import Apps
 
 from . import auto_open as _auto_open
 from . import common, naver_client, qa_agents
@@ -64,28 +65,43 @@ def _resolve_version() -> str:
         return ""
 
 
+# MCP Apps 확장(io.modelcontextprotocol/ui) — 도구의 ``_meta.ui.resourceUri`` 가
+# ``ui://`` 리소스(HTML, MIME ``text/html;profile=mcp-app``) 를 가리키면 지원
+# 호스트가 대화창에 인라인 렌더한다. 호스트는 **도구 정의의 ``_meta``** 를 보고
+# 렌더하며, 반환 페이로드 안의 문자열 키(``resource_uri``/``ui_hint``) 는 호스트에게
+# 그냥 데이터다 — 미지원 호스트용 폴백 근거로만 쓰인다.
+apps = Apps()
+
+# --------------------------------------------------------------------------- #
+# MCP Apps UI 리소스 — 설정 화면을 대화창 안으로.
+#
+# ``Apps.add_html_resource`` 로 등록하면 리소스가 규격 MIME
+# (``text/html;profile=mcp-app`` = ``APP_MIME_TYPE``) 로 서빙되고,
+# ``@apps.tool(resource_uri=...)`` 로 묶인 도구(``check_config``) 의
+# ``_meta.ui.resourceUri`` 가 이를 가리켜 지원 호스트가 렌더한다.
+# 기존 브라우저 폼 경로(config_form_server) 는 그대로 살아 있다 — 미지원
+# 호스트는 그쪽으로 간다(우아한 저하). HTML 원문은 ``src/clossify/ui/setup.html``
+# 파일을 로더로 읽는다(문자열 리터럴 금지).
+#
+# ★ ``MCPServer`` 는 **생성 시점**에 확장의 리소스/도구를 소비하므로, 등록은
+# 반드시 서버 생성 **앞**에서 끝나야 한다.
+# --------------------------------------------------------------------------- #
+_SETUP_UI_RESOURCE_URI = "ui://clossify/setup.html"
+
+apps.add_html_resource(
+    _SETUP_UI_RESOURCE_URI,
+    _load_ui("setup.html"),
+    name="setup.html",
+    title="클로시파이 최초 설정",
+    description="설정 미완료 시 대화창에 인라인 렌더되는 설정 폼 조각",
+)
+
 # 서버 인스턴스 — 클라이언트 LLM이 discover 하는 도구들의 컨테이너.
-mcp = MCPServer("clossify", version=_resolve_version())
+mcp = MCPServer("clossify", version=_resolve_version(), extensions=[apps])
 
 # 설정 파일 경로 — naver_client.config_path() 의 단일 진실 공급원을 따른다.
 # (CLOSSIFY_CONFIG 환경변수 오버라이드 포함)
 _CONFIG_PATH = naver_client.config_path()
-
-# --------------------------------------------------------------------------- #
-# MCP UI 리소스 — 설정 화면을 대화창 안으로.
-#
-# 호스트가 도구 결과의 ``resource_uri`` 를 보고 ``ui://`` 리소스를 가져와
-# 인라인 렌더하는 방식. 기존 브라우저 폼 경로(config_form_server) 는 그대로
-# 살아 있다 — 호스트가 UI 리소스를 지원하지 않으면 그쪽으로 간다.
-# HTML 원문은 ``src/clossify/ui/setup.html`` 파일(문자열 리터럴 금지).
-# --------------------------------------------------------------------------- #
-_SETUP_UI_RESOURCE_URI = "ui://clossify/setup.html"
-
-
-@mcp.resource(_SETUP_UI_RESOURCE_URI, mime_type="text/html+skybridge")
-def _setup_ui() -> str:
-    """설정 미완료 시 대화창에 인라인 렌더되는 설정 폼 조각."""
-    return _load_ui("setup.html")
 
 
 def _attach_setup_ui_hint(result: dict[str, Any]) -> None:
@@ -1667,7 +1683,7 @@ def _lookup_public_ip() -> dict[str, Any]:
     return {"ok": True, "ip": ip, "source": source, "detail": ""}
 
 
-@mcp.tool()
+@apps.tool(resource_uri=_SETUP_UI_RESOURCE_URI)
 def check_config(
     read_existing: bool = False,
     probe: bool = False,
@@ -2025,6 +2041,17 @@ def check_config(
             }
 
     return result
+
+
+# ``MCPServer`` 는 **생성 시점**에 확장 바인딩을 소비한다(``_apply_extension``).
+# ``check_config`` 정의는 서버 생성 뒤(모듈 하단) 이므로 ``@apps.tool`` 바인딩을
+# 서버에 수동으로 반영한다 — 등록 방식(``add_tool(fn, meta=...)``)은 확장 소비
+# 경로와 동일하다. ``apps.tools()`` 호출은 resource_uri ↔ 리소스 짝 검증도
+# 함께 수행한다(바인딩이 가리키는 ``ui://`` 리소스가 없으면 여기서 실패).
+_check_config_binding = next(b for b in apps.tools() if b.fn is check_config)
+mcp.add_tool(
+    _check_config_binding.fn, meta=_check_config_binding.meta, **_check_config_binding.kwargs
+)
 
 
 @mcp.tool()

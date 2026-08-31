@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import sys
 from pathlib import Path
 from unittest import mock
@@ -515,11 +516,15 @@ class TestToolCount:
     """auto_open 추가로 MCP 도구가 늘지 않는다."""
 
     def test_g_exactly_eleven_mcp_tools(self):
-        """(g) ``@mcp.tool()`` 데코레이터가 11개, runtime list_tools() 도 11개."""
-        # 소스 카운트.
+        """(g) 도구 등록 데코레이터가 11개, runtime list_tools() 도 11개."""
+        # 소스 카운트 — @mcp.tool() 10개 + @apps.tool(resource_uri=...) 1개
+        # (check_config 는 MCP Apps 확장 경로로 등록된다).
+        # 줄 시작 앵커로 세서 주석/docstring 안의 언급은 세지 않는다.
         src = Path(mcp_server.__file__).read_text(encoding="utf-8")
-        decorator_count = src.count("@mcp.tool()")
-        assert decorator_count == 11, f"@mcp.tool() 데코레이터가 11개여야 함: {decorator_count}"
+        decorator_count = len(re.findall(r"(?m)^@mcp\.tool\(\)", src)) + len(
+            re.findall(r"(?m)^@apps\.tool\(", src)
+        )
+        assert decorator_count == 11, f"도구 등록 데코레이터가 11개여야 함: {decorator_count}"
         # 런타임 카운트.
         tools = _list_tools()
         assert len(tools) == 11, f"runtime 도구가 11개여야 함: {len(tools)}"

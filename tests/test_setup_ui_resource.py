@@ -36,6 +36,7 @@ from clossify import mcp_server
 from clossify.ui.loader import load_ui
 
 _RESOURCE_URI = "ui://clossify/setup.html"
+_APP_MIME_TYPE = "text/html;profile=mcp-app"
 # (e) 허용된 외부 URL — 정확히 2종 (apicenter · 시작 가이드 절대 URL).
 # 시작 가이드는 iframe 안에서 렌더되므로 상대경로는 죽은 링크다 — 절대 URL.
 # 그 URL 은 로컬 금지단어 스캐너(scripts/scan_repo.py 층 2) 에 걸리는 단어를
@@ -99,6 +100,56 @@ class TestResourceRegistered:
             resources = asyncio.run(resources)
         uris = [str(getattr(r, "uri", r)) for r in resources]
         assert _RESOURCE_URI in uris, f"list_resources 결과에 설정 UI 리소스 없음: {uris}"
+
+
+# ============================================================================ #
+# MCP Apps 규격 — MIME · 도구 _meta.ui.resourceUri · 중복 등록 부재
+# (FIX-mcp-apps-spec 수용 조건 a/b/f. 호스트는 도구 정의의 _meta 를 보고
+#  렌더하므로 이 셋이 wire 에 실제로 있어야 한다.)
+# ============================================================================ #
+class TestMcpAppsSpec:
+    def _list_resources(self):
+        resources = mcp_server.mcp.list_resources()
+        if hasattr(resources, "__await__"):
+            import asyncio
+
+            resources = asyncio.run(resources)
+        return resources
+
+    def _list_tools(self):
+        import asyncio
+
+        tools = mcp_server.mcp.list_tools()
+        if hasattr(tools, "__await__"):
+            tools = asyncio.run(tools)
+        return tools
+
+    def test_setup_resource_mime_is_mcp_app(self):
+        """(a) ui:// 리소스 MIME 이 규격값 text/html;profile=mcp-app 이다."""
+        matches = [r for r in self._list_resources() if str(getattr(r, "uri", r)) == _RESOURCE_URI]
+        assert len(matches) == 1, "설정 UI 리소스가 1개여야 함"
+        assert (
+            matches[0].mime_type == _APP_MIME_TYPE
+        ), f"MIME 불일치: {matches[0].mime_type!r} != {_APP_MIME_TYPE!r}"
+
+    def test_check_config_meta_ui_resource_uri(self):
+        """(b) tools/list 의 check_config 에 _meta.ui.resourceUri 가 있다."""
+        cc = next(t for t in self._list_tools() if t.name == "check_config")
+        meta = getattr(cc, "meta", None) or {}
+        assert (
+            meta.get("ui", {}).get("resourceUri") == _RESOURCE_URI
+        ), f"check_config _meta.ui.resourceUri 없음/불일치: {meta!r}"
+
+    def test_setup_uri_registered_exactly_once(self):
+        """(f) 같은 URI 가 두 경로로 등록되지 않는다."""
+        uris = [str(getattr(r, "uri", r)) for r in self._list_resources()]
+        assert uris.count(_RESOURCE_URI) == 1, f"중복 등록 감지: {uris}"
+
+    def test_server_has_apps_extension(self):
+        """(a) 서버가 Apps 확장(io.modelcontextprotocol/ui) 을 싣고 있다."""
+        loaded = getattr(mcp_server.mcp, "_extensions", None) or []
+        identifiers = {getattr(e, "identifier", None) for e in loaded}
+        assert "io.modelcontextprotocol/ui" in identifiers, f"Apps 확장 미등록: {identifiers}"
 
 
 # ============================================================================ #
