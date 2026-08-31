@@ -1126,6 +1126,11 @@ _POLICY_CONFIG_KEYS: tuple[tuple[str, ...], ...] = (
     # 미설정이 등록을 막지 않는다 (3000 유지). 하지만 정책 키 인벤토리에
     # 편입해 미설정을 진단하게 한다 (설정 가능하다고 광고했으면 자리를 준다).
     ("smartstore_notice_defaults", "delivery_fee"),
+    # delivery_company(택배사 코드) 는 등록 경계(naver_client.register_product)가
+    # 하드 요구한다 — 빈 값이면 ValueError 로 등록을 거부한다(fail-closed).
+    # 설정 점검이 알리지 않는 값이 마지막 순간에 등록을 막는 구멍을 막기 위해
+    # 진단에 편입한다 (FIX-config-gap-coverage).
+    ("smartstore_notice_defaults", "delivery_company"),
 )
 
 # 정책 키의 camelCase 별칭 후보. 해석기가 읽는 후보와 같아야 한다 —
@@ -1137,6 +1142,12 @@ _POLICY_CONFIG_ALIASES: dict[tuple[str, ...], tuple[tuple[str, ...], ...]] = {
     ("smartstore_notice_defaults", "delivery_fee"): (
         ("smartstore_notice_defaults", "delivery_fee"),
         ("smartstore_notice_defaults", "deliveryFee"),
+    ),
+    # 해석기(_resolve_delivery_company)는 delivery_company / deliveryCompany
+    # 둘 다 받는다 — 진단도 같은 별칭을 본다 (감리 ③ 원칙 동일 적용).
+    ("smartstore_notice_defaults", "delivery_company"): (
+        ("smartstore_notice_defaults", "delivery_company"),
+        ("smartstore_notice_defaults", "deliveryCompany"),
     ),
 }
 
@@ -1393,6 +1404,9 @@ _POLICY_TO_EXTRACTION_KEY: tuple[tuple[tuple[str, ...], str], ...] = (
     # 단, **미설정이 등록을 막지 않는다** — 배송비는 fail-closed 대상이
     # 아니므로(_POLICY_CONFIG_KEYS 주석 참조), 제안만 하고 차단은 하지 않는다.
     (("smartstore_notice_defaults", "delivery_fee"), "delivery_fee"),
+    # delivery_company: originProduct.deliveryInfo.deliveryCompany 에서 읽는다.
+    # 다른 정책 항목과 같은 모양으로 제안·불일치 보고에 편입한다.
+    (("smartstore_notice_defaults", "delivery_company"), "delivery_company"),
 )
 
 
@@ -1436,6 +1450,9 @@ def _extract_policy_values_from_product(
         delivery_fee_block = delivery_info.get("deliveryFee")
         if isinstance(delivery_fee_block, dict):
             setv("delivery_fee", delivery_fee_block.get("baseFee"))
+        # 택배사 코드 — 등록 경계가 하드 요구하는 값. 기존 상품에서 읽어
+        # 제안·불일치 보고에 편입한다 (다른 정책 항목과 같은 모양).
+        setv("delivery_company", delivery_info.get("deliveryCompany"))
 
     # AS 전화·안내문.
     as_info = detail.get("afterServiceInfo")
