@@ -844,6 +844,18 @@ def _notice_common_user_bodies(p) -> list[dict]:
         fallback_body = user_notice.get(fallback)
         if isinstance(fallback_body, dict):
             bodies.append(fallback_body)
+    # 평탄 입력(노드 키 없이 고시 필드만 담은 dict) 도 본문 후보로 받는다 —
+    # ``_merge_notice`` 의 평탄 본문(T3-C) 계약과 같은 입력 모양을 취급한다.
+    # 노드 본문이 이미 있으면 그 값이 우선한다(더 구체적인 자리 — 본 함수는
+    # 어느 본문에든 실질값이 있으면 "제공됨" 이라는 OR 판정이다).
+    # 이 경로가 없으면 사용자가 평평한 notice 로 준 값을 "없다"고 잘못 보고한다.
+    flat = {
+        k: v
+        for k, v in user_notice.items()
+        if k not in ("productInfoProvidedNoticeType", "notice_type")
+    }
+    if flat:
+        bodies.append(flat)
     return bodies
 
 

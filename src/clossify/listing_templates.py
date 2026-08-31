@@ -363,24 +363,37 @@ def _extract_notice_body(product: dict[str, Any]) -> dict[str, Any]:
 
     ``product.notice`` dict 가 있으면 그 안의 노드(etc/wear/...) 본문에서
     camelCase 필드를 읽는다(naver_client._merge_notice 가 쓰는 구조).
+    **평평한 notice dict** (``{"notice": {"returnCostReason": "A"}}`` — 값이
+    dict 가 아닌 항목) 도 읽는다 — ``naver_client._merge_notice`` 와 같은
+    입력 계약(평평한 dict 수용)을 맞춘다. 평평한 값보다 노드 안의 값이
+    우선한다(더 구체적인 자리).
     동시에 top-level common 키(return_cost_reason 등) 도 후보로 읽는다 —
-    사용자가 두 자리 중 어디에 값을 넣었든 잡는다.
+    사용자가 세 자리 중 어디에 값을 넣었든 잡는다.
     """
     body: dict[str, Any] = {}
     candidates = _notice_body_field_candidates()
-    # (1) ``product.notice.<node>`` 에서 camelCase 필드를 읽는다.
+    candidate_camel = {camel for camel, _ in candidates} - _NOTICE_BODY_SKIP_KEYS
+    # (1) ``product.notice.<node>`` 에서 camelCase 필드를 읽는다(노드 우선).
     user_notice = product.get("notice")
+    flat_values: dict[str, Any] = {}
     if isinstance(user_notice, dict):
         for node_key, node_value in user_notice.items():
-            if not isinstance(node_value, dict):
-                continue
             if node_key in ("productInfoProvidedNoticeType", "notice_type"):
                 continue
-            for camel_field, _ in candidates:
-                if camel_field in _NOTICE_BODY_SKIP_KEYS:
-                    continue
-                if camel_field in node_value and _has_text(node_value.get(camel_field)):
-                    body[camel_field] = node_value.get(camel_field)
+            if isinstance(node_value, dict):
+                for camel_field, _ in candidates:
+                    if camel_field in _NOTICE_BODY_SKIP_KEYS:
+                        continue
+                    if camel_field in node_value and _has_text(node_value.get(camel_field)):
+                        body[camel_field] = node_value.get(camel_field)
+            elif node_key in candidate_camel and _has_text(node_value):
+                # 평평한 고시 필드 — 후보 목록의 camelCase 키만 담는다
+                # (임의 키 통과 금지). 일단 모아두고 노드값이 없을 때만 쓴다.
+                flat_values[node_key] = node_value
+    # (1b) 평평한 값 채움 — 노드(dict) 안의 값이 이미 있으면 우선한다.
+    for camel_field, value in flat_values.items():
+        if camel_field not in body:
+            body[camel_field] = value
     # (2) top-level common 키 후보.
     for camel_field, p_keys in candidates:
         if camel_field in _NOTICE_BODY_SKIP_KEYS:
