@@ -1,0 +1,112 @@
+# gitleaks 커스텀 룰셋
+#
+# 기본 룰셋(useDefault = true) 위에 네이버 커머스/검색광고 전용 패턴을 추가한다.
+# GitHub 기본 secret scanning 은 제휴 발급사(Google/AWS/GitHub...) 위주라
+# 네이버 계열 키는 잡지 못한다. 이 파일이 그 빈틈을 메운다.
+#
+# allowlist 는 config.example.json 의 placeholder(REPLACE_WITH_*) 와
+# tests/ 의 마스킹 검증용 가짜 키가 오탐으로 개발을 막지 않도록 예외 처리한다.
+
+title = "clossify custom secret rules"
+
+[extend]
+# 기본 룰셋을 그대로 계승하고 아래에 추가로 덧붙인다.
+useDefault = true
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 1. 네이버 커머스 API client_secret — bcrypt 형태($2a$ / $2b$).
+#    네이버는 토큰 발급용 signing key 로 bcrypt 해시를 직접 쓴다.
+#    따라서 bcrypt 패턴이 커밋되면 거의 확정적으로 커머스 API 키.
+# ──────────────────────────────────────────────────────────────────────
+[[rules]]
+id = "naver-commerce-bcrypt-secret"
+description = "Naver Commerce API client_secret (bcrypt)"
+regex = '''\$(2[abxy]?\$[0-9]{2}\$[./A-Za-z0-9]{53})'''
+keywords = ["$2a$", "$2b$", "$2y$", "$2x$"]
+# 오탐: tests/ 의 마스킹 검증용 가짜 bcrypt 는 허용.
+[rules.allowlist]
+regexes = [
+  '''\$2[ab]\$05\$[./A-Za-z0-9]{53}''',  # 난이도 cost 05 (테스트용 약한 해시)
+]
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 2. 네이버 검색광고 API 키/시크릿 — config 키명 근처의 긴 영숫자.
+#    네이버 검색광고 API 는 api_key / secret_key / customer_id 셋을 묶어 쓴다.
+# ──────────────────────────────────────────────────────────────────────
+[[rules]]
+id = "naver-searchad-api-key"
+description = "Naver SearchAd api_key (long alphanumeric near api_key field)"
+regex = '''(?i)(?:api_key|apikey|naver_searchad[^"'\s]{0,32}key)["'\s:=]+["']?([A-Za-z0-9_-]{20,})'''
+keywords = ["api_key", "apikey", "naver_searchad"]
+
+[[rules]]
+id = "naver-searchad-secret-key"
+description = "Naver SearchAd secret_key (long alphanumeric near secret_key field)"
+regex = '''(?i)(?:secret_key|secretkey)["'\s:=]+["']?([A-Za-z0-9_-]{20,})'''
+keywords = ["secret_key", "secretkey"]
+
+[[rules]]
+id = "naver-searchad-customer-id-paired"
+description = "Naver SearchAd customer_id paired with long secret nearby"
+# customer_id 자체는 단기에 민감하지 않지만, secret 과 함께 노출되면 위험.
+# secret_key 근처 200자 이내에 customer_id 패턴이 같이 있으면 보고.
+regex = '''(?s)(?:secret_key|client_secret)["'\s:=]+["']?[A-Za-z0-9_-]{20,}.{0,200}?customer_id["'\s:=]+["']?(\d{6,})'''
+keywords = ["customer_id", "secret_key", "client_secret"]
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 3. 일반 패턴 — 키명 뒤 20자 이상 값. (provider 무관 범용 트랩)
+# ──────────────────────────────────────────────────────────────────────
+[[rules]]
+id = "generic-client-secret"
+description = "Generic client_secret value (>= 20 chars)"
+regex = '''(?i)client_secret["'\s:=]+["']([A-Za-z0-9_\-./+=]{20,})["']'''
+keywords = ["client_secret"]
+
+[[rules]]
+id = "generic-api-key"
+description = "Generic api_key value (>= 20 chars)"
+regex = '''(?i)api_key["'\s:=]+["']([A-Za-z0-9_\-./+=]{20,})["']'''
+keywords = ["api_key"]
+
+[[rules]]
+id = "generic-secret-key"
+description = "Generic secret_key value (>= 20 chars)"
+regex = '''(?i)secret_key["'\s:=]+["']([A-Za-z0-9_\-./+=]{20,})["']'''
+keywords = ["secret_key"]
+
+[[rules]]
+id = "generic-access-token"
+description = "Generic access_token value (>= 20 chars)"
+regex = '''(?i)access_token["'\s:=]+["']([A-Za-z0-9_\-./+=]{20,})["']'''
+keywords = ["access_token"]
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Allowlist — 오탐 방어
+# ──────────────────────────────────────────────────────────────────────
+[allowlist]
+description = "Allow placeholders in config.example.json and fake keys in tests/"
+# config.example.json 의 REPLACE_WITH_* placeholder — 실제 키가 아님.
+regexes = [
+  '''REPLACE_WITH_[A-Z_]+''',
+]
+# tests/ 트리 전체는 마스킹 검증용 가짜 키 문자열을 쓴다 — 오탐 차단.
+# .venv/ · node_modules/ 등 의존성 디렉터리는 서드파키 안의 예시 키가
+# 오탐을 유발하므로 전역 제외. (.local/ 은 gitignored 이지만
+# 로컬 --no-git 스캔 시 잡히므로 같이 제외.)
+paths = [
+  '''tests/.*''',
+  '''config\.example\.json''',
+  '''\.gitleaks\.toml''',   # 이 파일 자신을 스캔하면 룰 패턴이 키로 잡힌다.
+  '''SECURITY\.md''',       # 보안 문서의 예시 패턴도 오탐.
+  '''scripts/scan_repo\.py''',  # 스캐너 소스 안의 금칙어 리스트.
+  '''\.venv.*[/\\].*''',    # Python 의존성 — cryptography/pyjwt 등이 오탐 유발.
+  '''\.local[/\\].*''',     # 로컬 config — gitignored 이지만 --no-git 스캔 대비.
+  '''node_modules/.*''',    # JS 의존성.
+  '''\.git[/\\].*''',       # git 내부.
+  '''\.pytest_cache/.*''',
+  '''\.ruff_cache/.*''',
+]

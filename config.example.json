@@ -1,0 +1,59 @@
+{
+  "_comment": "Example configuration for clossify. Copy to .local/config.json and fill real values. Never commit real credentials. All values below are placeholders. Keys: naver (Commerce API), naver_searchad (Search Ads keyword API), image_providers (image generation), smartstore_notice_defaults (product information notice / origin), kc_declaration (KC certification reporting), require_preview_confirmation (gate: require preview HTML confirmation before registration, default true), enable_local_approval (localhost approval bridge: opens a local port so the preview [승인] button can directly trigger registration, default false — convenience feature, keeping it off does not break anything). The agent documents use placeholders {AS_TEL}, {STORE_SLUG}, {STORE_NAME}, {VISION_MODEL} which are resolved from this config at runtime.",
+  "naver": {
+    "_comment": "Naver Commerce API OAuth2 client_credentials. client_secret is used as the bcrypt signing key in naver_client.get_token.",
+    "client_id": "REPLACE_WITH_NAVER_CLIENT_ID",
+    "client_secret": "REPLACE_WITH_NAVER_CLIENT_SECRET",
+    "type": "SELF",
+    "store_url_slug": "{STORE_SLUG}"
+  },
+  "naver_searchad": {
+    "_comment": "Naver SearchAds (keyword volume) API. Used for SEO title keyword ranking.",
+    "api_key": "REPLACE_WITH_SEARCHAD_API_KEY",
+    "secret_key": "REPLACE_WITH_SEARCHAD_SECRET_KEY",
+    "customer_id": "REPLACE_WITH_SEARCHAD_CUSTOMER_ID"
+  },
+  "image_providers": {
+    "_comment": "Paid image generation providers for detail-page cut shortages. See agents/IMAGE_GENERATION_PRICE_POLICY.md. image_gen 모듈이 이 섹션을 읽어 openai/gemini 어댑터로 생성을 수행한다. prepare_listing 단계 분기: 사용자 이미지가 있으면 생성 경로 미진입(생성 0), generate_images 가 참이고 사용자 이미지가 없으면 pick_provider 우선순위로 생성 시도 — 키가 없으면 조용한 실패 없이 needs_user 에 안내. api_key 가 REPLACE_WITH_... 플레이스홀더면 미설정으로 취급된다.",
+    "openai": {
+      "api_key": "REPLACE_WITH_OPENAI_API_KEY",
+      "model": "gpt-image-2"
+    },
+    "gemini": {
+      "api_key": "REPLACE_WITH_GEMINI_API_KEY",
+      "model": "gemini-3.1-flash-image"
+    }
+  },
+  "brand": {
+    "_comment": "Placeholders resolved into agent documents and rendered detail pages. brand.as_tel 은 에이전트 문서의 {AS_TEL} 치환용이며 비어있으면 smartstore_notice_defaults.as_tel(정본)을 참조합니다. 중복 입력 방지 목적.",
+    "store_name": "{STORE_NAME}",
+    "store_slug": "{STORE_SLUG}",
+    "as_tel": "{AS_TEL}",
+    "vision_model": "{VISION_MODEL}"
+  },
+  "smartstore_notice_defaults": {
+    "_comment": "상품정보제공고시 자동완성 기본값. 판매자가 실제 신고하는 값을 입력. 미입력 시 등록이 거부됩니다 (fail-closed, 조용한 기본값 금지). 이 섹션에 넣은 값은 35종 고시의 공통 5필드(returnCostReason/noRefundReason/qualityAssuranceStandard/compensationProcedure/troubleShootingContents) 및 제조자/AS연락처/수입자 등의 기본값으로 사용됩니다. 코드가 임의 문구를 지어내지 않습니다 — 값이 없으면 해당 고시 필드가 비고 컴플라이언스 검사에서 FAIL 차단됩니다. 공통 5필드는 빈 문자열(아래)로만 배포됩니다 — 판매자가 실제 신고 문구로 채워야 하며, 빈 문자열/공백뿐인 값은 미설정으로 취급되어 매번 사용자에게 묻게 됩니다. config 에서 채워진 항목은 페이로드 메타(notice_filled_from_config)에 명시됩니다. delivery_company 는 반품/교환 택배사 코드(네이버 커머스API enum) — 판매자가 실제 사용하는 택배사 코드로 입력. 미입력 시 코드가 임의 값을 지어내지 않고 사용자에게 요구합니다(fail-closed).",
+    "origin_area_code": "REPLACE_WITH_ORIGIN_AREA_CODE",
+    "origin_content": "REPLACE_WITH_ORIGIN_CONTENT",
+    "importer": "REPLACE_WITH_IMPORTER_OR_EMPTY",
+    "manufacturer": "REPLACE_WITH_MANUFACTURER_OR_EMPTY",
+    "model_name": "REPLACE_WITH_MODEL_NAME_OR_EMPTY",
+    "as_tel": "REPLACE_WITH_REAL_AS_TEL",
+    "as_tel_comment": "AS 전화번호 정본(canonical). 판매자가 실제 신고하는 전화번호 필수. 안내문구/플레이스홀더를 넣으면 등록이 거부됩니다. brand.as_tel 은 에이전트 문서 치환용 별도 용도이며 비어있으면 이 값을 참조합니다.",
+    "returnCostReason": "",
+    "noRefundReason": "",
+    "qualityAssuranceStandard": "",
+    "compensationProcedure": "",
+    "troubleShootingContents": "",
+    "delivery_company": "REPLACE_WITH_DELIVERY_COMPANY_CODE",
+    "delivery_fee_comment": "기본 배송비(KRW, 정수). 미설정 시 3000원이 적용됩니다. 상거래 조건이므로 fail-closed 대상이 아닙니다 — 등록을 막지 않습니다. 0 은 무료배송(유효한 명시값)입니다.",
+    "delivery_fee": "REPLACE_WITH_DELIVERY_FEE_OR_EMPTY"
+  },
+  "kc_declaration": {
+    "_comment": "KC 인증 신고값. 판매자가 실제 신고하는 값을 입력. 미입력 시 등록이 거부됩니다 (fail-closed, 조용한 기본값 금지).kcCertifiedProductExclusionYn / kcExemptionType 두 값 중 하나라도 비어있으면 KC 필드 전체가 payload에서 생략되며, 네이버 커머스 API가 요구하면 에러로 알려줍니다.",
+    "kcCertifiedProductExclusionYn": "REPLACE_WITH_KC_EXCLUSION_YN",
+    "kcExemptionType": "REPLACE_WITH_KC_EXEMPTION_TYPE"
+  },
+  "require_preview_confirmation": true,
+  "enable_local_approval": false
+}

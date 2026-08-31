@@ -1,0 +1,150 @@
+# CI 보안·품질 게이트
+#
+# ⚠️ 잡 이름(name:)에 대한 사실 정정(2026-08-11 실측):
+# **지금 이 저장소에는 브랜치 보호 규칙이 없다 — 걸 수도 없다.**
+# 무료 플랜 + 비공개 저장소는 보호 API 가 403 을 반환한다
+# ("Upgrade to GitHub Pro or make this repository public").
+# 아래 "보호 규칙과 계약" 주석들은 **공개 전환 후 보호를 걸 때** 효력이 생기는
+# 예약 계약이다. 그때 잡 이름과 required status check 이름을 문자열로 맞춰야
+# 하므로, 잡 이름은 지금부터 안정적으로 유지한다. 공개 전환 절차에
+# "보호 규칙 실제 등록"이 포함되어 있다(RELEASE_CHECKLIST).
+#
+# pre-commit(.pre-commit-config.yaml) 이 커밋 직전 1차 방어선이라면,
+# 이 워크플로는 PR/push 단계의 2차 방어선이다. 특히 gitleaks 잡은
+# 전체 트리를 스캔하여 이미 들어온 커밋의 시크릿도 잡아낸다
+# (pre-commit 은 staged 만 보므로 둘은互补적).
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # 잡 이름 "gitleaks" 는 보호 규칙과 계약 — 변경 금지.
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    # PR 이벤트에서 이 액션은 PR 커밋 목록을 조회한다. 그 권한이 없으면
+    # 스캔에 들어가기도 전에 403 으로 죽는다 — push 에서는 조회할 PR 이 없어
+    # 드러나지 않고 PR 에서만 터진다. 잡 단위 permissions 는 최상위 설정을
+    # 통째로 대체하므로 contents 도 여기 다시 적어야 한다.
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 전체 이력 스캔을 위해 fetch-depth=0. 얕은 클론은 히스토리 누락.
+          fetch-depth: 0
+      - name: gitleaks detect (full-tree scan)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # ★ 커스텀 룰셋(네이버 계열 키 패턴)은 **환경변수로만** 전달된다.
+          # 이 동작은 입력을 하나도 선언하지 않으므로 `with: config-path:` 는
+          # 조용히 무시된다(로그에 "Unexpected input(s) 'config-path'" 만 남았다).
+          # 자동 탐지되는 이름은 점 없는 `gitleaks.toml` 이라 우리 파일명과도 다르다.
+          # 그래서 이 줄이 생기기 전까지 커스텀 룰은 **한 번도 적용된 적이 없다.**
+          # 파일명을 바꾸거나 이 줄을 지우면 조용히 기본 룰로 돌아간다 — 건드리지 마라.
+          GITLEAKS_CONFIG: .gitleaks.toml
+          # PR 코멘트 기능을 끈다. 켜두면 write 권한이 필요할 뿐 아니라,
+          # 탐지된 값의 주변 맥락이 PR 코멘트로 남을 수 있다 — 공개 전환 시
+          # 유출 경로가 된다. 발견은 잡 실패와 로그로 충분히 드러난다.
+          GITLEAKS_ENABLE_COMMENTS: "false"
+
+  # 잡 이름 "ruff" 는 보호 규칙과 계약 — 변경 금지.
+  ruff:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff==0.6.9
+      # pyproject.toml 의 [tool.ruff] 설정을 공유.
+      - run: ruff check .
+      - run: ruff format --check .
+
+  # 잡 이름 "pytest" 는 보호 규칙과 계약 — 변경 금지.
+  pytest:
+    name: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      # config.example.json 의 placeholder 만으로 테스트가 통과해야 한다
+      # (실제 자격증명 없이도 QA 회귀 확인이 가능해야 함).
+      #
+      # 배포물 검증(wheel 빌드 후 내용 확인)은 로컬에서 빌드 도구 부재 시 skip 되도록
+      # 되어 있다. CI 는 그 회피가 통하면 안 되는 자리다 — 설치본이 소스판과 다른
+      # 물건이 되는 결함을 잡으라고 만든 가드이므로 여기서는 반드시 실행한다.
+      # -rs: 스킵 사유를 출력에 남긴다. tee 로 받아 아래 단계가 요약에 올린다.
+      - run: pytest -q -rs 2>&1 | tee /tmp/pytest.out
+        env:
+          CLOSSIFY_RUN_WHEEL_TESTS: "1"
+
+      # 조용히 건너뛰는 시험을 보이게 한다 (커버리지 갭 가시화).
+      # 이 환경에는 CLOSSIFY_A1_TEMPLATE 이 없어 고시 템플릿 시험 4건이 매번
+      # 스킵된다. 실제 판매자가 제일 먼저 쓰는 경로라, 갭이 있다는 사실 자체가
+      # 매 런에 보여야 한다 — 안 보이는 스킵은 없는 스킵처럼 굳는다.
+      - name: 스킵 가시화
+        if: always()
+        run: |
+          [ -f /tmp/pytest.out ] || exit 0
+          n="$(grep -c '^SKIPPED' /tmp/pytest.out || true)"
+          if [ "${n:-0}" -gt 0 ]; then
+            {
+              echo "### 건너뛴 시험 ${n}건 (커버리지 갭)"
+              echo '```'
+              grep '^SKIPPED' /tmp/pytest.out
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::건너뛴 시험 ${n}건 — 잡 요약에 사유 목록이 있습니다."
+          fi
+
+  # 잡 이름 "scan-repo" 는 보호 규칙과 계약 — 변경 금지.
+  scan-repo:
+    name: scan-repo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 커밋 메시지 스캔을 위해 origin/main 범위를 잡으려면 전체 fetch 필요.
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 자체 검사 (금칙어/한자/커밋메시지)
+        run: python scripts/scan_repo.py
+
+      # 시험 mock 의 API 필드명을 정본 어휘와 대조한다.
+      #
+      # ⚠️ 경고 전용이다 — 실패로 만들지 마라. 정본(문서 스크랩)이 불완전해서
+      #    실재하는 필드가 "없음"으로 나오는 경우가 있다(예: originProduct).
+      #    실패로 만들면 사람들이 허용목록에 아무거나 넣어 검사를 무력화한다.
+      #
+      # 발견은 요약에 남고, 여기서 **주석으로도** 올린다 — 요약만 남기면
+      # 잡을 열어보지 않는 한 아무도 안 본다(안 보이는 경고는 없는 경고다).
+      - name: 시험 mock 필드명 대조 (경고 전용)
+        run: |
+          out="$(python scripts/check_mock_fields.py)" || {
+            echo "::error::mock 필드명 대조가 실행되지 못했습니다(검사 자체의 고장)."
+            echo "$out"
+            exit 1
+          }
+          echo "$out"
+          # 발견 항목은 `  [이름]` 한 줄로 나온다. 한글 문구에 기대지 않고 이 형태를 센다.
+          n="$(printf '%s\n' "$out" | grep -cE '^[[:space:]]*\[[A-Za-z_][A-Za-z0-9_]*\][[:space:]]*$' || true)"
+          if [ "${n:-0}" -gt 0 ]; then
+            echo "::warning::시험 mock 에서 정본 확인이 안 되는 API 필드명 ${n}건. 잡 요약에 목록과 제안이 있습니다(빌드를 막지 않습니다)."
+          fi

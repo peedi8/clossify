@@ -1,0 +1,28 @@
+{
+  "generated_at": "2026-08-04T00:00:00Z",
+  "method": "live API observation (observation record only — not enforced by code)",
+  "note": "이 파일은 관찰 기록이다. 지금 코드로 강제하지 않는다. 각 항목은 살아있는 네이버 커머스 API 응답으로 관측된 카테고리 종속 요구이며, 출처와 수집일을 포함한다. 확인된 것만 기록한다.",
+  "requirements": [
+    {
+      "category_id": "50000151",
+      "category_name_ko": "노트북",
+      "requirement": "KC certificationInfos.kindType required",
+      "evidence": "KC 인증대상 인증 종류를 선택하셔야 합니다",
+      "field": "certificationInfos.kindType",
+      "source": "live API 400 response, 2026-08-04",
+      "collected_at": "2026-08-04"
+    },
+    {
+      "category_id": "50004651",
+      "category_name_ko": "국내산돼지고기",
+      "requirement": "친환경 certificationInfos.kindType required + product root unitPriceYn required (price-labelling subject item)",
+      "evidence": "단위가격 사용여부를 선택해주세요. 가격표시제 대상 품목입니다",
+      "fields": [
+        "certificationInfos.kindType",
+        "unitPriceYn (product root)"
+      ],
+      "source": "live API 400 response, 2026-08-04",
+      "collected_at": "2026-08-04"
+    }
+  ]
+}

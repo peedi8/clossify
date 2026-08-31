@@ -1,0 +1,326 @@
+# SPDX-FileCopyrightText: 2026 3rdhand
+# SPDX-License-Identifier: LicenseRef-SustainableUse-1.0
+# Providing this software to others is permitted only free of charge and for
+# non-commercial purposes. See LICENSE.md.
+"""카테고리 메타데이터 조회 헬퍼.
+
+``data/category_meta.json`` (및 ``data/certification_types.json``) 을 로드하여
+카테고리별 요구사항 판정을 제공한다. ``qa_agents`` 등 후속 단계가 이 모듈로
+카테고리 메타를 조회한다.
+
+설계 원칙:
+  - **조용한 빈 결과 금지.** 데이터 파일이 부재하면 명확한 에러를 발생시킨다.
+  - **알 수 없는 카테고리 ID.** 기본적으로 ``KeyError`` 를 발생시킨다
+    (``raise_if_unknown=False`` 인 경우에만 ``None``/기본값 반환 — 문서화됨).
+  - **KC 필요 여부 불명 금지.** 상세 조회가 실패해 ``exceptionalCategories``
+    를 확정하지 못한 카테고리(``incomplete`` 목록)에 대해 ``requires_kc`` 는
+    ``False`` 를 반환하지 않고 ``None`` (불명) 을 알린다. 컴플라이언스 게이트는
+    불명을 통과시키지 않는다 — KC 대상을 면제로 오판해 허위 신고가 되는 것을 막는다.
+  - 데이터는 캐싱하여 반복 호출 비용을 줄인다.
+
+데이터 파일 위치는 환경변수 ``CLOSSIFY_DATA_DIR`` 로 재정의 가능하며,
+기본값은 패키지에 포함된 ``data/`` 디렉터리다 (``importlib.resources`` 로 해결).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import threading
+from typing import Any
+
+from . import common
+
+# 데이터 디렉터리: 패키지에 포함된 ``data/`` (importlib.resources 로 해결).
+# ``CLOSSIFY_DATA_DIR`` 환경변수로 사용자 정의 데이터 디렉터리를 가리킬 수 있다
+# (install-paths 재배치 이전의 동작 보존). 환경변수가 없으면 패키지 데이터를 사용한다.
+
+META_FILENAME = "category_meta.json"
+CERT_FILENAME = "certification_types.json"
+
+_KC_FLAG = "KC_CERTIFICATION"
+
+# 모듈 수준 캐시 — 한 프로세스 내에서 반복 로드 비용을 줄인다.
+_cache: dict[str, Any] = {}
+_cache_lock = threading.Lock()
+
+
+def _data_dir() -> str:
+    """데이터 디렉터리를 반환.
+
+    ``CLOSSIFY_DATA_DIR`` 환경변수가 비어있지 않은 경로를 가리키면 그것을
+    사용하고, 그 외에는 패키지에 포함된 ``data/`` 디렉터리
+    (``importlib.resources`` 로 해결)를 사용한다.
+    """
+    custom = os.environ.get("CLOSSIFY_DATA_DIR")
+    if custom and custom.strip():
+        return os.path.normpath(custom.strip())
+    return str(common.DATA_DIR)
+
+
+def _meta_path() -> str:
+    return os.path.join(_data_dir(), META_FILENAME)
+
+
+def _cert_path() -> str:
+    return os.path.join(_data_dir(), CERT_FILENAME)
+
+
+class CategoryMetaUnavailableError(RuntimeError):
+    """카테고리 메타데이터 파일이 존재하지 않거나 읽을 수 없을 때 발생.
+
+    조용한 빈 결과 대신 명확한 에러로 알리기 위한 예외.
+    """
+
+
+class UnknownCategoryError(KeyError):
+    """알 수 없는 카테고리 ID 를 조회했을 때 발생.
+
+    ``raise_if_unknown=False`` 인 경우에는 발생하지 않고 ``None``/기본값을
+    반환한다.
+    """
+
+
+class IncompleteCategoryError(KeyError):
+    """KC 필요 여부를 확정할 수 없는 카테고리 ID 를 조회했을 때 발생.
+
+    ``data/category_meta.json`` 의 ``incomplete.ids`` 에 포함된 카테고리.
+    이 카테고리들은 상세 조회가 실패해 ``exceptionalCategories`` 가 빈 리스트로
+    남아 있으므로, ``KC_CERTIFICATION`` 포함 여부를 알 수 없다.
+
+    ``requires_kc`` 기본 동작(``raise_if_incomplete=True``)이 이 예외를 발생시킨다.
+    ``raise_if_incomplete=False`` 인 경우에는 ``None`` 을 반환해 3-상태 판정을
+    가능하게 한다. ``False`` 를 반환하지 않는다 — 면제로 오판하는 허위 신고를 막기
+    위해서다.
+    """
+
+
+def load_category_meta(force: bool = False) -> dict:
+    """``data/category_meta.json`` 을 로드하여 반환한다.
+
+    한 프로세스 내에서는 캐싱되어 반복 호출 시 디스크 I/O 가 발생하지 않는다.
+
+    Args:
+        force: ``True`` 면 캐시를 무시하고 다시 읽는다.
+
+    Returns:
+        메타데이터 dict. 최상위 키: ``generated_at``, ``source``, ``count``,
+        ``categories`` (리스트).
+
+    Raises:
+        CategoryMetaUnavailableError: 파일이 부재하거나 JSON 이 깨진 경우.
+    """
+    with _cache_lock:
+        if not force and "meta" in _cache:
+            return _cache["meta"]
+        path = _meta_path()
+        if not os.path.exists(path):
+            raise CategoryMetaUnavailableError(
+                f"카테고리 메타데이터 파일이 없습니다: {path}. "
+                f"스크립트(scripts/fetch_category_meta.py)를 먼저 실행하세요."
+            )
+        try:
+            with open(path, encoding="utf-8") as f:
+                doc = json.load(f)
+        except (OSError, ValueError) as exc:
+            raise CategoryMetaUnavailableError(
+                f"카테고리 메타데이터 파일을 읽을 수 없습니다: {path} ({exc})"
+            ) from exc
+        if not isinstance(doc, dict) or not isinstance(doc.get("categories"), list):
+            raise CategoryMetaUnavailableError(
+                f"카테고리 메타데이터 구조가 올바르지 않습니다: {path}"
+            )
+        _cache["meta"] = doc
+        # 인덱스도 함께 갱신.
+        _cache["index"] = _build_index(doc["categories"])
+        # 상세 조회 실패(KC 필요 여부 불명) 카테고리 ID 집합을 미리 빑는다.
+        _cache["incomplete"] = _build_incomplete_set(doc)
+        return doc
+
+
+def load_certification_types(force: bool = False) -> list:
+    """``data/certification_types.json`` (마스터 인증 57종) 을 로드.
+
+    Args:
+        force: ``True`` 면 캐시를 무시하고 다시 읽는다.
+
+    Returns:
+        인증 타입 dict 의 리스트 (API 가 반환한 구조 그대로).
+
+    Raises:
+        CategoryMetaUnavailableError: 파일이 부재하거나 JSON 이 깨진 경우.
+    """
+    with _cache_lock:
+        if not force and "cert" in _cache:
+            return _cache["cert"]
+        path = _cert_path()
+        if not os.path.exists(path):
+            raise CategoryMetaUnavailableError(
+                f"인증 타입 파일이 없습니다: {path}. "
+                f"스크립트(scripts/fetch_category_meta.py)를 먼저 실행하세요."
+            )
+        try:
+            with open(path, encoding="utf-8") as f:
+                doc = json.load(f)
+        except (OSError, ValueError) as exc:
+            raise CategoryMetaUnavailableError(
+                f"인증 타입 파일을 읽을 수 없습니다: {path} ({exc})"
+            ) from exc
+        if not isinstance(doc, list):
+            raise CategoryMetaUnavailableError(f"인증 타입 파일 구조가 올바르지 않습니다: {path}")
+        _cache["cert"] = doc
+        return doc
+
+
+def _build_index(categories: list[dict]) -> dict[str, dict]:
+    index: dict[str, dict] = {}
+    for c in categories:
+        if not isinstance(c, dict):
+            continue
+        cid = str(c.get("id"))
+        if cid:
+            index[cid] = c
+    return index
+
+
+def _build_incomplete_set(doc: dict) -> set[str]:
+    """``incomplete.ids`` 를 ``set[str]`` 로 반환. 키가 없거나 비정상이면 빈 집합.
+
+    이 카테고리들은 상세 조회 실패로 ``exceptionalCategories`` 가 빈 리스트로
+    남아 있어 KC 필요 여부를 확정할 수 없다. ``False`` 로 처리하면 KC 대상을
+    면제로 오판하는 허위 신고가 되므로, 별도의 불명 상태로 다룬다.
+    """
+    block = doc.get("incomplete") if isinstance(doc, dict) else None
+    if not isinstance(block, dict):
+        return set()
+    ids = block.get("ids")
+    if not isinstance(ids, list):
+        return set()
+    return {str(x) for x in ids if x is not None}
+
+
+def _category_index() -> dict[str, dict]:
+    if "index" not in _cache:
+        load_category_meta()
+    return _cache["index"]
+
+
+def _incomplete_ids() -> set[str]:
+    """KC 필요 여부가 불명인 카테고리 ID 집합을 반환."""
+    if "incomplete" not in _cache:
+        load_category_meta()
+    return _cache["incomplete"]
+
+
+def _lookup(category_id: int | str, raise_if_unknown: bool) -> dict | None:
+    cid = str(category_id)
+    index = _category_index()
+    cat = index.get(cid)
+    if cat is None:
+        if raise_if_unknown:
+            raise UnknownCategoryError(
+                f"알 수 없는 카테고리 ID: {cid} (메타데이터에 존재하지 않음)"
+            )
+        return None
+    return cat
+
+
+def requires_kc(
+    category_id: int | str,
+    raise_if_unknown: bool = True,
+    *,
+    raise_if_incomplete: bool = True,
+) -> bool | None:
+    """해당 카테고리가 KC 인증 관련 처리를 필요로 하는지 여부.
+
+    카테고리의 ``exceptionalCategories`` 에 ``KC_CERTIFICATION`` 이 포함되어
+    있으면 ``True``, 확실히 없으면 ``False`` 를 반환한다.
+
+    **불명(3-상태) 처리** — 상세 조회가 실패해 ``exceptionalCategories`` 를
+    확정하지 못한 카테고리(``data/category_meta.json`` 의 ``incomplete.ids``)는
+    ``False`` 를 반환하지 않는다. KC 대상을 면제로 오판하면 허위 신고가 되기
+    때문이다. 기본(``raise_if_incomplete=True``)은 ``IncompleteCategoryError``
+    를 발생시키고, ``raise_if_incomplete=False`` 면 ``None`` (불명) 을 반환한다.
+    컴플라이언스 게이트는 불명을 통과시키지 않는다(fail-closed).
+
+    Args:
+        category_id: 카테고리 ID.
+        raise_if_unknown: ``True`` (기본) 이면 알 수 없는 ID 에서
+            ``UnknownCategoryError`` 발생. ``False`` 면 ``False`` 반환.
+        raise_if_incomplete: ``True`` (기본) 이면 KC 필요 여부가 불명인
+            카테고리에서 ``IncompleteCategoryError`` 발생. ``False`` 면
+            ``None`` (불명) 을 반환한다.
+
+    Returns:
+        KC 인증 필요 여부. ``True`` 면 필요, ``False`` 면 불필요(확정),
+        ``None`` 은 "불명" (``raise_if_incomplete=False`` 일 때만).
+
+    Raises:
+        CategoryMetaUnavailableError: 데이터 파일 부재.
+        UnknownCategoryError: 알 수 없는 ID (``raise_if_unknown=True`` 일 때).
+        IncompleteCategoryError: KC 필요 여부가 불명인 카테고리
+            (``raise_if_incomplete=True`` 일 때).
+    """
+    cat = _lookup(category_id, raise_if_unknown)
+    if cat is None:
+        return False
+    cid = str(category_id)
+    # 상세 조회 실패 카테고리 — False 를 반환하지 않고 불명으로 알린다.
+    if cid in _incomplete_ids():
+        if raise_if_incomplete:
+            raise IncompleteCategoryError(
+                f"KC 인증 필요 여부를 확정할 수 없는 카테고리 ID: {cid} "
+                "(상세 조회 실패로 exceptionalCategories 미확정). "
+                "컴플라이언스는 이 ID 를 통과시키지 않는다(fail-closed)."
+            )
+        return None
+    flags = cat.get("exceptionalCategories")
+    if not isinstance(flags, list):
+        return False
+    return _KC_FLAG in flags
+
+
+def exceptional_flags(category_id: int | str, raise_if_unknown: bool = True) -> list[str]:
+    """카테고리의 ``exceptionalCategories`` 목록을 반환.
+
+    Args:
+        category_id: 카테고리 ID.
+        raise_if_unknown: ``True`` (기본) 이면 알 수 없는 ID 에서
+            ``UnknownCategoryError`` 발생. ``False`` 면 빈 리스트 반환.
+
+    Returns:
+        예외 카테고리 플래그 문자열 리스트. 없으면 빈 리스트.
+
+    Raises:
+        CategoryMetaUnavailableError: 데이터 파일 부재.
+        UnknownCategoryError: 알 수 없는 ID (``raise_if_unknown=True`` 일 때).
+    """
+    cat = _lookup(category_id, raise_if_unknown)
+    if cat is None:
+        return []
+    flags = cat.get("exceptionalCategories")
+    if isinstance(flags, list):
+        return [str(f) for f in flags]
+    return []
+
+
+def category_path(category_id: int | str, raise_if_unknown: bool = True) -> str:
+    """카테고리의 전체 경로(``wholeCategoryName``)를 반환.
+
+    Args:
+        category_id: 카테고리 ID.
+        raise_if_unknown: ``True`` (기본) 이면 알 수 없는 ID 에서
+            ``UnknownCategoryError`` 발생. ``False`` 면 빈 문자열 반환.
+
+    Returns:
+        카테고리 경로 문자열 (예: ``"패션의류>여성의류>티셔츠>반팔티셔츠"``).
+
+    Raises:
+        CategoryMetaUnavailableError: 데이터 파일 부재.
+        UnknownCategoryError: 알 수 없는 ID (``raise_if_unknown=True`` 일 때).
+    """
+    cat = _lookup(category_id, raise_if_unknown)
+    if cat is None:
+        return ""
+    path = cat.get("wholeCategoryName")
+    return str(path) if path is not None else ""

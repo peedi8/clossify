@@ -1,0 +1,45 @@
+# secrets & local state — never commit
+.local/
+.secrets/
+config.json
+*.key
+.env
+.env.*
+
+# runtime artifacts
+artifacts/
+runs/
+reports/
+logs/
+*.log
+preview/
+cases/
+
+# python
+__pycache__/
+*.pyc
+.venv*/
+.pytest_cache/
+
+# node
+node_modules/
+
+# os / editor
+Thumbs.db
+.DS_Store
+nul
+
+# 보안 스캔 도구 산출물 (gitleaks 임시 리포트 등)
+gitleaks-report.json
+gitleaks-report.*
+.scan-*
+
+# 임시 주입 검증 파일 (검증 후 즉시 삭제되지만 안전망)
+*.secret-injection-test
+/tmp-injection-*
+
+# 카테고리 메타 수집 중간 산출물 — wheel 에 포함되지 않는 임시 파일.
+# 조회 진행상황(재개 가능)과 실패 카테고리 로그. 공개 추적 대상이 아님.
+# 데이터가 패키지 안(src/clossify/data/)으로 옮겨져 경로를 함께 옮김.
+src/clossify/data/.category_meta.progress.json
+src/clossify/data/.category_meta.failed.json
