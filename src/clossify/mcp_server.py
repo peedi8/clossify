@@ -36,6 +36,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 from typing import Any
@@ -45,6 +46,7 @@ from mcp.server.apps import Apps
 
 from . import auto_open as _auto_open
 from . import common, naver_client, qa_agents
+from . import copywriting as _copywriting_mod
 from . import listing_templates as _templates_mod
 from . import notice_labels as _notice_labels
 from . import register as _register_mod
@@ -4848,6 +4850,121 @@ def _safe_diagnose(product: dict[str, Any] | None) -> dict[str, Any] | None:
         return None
 
 
+def _seo_suggestion_dropped_terms(source_material, suggested, naming_dropped):
+    """정제 과정에서 잘린 금지어를 드러낸다(무음 변형 금지).
+
+    ``_sanitize_seo_title`` 이 지우는 금지어(BANNED_CLAIM_RE·
+    SEO_TITLE_BANNED_RE — text_props 기존 규칙) 중 원재료에는 있지만
+    제안에 살아남지 않은 조각을 ``dropped_terms`` 로 반환한다.
+    naming agent 의 dropped 행({word, reason})도 같이 정규화한다.
+    새 규칙을 만들지 않는다 — 기존 정규식의 *결과* 를 보고만 한다.
+    """
+    from .text_props import BANNED_CLAIM_RE, SEO_TITLE_BANNED_RE
+
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def _add(word, reason):
+        word = str(word or "").strip()
+        if not word or word in seen:
+            return
+        seen.add(word)
+        out.append({"word": word[:40], "reason": reason[:120]})
+
+    for row in naming_dropped or []:
+        if isinstance(row, dict):
+            _add(row.get("word"), str(row.get("reason") or "title-excluded"))
+
+    text = str(source_material or "")
+    suggested_text = str(suggested or "")
+    for pattern in (BANNED_CLAIM_RE, SEO_TITLE_BANNED_RE):
+        for match in pattern.finditer(text):
+            token = match.group(0).strip()
+            if token and token not in suggested_text:
+                _add(token, "banned-claim stripped by _sanitize_seo_title")
+    return out
+
+
+def _build_seo_title_suggestion(payload: dict[str, Any]) -> dict[str, Any]:
+    """``prepare_listing`` 성공 반환용 SEO 상품명 **제안** 조립.
+
+    D119 — 마케팅 상품명은 itemName(품명) 규제 필드에 절대 들어가지 않는다.
+    이 함수는 **읽기 전용**: prepared payload 의 name·category·tags 를
+    재료로 쓰고, 반환에 제안을 실을 뿐 payload 를 건드리지 않는다.
+    반영은 사용자가 다음 호출에서 그 이름을 명시적으로 넘길 때만 일어난다.
+
+    외부 호출 0회 — 로컬 규칙(copywriting._fallback_naming_agent 결정론
+    폴백)만 쓴다. keyword_volume(캐시가 있어도) 은 부르지 않는다(범위 밖).
+    """
+    prepared_product = payload.get("product") if isinstance(payload.get("product"), dict) else {}
+    name = str(prepared_product.get("name") or "").strip()
+    if not name:
+        return {
+            "suggested": None,
+            "basis": [],
+            "dropped_terms": [],
+            "note": "상품명(name) 재료가 없어 SEO 상품명 제안을 만들 수 없습니다.",
+        }
+
+    category_id = str(prepared_product.get("categoryId") or "").strip()
+    try:
+        category_path = _category_path_for(category_id) if category_id else ""
+    except Exception:
+        category_path = ""
+    tags = [str(t).strip() for t in (prepared_product.get("tags") or []) if str(t or "").strip()]
+
+    basis: list[str] = [f"input-name:{name}"]
+    if category_path:
+        basis.append(f"category-path:{category_path}")
+    if tags:
+        basis.append(f"tags:{','.join(tags[:10])}")
+
+    try:
+        naming = _copywriting_mod._fallback_naming_agent(name, tags, category_path)
+    except Exception as exc:
+        return {
+            "suggested": None,
+            "basis": basis,
+            "dropped_terms": [],
+            "note": f"SEO 제안 산출 실패(로컬 결정론 폴백): {exc}",
+        }
+
+    raw_title = str(naming.get("title") or "")
+    suggested = _copywriting_mod._sanitize_seo_title(
+        raw_title, max_len=_copywriting_mod.SEO_TITLE_TARGET_MAX_LEN
+    )
+    # ``_fallback_naming_agent`` 의 재료-부족 감표("item-detail") 는 제안이
+    # 아니다 — 위생화("item detail") 된 형태까지 잡아 null 로 드러낸다.
+    _sentinel = re.sub(r"[^0-9a-z가-힣]", "", suggested.lower())
+    if (
+        raw_title == "item-detail"
+        or not _copywriting_mod._valid_seo_title(suggested)
+        or _sentinel == "itemdetail"
+    ):
+        return {
+            "suggested": None,
+            "basis": basis,
+            "dropped_terms": [],
+            "note": "정제 후에도 유효한 제목 조각이 남지 않았습니다 — 제안 불가.",
+        }
+
+    kept = [w for w in str(naming.get("title") or "").split() if w][:10]
+    basis.append(f"kept-keywords:{','.join(kept)}")
+    basis.append("rule:copywriting._fallback_naming_agent+_sanitize_seo_title(max_len=50)")
+    dropped_terms = _seo_suggestion_dropped_terms(
+        " ".join([name, category_path, " ".join(tags)]), suggested, naming.get("dropped")
+    )
+    return {
+        "suggested": suggested,
+        "basis": basis,
+        "dropped_terms": dropped_terms,
+        "note": (
+            "제안 전용(D119) — 반영하려면 다음 호출의 name 에 이 값을 직접 "
+            "넘기세요. 준비된 상품명은 입력 그대로입니다."
+        ),
+    }
+
+
 @mcp.tool()
 def prepare_listing(
     product: dict[str, Any],
@@ -4887,7 +5004,13 @@ def prepare_listing(
         "needs_user": [...], "qa": {...}, "images": [...],
         "preview_path": str|None, "template_applied": {...}|None,
         "template_saved": {...}|None, "error": str | None,
-        "requirements": {...}|None}``
+        "seo_title_suggestion": {...}, "requirements": {...}|None}``
+
+        - ``seo_title_suggestion``: 로컬 규칙(copywriting/seo 기존 함수)로
+          만든 마케팅 상품명 **제안** (``{"suggested": str|null, "basis": [...],
+          "dropped_terms": [...], "note": str}``). 제안일 뿐 — prepared payload
+          의 name 을 바꾸지 않는다(D119: itemName 품명에 마케팅명 침투 금지).
+          반영하려면 사용자가 다음 호출에서 그 이름을 명시적으로 넘겨야 한다.
 
     안내:
         - ``needs_llm`` 의 각 항목은 ``submit_reviews`` 로 회신해야 한다.
@@ -5084,6 +5207,9 @@ def prepare_listing(
         "stale_template_notice": stale_template_notice,
         "template_saved": template_saved,
         "error": None,
+        # SEO 상품명 제안(제안 전용 — D119: itemName 품명에 자동 반영 금지).
+        # 로컬 규칙(copywriting/seo 기존 함수)만 쓰고 외부 호출 0회.
+        "seo_title_suggestion": _build_seo_title_suggestion(payload),
         # 성공 경로에도 키를 항상 포함한다. 결정론 컴플라이언스 FAIL 이면
         # 등록에 필요한 누락을 한 번에 넣고, 그 밖에는 None 이다.
         "requirements": None if requirements is None else requirements,
