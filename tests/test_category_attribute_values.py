@@ -91,9 +91,9 @@ def test_mcp_preserves_measured_attribute_value_list_and_groups_by_attribute_seq
 
 
 def test_mcp_tool_remains_registered_with_eleven_tools():
-    """속성값 MCP 도구가 실제 런타임 목록에 보이며 도구 수가 12개다."""
+    """속성값 MCP 도구가 실제 런타임 목록에 보이며 도구 수가 13개다."""
     tools = asyncio.run(mcp_server.mcp.list_tools())
     names = {tool.name for tool in tools}
 
     assert "get_category_attribute_values" in names
-    assert len(tools) == 12
+    assert len(tools) == 13

@@ -13,7 +13,7 @@
   (d) **path containment**: STATE_DIR 밖 경로는 거부, opener 호출 0회.
   (e) **셸 경유 금지**: 소스에 ``os.system``·``shell=True``·``subprocess`` 없음.
   (f) **방어 회귀**: 기존 승인 서버/폼 서버 방어가 그대로 동작.
-  (g) **도구 수 불변**: MCP 도구는 12개.
+  (g) **도구 수 불변**: MCP 도구는 13개.
 """
 
 from __future__ import annotations
@@ -502,15 +502,15 @@ class TestDefenseRegression:
         assert "from . import config_form_server" not in src
 
     def test_f_mcp_tool_count_unchanged(self):
-        """(f) MCP 도구 수가 12개로 불변."""
+        """(f) MCP 도구 수가 13개로 불변."""
         tools = _list_tools()
-        assert len(tools) == 12, f"도구가 12개여야 함: {len(tools)}"
+        assert len(tools) == 13, f"도구가 13개여야 함: {len(tools)}"
 
 
 # =========================================================================== #
-# (g) 도구 수 불변 — MCP 도구는 12개.
-# pick_images 도구 추가로 11 → 12 로 의도적으로 갱신되었다(네이티브
-# 파일 선택창 티켓). 이전 기준값은 11.
+# (g) 도구 수 불변 — MCP 도구는 13개.
+# pick_images 도구 추가로 11 → 12 로 갱신되었고, 상세 인수 파이프 intake_detail_html
+# (외부 상세페이지 인수 파이프) 추가로 12 → 13 로 의도적으로 다시 갱신되었다.
 # =========================================================================== #
 
 
@@ -518,7 +518,7 @@ class TestToolCount:
     """auto_open 추가로 MCP 도구가 늘지 않는다."""
 
     def test_g_exactly_twelve_mcp_tools(self):
-        """(g) 도구 등록 데코레이터가 12개, runtime list_tools() 도 12개."""
+        """(g) 도구 등록 데코레이터가 13개, runtime list_tools() 도 13개."""
         # 소스 카운트 — @mcp.tool() 10개 + @apps.tool(resource_uri=...) 1개
         # (check_config 는 MCP Apps 확장 경로로 등록된다).
         # 줄 시작 앵커로 세서 주석/docstring 안의 언급은 세지 않는다.
@@ -526,10 +526,10 @@ class TestToolCount:
         decorator_count = len(re.findall(r"(?m)^@mcp\.tool\(\)", src)) + len(
             re.findall(r"(?m)^@apps\.tool\(", src)
         )
-        assert decorator_count == 12, f"도구 등록 데코레이터가 12개여야 함: {decorator_count}"
+        assert decorator_count == 13, f"도구 등록 데코레이터가 13개여야 함: {decorator_count}"
         # 런타임 카운트.
         tools = _list_tools()
-        assert len(tools) == 12, f"runtime 도구가 12개여야 함: {len(tools)}"
+        assert len(tools) == 13, f"runtime 도구가 13개여야 함: {len(tools)}"
 
     def test_g_auto_open_not_a_tool(self):
         """(g) auto_open 은 MCP 도구로 등록되지 않는다."""

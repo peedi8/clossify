@@ -176,4 +176,4 @@ def test_mcp_registers_the_new_tool_and_includes_it_in_the_total_count():
     names = {tool.name for tool in tools}
 
     assert "suggest_product_attributes" in names
-    assert len(tools) == 12
+    assert len(tools) == 13

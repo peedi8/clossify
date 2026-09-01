@@ -6,7 +6,7 @@
 
 모든 테스트는 tkinter 를 **모킹**한다 — 실제 선택창을 띄우지 않는다.
 
-  (a) tools/list 노출 + 총 12개.
+  (a) tools/list 노출 + 총 13개.
   (b) 선택 → 경로 반환 / 취소 → cancelled / tkinter 불가 → 명확한 error.
   (c) max_files 초과 시 truncated.
   (d) 실행 중 파일 내용 읽기 없음(builtins.open 호출 차단으로 증명).
@@ -95,17 +95,17 @@ def _install_fake_tk(monkeypatch, *, tk_factory=None, filedialog=None):
 
 
 # =========================================================================== #
-# (a) 도구 노출 — tools/list 에 보이고 총 12개.
+# (a) 도구 노출 — tools/list 에 보이고 총 13개.
 # =========================================================================== #
 
 
 class TestToolExposure:
     def test_a_pick_images_listed_and_total_twelve(self):
-        """(a) pick_images 가 tools/list 에 있고 총 12개다."""
+        """(a) pick_images 가 tools/list 에 있고 총 13개다."""
         tools = _list_tools()
         names = [str(getattr(t, "name", t)) for t in tools]
         assert "pick_images" in names
-        assert len(tools) == 12, f"도구가 12개여야 함: {len(tools)}"
+        assert len(tools) == 13, f"도구가 13개여야 함: {len(tools)}"
 
 
 # =========================================================================== #

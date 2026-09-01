@@ -289,7 +289,7 @@ class TestLegacyKeysPreserved:
         tools = mcp_server.mcp.list_tools()
         if hasattr(tools, "__await__"):
             tools = asyncio.run(tools)
-        assert len(tools) == 12, f"도구 수가 변경됨 (12개 유지 계약 위반): {len(tools)}"
+        assert len(tools) == 13, f"도구 수가 변경됨 (13개 유지 계약 위반): {len(tools)}"
 
 
 # ============================================================================ #

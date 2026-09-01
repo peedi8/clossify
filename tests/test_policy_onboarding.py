@@ -491,10 +491,10 @@ class TestToolCountPreserved:
                 tools = asyncio.run(tools)
             except RuntimeError:
                 tools = asyncio.get_event_loop().run_until_complete(tools)
-        # 12개 도구: check_config, upload_images, register_product, get_product,
+        # 13개 도구: check_config, upload_images, register_product, get_product,
         # prepare_listing, submit_reviews, delete_product, manage_products,
         # get_category_attributes, get_category_attribute_values, suggest_product_attributes.
-        assert len(tools) == 12, f"도구가 12개여야 함: {len(tools)}"
+        assert len(tools) == 13, f"도구가 13개여야 함: {len(tools)}"
 
     def test_check_config_takes_read_existing(self):
         """check_config 가 read_existing 키워드 인자를 받는다."""

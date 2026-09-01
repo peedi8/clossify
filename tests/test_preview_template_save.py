@@ -478,16 +478,17 @@ class TestInteractiveHtmlConstraints:
 
 
 # =========================================================================== #
-# (g) MCP 도구 12개 유지.
+# (g) MCP 도구 13개 유지.
 # =========================================================================== #
 class TestMcpToolCountUnchanged:
-    """현재 MCP 도구 표면은 12개다."""
+    """현재 MCP 도구 표면은 13개다."""
 
     EXPECTED_NAMES = frozenset(
         {
             "check_config",
             "upload_images",
             "pick_images",
+            "intake_detail_html",
             "register_product",
             "get_product",
             "delete_product",
@@ -507,7 +508,7 @@ class TestMcpToolCountUnchanged:
                 tools = asyncio.run(tools)
             except RuntimeError:
                 tools = asyncio.get_event_loop().run_until_complete(tools)
-        assert len(tools) == 12, f"도구 수가 11이 아님: {len(tools)}"
+        assert len(tools) == 13, f"도구 수가 11이 아님: {len(tools)}"
 
     def test_tool_names_unchanged(self):
         tools = mcp_server.mcp.list_tools()

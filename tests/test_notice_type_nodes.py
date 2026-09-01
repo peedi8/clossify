@@ -596,7 +596,7 @@ class TestToolRegistrationPreserved:
         # check_config, upload_images, register_product, get_product,
         # delete_product, prepare_listing, submit_reviews, manage_products,
         # get_category_attributes, get_category_attribute_values, suggest_product_attributes
-        assert len(tools) == 12, f"도구가 12개여야 함: {len(tools)}"
+        assert len(tools) == 13, f"도구가 13개여야 함: {len(tools)}"
 
     def test_register_product_signature_unchanged(self):
         """register_product 파라미터가 유지되는가.

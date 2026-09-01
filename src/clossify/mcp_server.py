@@ -5,13 +5,16 @@
 """Clossify MCP 서버 — 네이버 스마트스토어 등록 능력을 MCP 클라이언트 LLM에 부여.
 
 이 모듈은 MCP Python SDK(v2, PyPI `mcp`)의 `MCPServer`(FastMCP 후속)를 사용해
-로컬 stdio MCP 서버를 노출한다. 서버는 12개의 도구를 제공한다:
+로컬 stdio MCP 서버를 노출한다. 서버는 13개의 도구를 제공한다:
 
 - ``check_config``: 자격증명/설정 파일 존재 및 형식 검사. 기본은 외부 API 호출
   없음. ``read_existing=True`` 면 기존 상품에서 정책값을 읽어 제안(온보딩).
 - ``upload_images``: 로컬 이미지 경로 리스트를 네이버 이미지서버에 업로드.
 - ``pick_images``: tkinter 네이티브 선택창을 열어 이미지 절대경로 목록 반환
   (파일을 읽지 않고 경로만 반환).
+- ``intake_detail_html``: 외부에서 만든 완성 상세 HTML(DOCTYPE + base64
+  이미지 내장)을 받아 이미지를 네이버 CDN 에 업로드하고 등록용 본문 조각으로
+  변환한다 (외부 상세페이지 인수 파이프).
 - ``register_product``: 상품 정보를 받아 등록 페이로드를 구성하고 커머스 API로 등록.
 - ``get_product``: 등록된 상품(origin product)을 조회.
 - ``prepare_listing``: 상품 정보 + 이미지 소스로 prepared payload 를 만든다.
@@ -2319,6 +2322,39 @@ def pick_images(max_files: int = 10, title: str = "") -> dict[str, Any]:
         "truncated": truncated,
         "error": None,
     }
+
+
+@mcp.tool()
+def intake_detail_html(html_path: str) -> dict[str, Any]:
+    """네이버 API 를 실호출한다 — 완성 HTML 의 base64 이미지를 네이버 CDN 에 업로드.
+
+    외부 상세페이지 생성 트랙이 만든 **완성 웹페이지**(DOCTYPE 문서 + ``data:``
+    base64 내장 이미지)를 받아, 등록에 바로 쓸 수 있는 **본문 조각 + 이미지
+    CDN URL 목록**으로 변환한다. 반환의 ``detail_html`` 은
+    ``register_product(detail_html=...)`` 인자로 그대로 전달된다.
+
+    Args:
+        html_path: 입력 HTML 파일의 **절대경로** (UTF-8, 상한 20MB).
+
+    Returns:
+        ``{"ok": bool, "detail_html": str, "image_urls": [str, ...],
+        "representative_candidate": str, "removed": {"scripts": int,
+        "iframes": int, "external_refs": int}, "bytes_before": int,
+        "bytes_after": int, "error": str | None}``
+        - ``image_urls[0]`` 이 대표이미지 후보(이미지 순서는 문서 순서 보존).
+        - ``removed`` 는 제거한 script/iframe/외부 리소스 개수(제거 사실 고지).
+
+    주의:
+        - **외부 호출 고지**: base64 이미지 업로드로 네이버 API 를 실호출한다.
+          텍스트 추론·변환 자체는 로컬에서만 일어난다.
+        - 업로드는 기존 검증(확장자·매직바이트·10MB 상한)을 우회 없이 통과한다.
+        - script/iframe/외부 리소스는 제거되며 개수가 ``removed`` 에 드러난다.
+        - 설정이 완료되지 않았다면 ``check_config`` 를 먼저 호출하라.
+    """
+    # 방향: mcp_server -> detail_intake (허용 — 최상위 어댑터).
+    from . import detail_intake as _detail_intake
+
+    return _detail_intake.intake_detail_html(html_path)
 
 
 def _validate_deferred_notice_fields(

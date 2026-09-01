@@ -11,8 +11,8 @@ description: 상품등록(네이버 커머스 API) 담당 에이전트 — 상�
 
 - "제목만/태그만"이 아니라 **등록에 필요한 전부를 한 담당자**가 owns. 생성과 검수를 같은 기준으로(생성이 만들고 검수가 또 잡는 모순 제거).
 
-## MCP 도구 표면 (실제 도구 12개 — 이 에이전트가 호출하는 전부)
-이 서버(`src/clossify/mcp_server.py`)는 **12개의 도구**만 노출한다. 이외의 함수는
+## MCP 도구 표면 (실제 도구 13개 — 이 에이전트가 호출하는 전부)
+이 서버(`src/clossify/mcp_server.py`)는 **13개의 도구**만 노출한다. 이외의 함수는
 도구로 노출되지 않으므로 클라이언트 LLM 이 호출할 수 없다. 등록 흐름의 정상
 호출 순서는 다음과 같다:
 
@@ -36,6 +36,10 @@ description: 상품등록(네이버 커머스 API) 담당 에이전트 — 상�
 4. `upload_images(paths)` → 로컬 이미지 경로 리스트를 네이버 이미지서버에 업로드.
    반환: `{ok, image_urls, count, error}`. `image_urls` 는 `register_product` 로
    그대로 전달된다.
+4a. `intake_detail_html(html_path)` → 외부에서 만든 완성 상세 HTML(DOCTYPE + base64 이미지
+   내장)을 받아 이미지를 네이버 CDN 에 업로드하고 등록용 본문 조각으로 변환한다.
+   반환: `{ok, detail_html, image_urls, representative_candidate, removed, bytes_before,
+   bytes_after, error}`. `image_urls[0]` 이 대표이미지 후보. **네이버 API 를 실호출**한다.
 5. `register_product(name, price, *, category_id, image_urls, detail_html, ...,
    product_key, preview_confirmed, option_groups, deferred_notice_fields)` →
    페이로드 빌드 + 컴플라이언스 게이트 + 네이버 API 등록. 반환: `{ok,
@@ -68,25 +72,25 @@ description: 상품등록(네이버 커머스 API) 담당 에이전트 — 상�
      (127.0.0.1 바인드·일회용 토큰·10분 만료·Origin 검사·CORS 금지·product_key
      필수·1회 소진 등)가 따른다. 이 스위치 없이는 `preview_confirmed=True` 를
      별도로 선언해야 한다(사용자가 미리보기를 확인한 뒤 수동으로).
-6. `get_product(origin_product_no)` → 등록된 상품 조회. 반환:
+7. `get_product(origin_product_no)` → 등록된 상품 조회. 반환:
    `{ok, status_code, product, error}`.
-7. `delete_product(origin_product_no, confirm=True)` → 등록된 상품 단건 영구 삭제.
+8. `delete_product(origin_product_no, confirm=True)` → 등록된 상품 단건 영구 삭제.
    `confirm=True` 가 없으면 거부된다(되돌릴 수 없는 파괴 동작). 반환:
    `{ok, status_code, origin_product_no, registration_record_removed, error}`.
-8. `manage_products(action, origin_product_no="", page=1, size=50, confirm=False)`
+9. `manage_products(action, origin_product_no="", page=1, size=50, confirm=False)`
    → 등록 후 관리: 목록 조회(`list`)·판매중지(`suspend`)·판매재개(`resume`)·
    검수내역 조회(`inspections`). `suspend`/`resume` 은 `confirm=True` 까지 dry-run
    이며, 실행 시 변경 전후 상태를 반환한다. `list` 는 관리용 정적 HTML 패널도
    생성한다(auto-open 설정 시 브라우저 자동 열림). 반환: `{ok, action, ...}`.
-9. `get_category_attributes(category_id)` → 카테고리별 속성 스키마 조회. 반환:
+10. `get_category_attributes(category_id)` → 카테고리별 속성 스키마 조회. 반환:
    `{ok, attributes, schema_verified, note, raw_body, error}`. 2026-08-12 카테고리
    `50000830` 1건의 최상위 리스트만 확인됐으므로, 다른 카테고리에 일반화하거나
    반환값을 자동으로 payload 에 넣지 않는다.
-10. `get_category_attribute_values(category_id, attribute_seq)` → 카테고리별 속성값
+11. `get_category_attribute_values(category_id, attribute_seq)` → 카테고리별 속성값
     조회. 반환: `{ok, attribute_values, schema_verified, note, raw_body, error}`.
     2026-08-12 카테고리 `50000830` 1건에서 `attributeSeq` 하나를 줘도 전체
     속성값 목록이 왔으므로, 이 결과로 자동 선택·전송하지 않는다.
-11. `suggest_product_attributes(category_id, name, detail_html=None)` 는 상품명과 상세 본문의
+12. `suggest_product_attributes(category_id, name, detail_html=None)` 는 상품명과 상세 본문의
     가시 텍스트로 기존 속성 추천 결과를 제안한다. 이 도구는 등록하지 않으며, 실제
     등록에는 사용자가 고른 값을 `register_product(attributes=...)`로 명시해야 한다.
 
@@ -152,7 +156,7 @@ description: 상품등록(네이버 커머스 API) 담당 에이전트 — 상�
 미루기 불가 필드(날짜·수치·불리언 등)는 미루기를 제안하지 마라.
 
 ## 구현 매핑 (실제 코드)
-- **MCP 도구 12개**(호출 순서는 위 'MCP 도구 표면' 참조): `check_config`·`pick_images`·`upload_images`·`prepare_listing`·`submit_reviews`·`register_product`·`get_product`·`delete_product`·`manage_products`·`get_category_attributes`·`get_category_attribute_values`·`suggest_product_attributes`. 이 12개가 클라이언트 LLM 이 호출할 수 있는 전부다.
+- **MCP 도구 13개**(호출 순서는 위 'MCP 도구 표면' 참조): `check_config`·`pick_images`·`upload_images`·`intake_detail_html`·`prepare_listing`·`submit_reviews`·`register_product`·`get_product`·`delete_product`·`manage_products`·`get_category_attributes`·`get_category_attribute_values`·`suggest_product_attributes`. 이 13개가 클라이언트 LLM 이 호출할 수 있는 전부다.
 - 생성 헬퍼(서버 내부 — 도구가 아님): `naming_agent`(제목)·`classify_category`(카테고리)·`naver_client.build_payload`(고시/원산지/KC/claim).
 - 검수 헬퍼(서버 내부 — `submit_reviews` 가 회신을 받아 병합): `qa_copy`(제목·태그·본문)·`qa_compliance`(payload 법적)·`qa_image`(이미지). `compliance` verdict 는 클라이언트가 제출할 수 없다(결정론).
 - **가격 자동 계산 함수는 없다** — `register_product` 의 `price` 인자(양의 정수 KRW) 를 판매자가 직접 준다.

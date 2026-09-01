@@ -58,6 +58,7 @@ _MCP_TOOLS = {
     "submit_reviews",
     "upload_images",
     "pick_images",
+    "intake_detail_html",
 }
 
 # Prompts that describe the registration flow and therefore must mention all

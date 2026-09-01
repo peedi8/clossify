@@ -523,10 +523,10 @@ class TestBypassBlocking:
 
 
 # --------------------------------------------------------------------------- #
-# 도구 12개 등록.
+# 도구 13개 등록.
 # --------------------------------------------------------------------------- #
 class TestTenTools:
-    """MCP 서버가 정확히 12개 도구를 등록했는가.
+    """MCP 서버가 정확히 13개 도구를 등록했는가.
 
     suggest_product_attributes 가 추가되면서 도구 수가 10 → 11 로 늘었다.
     """
@@ -540,10 +540,10 @@ class TestTenTools:
                 tools = asyncio.run(tools)
             except RuntimeError:
                 tools = asyncio.get_event_loop().run_until_complete(tools)
-        # 12개 도구: check_config, upload_images, register_product, get_product,
+        # 13개 도구: check_config, upload_images, register_product, get_product,
         # prepare_listing, submit_reviews, delete_product, manage_products,
         # get_category_attributes, get_category_attribute_values, suggest_product_attributes.
-        assert len(tools) == 12, f"도구가 12개여야 함: {len(tools)}"
+        assert len(tools) == 13, f"도구가 13개여야 함: {len(tools)}"
 
     def test_tool_names(self):
         import asyncio
@@ -559,6 +559,7 @@ class TestTenTools:
             "check_config",
             "upload_images",
             "pick_images",
+            "intake_detail_html",
             "register_product",
             "get_product",
             "delete_product",

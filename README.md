@@ -26,7 +26,7 @@
 
 | 구분 | 항목 | 비고 |
 |------|------|------|
-| 되는 것 | MCP 도구 12개(`check_config`/`delete_product`/`pick_images`/`get_category_attribute_values`/`get_category_attributes`/`get_product`/`manage_products`/`prepare_listing`/`register_product`/`submit_reviews`/`suggest_product_attributes`/`upload_images`) | 도구 표면과 배선. 이미지 업로드는 실제 커머스 API 로 검증됨 |
+| 되는 것 | MCP 도구 13개(`check_config`/`delete_product`/`pick_images`/`get_category_attribute_values`/`get_category_attributes`/`get_product`/`intake_detail_html`/`manage_products`/`prepare_listing`/`register_product`/`submit_reviews`/`suggest_product_attributes`/`upload_images`) | 도구 표면과 배선. 이미지 업로드는 실제 커머스 API 로 검증됨 |
 | 되는 것 | **상품 등록 관통(실제 커머스 API)** | **2026-08-28 실등록 1건 성공** — MCP 호출 → 등록 → 조회 재검증까지 확인. 판매중지 상태로 올려 노출 0. 다만 **표본 1건**이라 카테고리·고시 타입별 재현은 남아 있다 |
 | 되는 것 | 결정론 컴플라이언스 게이트(fail-closed) | 등록 직전 FAIL 위반 차단 |
 | 되는 것 | 카테고리 메타 데이터(리프 카테고리 약 4,999건)·고시 타입 35종 데이터 기반 검사 | `data/` |
