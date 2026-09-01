@@ -88,16 +88,45 @@ apps = Apps()
 # --------------------------------------------------------------------------- #
 _SETUP_UI_RESOURCE_URI = "ui://clossify/setup.html"
 
+# 설정 폼 HTML 전문 — 리소스 등록과 check_config 반환(ui_html) 이 같은 원문을
+# 공유한다. 파일을 한 번만 읽어 사본을 하나로 유지한다(파일 중복 금지).
+_SETUP_UI_HTML = _load_ui("setup.html")
+
+# 위젯 배달 지시문 — 어느 호스트 LLM 이든 반환/서버 안내만 보고 채팅 위젯
+# 경험을 재현할 수 있게 하는 요령. check_config 반환의 ui_instructions 와
+# 서버 instructions 가 같은 문단을 공유한다(두 표면, 하나의 진실).
+_SETUP_UI_DELIVERY_INSTRUCTIONS = (
+    "인라인 HTML 위젯을 그릴 수 있는 표면이면 ui_html 조각을 그대로 렌더하라. "
+    "폼의 저장 버튼은 window.mcp.callTool('save_config', {client_id, client_secret}) "
+    "를 호출하므로, 그 함수가 없는 표면에서는 렌더 전에 어댑터를 앞에 붙여 "
+    "값을 대화로 회신(sendPrompt 등)하게 하라. 위젯을 못 그리는 표면이면 "
+    "config_form_path 의 브라우저 폼을 안내하라."
+)
+
 apps.add_html_resource(
     _SETUP_UI_RESOURCE_URI,
-    _load_ui("setup.html"),
+    _SETUP_UI_HTML,
     name="setup.html",
     title="클로시파이 최초 설정",
     description="설정 미완료 시 대화창에 인라인 렌더되는 설정 폼 조각",
 )
 
 # 서버 인스턴스 — 클라이언트 LLM이 discover 하는 도구들의 컨테이너.
-mcp = MCPServer("clossify", version=_resolve_version(), extensions=[apps])
+#
+# instructions 는 stdio initialize 응답에 실려 tools/list 이전에 호스트에게
+# 전달된다 — 도구를 부르기 전부터 "설정 미완료면 check_config 반환에 위젯
+# HTML(=ui_html)과 렌더 요령(=ui_instructions)이 실린다" 를 알게 한다.
+# 기존 안내 문단이 생기면 보존하며 덧붙인다(교체 금지).
+mcp = MCPServer(
+    "clossify",
+    version=_resolve_version(),
+    extensions=[apps],
+    instructions=(
+        "설정이 완료되지 않았을 수 있으니 업무 도구를 부르기 전에 check_config 를 "
+        "먼저 호출하라. 설정 미완료 시 반환에 ui_html(설정 폼 HTML 조각)과 "
+        "ui_instructions(렌더 요령)이 실린다. " + _SETUP_UI_DELIVERY_INSTRUCTIONS
+    ),
+)
 
 # 설정 파일 경로 — naver_client.config_path() 의 단일 진실 공급원을 따른다.
 # (CLOSSIFY_CONFIG 환경변수 오버라이드 포함)
@@ -105,14 +134,23 @@ _CONFIG_PATH = naver_client.config_path()
 
 
 def _attach_setup_ui_hint(result: dict[str, Any]) -> None:
-    """설정 미완료 결과에만 ``resource_uri``/``ui_hint`` 를 얹는다.
+    """설정 미완료 결과에만 위젯 배달 키를 얹는다.
 
     설정이 완료된 경우 이 키를 넣지 않는다 — 불필요한 화면 유발 금지.
-    기존 키는 하나도 건드리지 않는다(회귀 방지). 두 키 모두 값·시크릿을
-    담지 않는다(비밀값 반환 금지).
+    기존 키는 하나도 건드리지 않는다(회귀 방지).
+
+    얹는 키:
+      - ``resource_uri``/``ui_hint``: 기존 안내(호환 유지).
+      - ``ui_html``: ``setup.html`` 전문(=``_SETUP_UI_HTML``, 파일 원문 그대로).
+        어떤 호스트 LLM 이든 반환만 보고 인라인 위젯을 재현할 수 있게 한다.
+      - ``ui_instructions``: 렌더 요령(어댑터·브라우저 폼 폴백 안내).
+
+    ★ ``ui_html`` 은 정적 파일 그대로다 — 비밀값·사용자 값을 절대 섞지 않는다.
     """
     result["resource_uri"] = _SETUP_UI_RESOURCE_URI
     result["ui_hint"] = "설정이 필요하다. 이 리소스를 렌더해 사용자에게 입력받아라."
+    result["ui_html"] = _SETUP_UI_HTML
+    result["ui_instructions"] = _SETUP_UI_DELIVERY_INSTRUCTIONS
 
 
 # --------------------------------------------------------------------------- #
