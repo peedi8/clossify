@@ -11,12 +11,13 @@ description: 상품등록(네이버 커머스 API) 담당 에이전트 — 상�
 
 - "제목만/태그만"이 아니라 **등록에 필요한 전부를 한 담당자**가 owns. 생성과 검수를 같은 기준으로(생성이 만들고 검수가 또 잡는 모순 제거).
 
-## MCP 도구 표면 (실제 도구 11개 — 이 에이전트가 호출하는 전부)
-이 서버(`src/clossify/mcp_server.py`)는 **11개의 도구**만 노출한다. 이외의 함수는
+## MCP 도구 표면 (실제 도구 12개 — 이 에이전트가 호출하는 전부)
+이 서버(`src/clossify/mcp_server.py`)는 **12개의 도구**만 노출한다. 이외의 함수는
 도구로 노출되지 않으므로 클라이언트 LLM 이 호출할 수 없다. 등록 흐름의 정상
 호출 순서는 다음과 같다:
 
-1. `check_config(read_existing=False)` → 자격증명/설정 파일 존재 및 플레이스홀더 여부.
+0. `pick_images(max_files, title)` → 네이티브 파일 선택창으로 이미지 절대경로 목록 반환.
+   파일을 읽지 않고 경로만 반환한다(업로드는 `upload_images` 몫). 취소는 오류가 아니다. → 자격증명/설정 파일 존재 및 플레이스홀더 여부.
    기본(`read_existing=False`)은 외부 API 호출 0. `read_existing=True` 면 기존 상품에서
    정책값을 읽어 제안(온보딩) — 제안만 하고 설정 파일을 쓰지 않는다(저장은 클라이언트가
    사용자 승인을 받은 뒤 파일을 직접 쓸 때만).
@@ -151,7 +152,7 @@ description: 상품등록(네이버 커머스 API) 담당 에이전트 — 상�
 미루기 불가 필드(날짜·수치·불리언 등)는 미루기를 제안하지 마라.
 
 ## 구현 매핑 (실제 코드)
-- **MCP 도구 11개**(호출 순서는 위 'MCP 도구 표면' 참조): `check_config`·`upload_images`·`prepare_listing`·`submit_reviews`·`register_product`·`get_product`·`delete_product`·`manage_products`·`get_category_attributes`·`get_category_attribute_values`·`suggest_product_attributes`. 이 11개가 클라이언트 LLM 이 호출할 수 있는 전부다.
+- **MCP 도구 12개**(호출 순서는 위 'MCP 도구 표면' 참조): `check_config`·`pick_images`·`upload_images`·`prepare_listing`·`submit_reviews`·`register_product`·`get_product`·`delete_product`·`manage_products`·`get_category_attributes`·`get_category_attribute_values`·`suggest_product_attributes`. 이 12개가 클라이언트 LLM 이 호출할 수 있는 전부다.
 - 생성 헬퍼(서버 내부 — 도구가 아님): `naming_agent`(제목)·`classify_category`(카테고리)·`naver_client.build_payload`(고시/원산지/KC/claim).
 - 검수 헬퍼(서버 내부 — `submit_reviews` 가 회신을 받아 병합): `qa_copy`(제목·태그·본문)·`qa_compliance`(payload 법적)·`qa_image`(이미지). `compliance` verdict 는 클라이언트가 제출할 수 없다(결정론).
 - **가격 자동 계산 함수는 없다** — `register_product` 의 `price` 인자(양의 정수 KRW) 를 판매자가 직접 준다.

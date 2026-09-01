@@ -62,7 +62,7 @@ text_props         순수 리터럴/정규식 (의존 없음)
 
 | 모듈 | 역할 |
 |------|------|
-| `mcp_server` | stdio MCP 서버. **11개 도구** 노출(`check_config`, `delete_product`, `get_category_attribute_values`, `get_category_attributes`, `get_product`, `manage_products`, `prepare_listing`, `register_product`, `submit_reviews`, `suggest_product_attributes`, `upload_images`). 검증 sanitization, 컴플라이언스 게이트 회선. 도구 목록은 서버에서 직접 뽑는다: `python -c "import asyncio,sys; sys.path.insert(0,'src'); from clossify import mcp_server; print(sorted(t.name for t in asyncio.run(mcp_server.mcp.list_tools())))"` |
+| `mcp_server` | stdio MCP 서버. **12개 도구** 노출(`check_config`, `delete_product`, `pick_images`, `get_category_attribute_values`, `get_category_attributes`, `get_product`, `manage_products`, `prepare_listing`, `register_product`, `submit_reviews`, `suggest_product_attributes`, `upload_images`). 검증 sanitization, 컴플라이언스 게이트 회선. 도구 목록은 서버에서 직접 뽑는다: `python -c "import asyncio,sys; sys.path.insert(0,'src'); from clossify import mcp_server; print(sorted(t.name for t in asyncio.run(mcp_server.mcp.list_tools())))"` |
 | `naver_client` | 네이버 커머스 API 인증·페이로드 빌드·등록·조회·삭제·이미지 업로드 |
 | `images` | 이미지 입력 정규화. 로컬 가드(`validate_local_image`), SSRF 방어 외부 URL fetch(`fetch_external_image`), 통합 진입점(`attach_images`) |
 | `qa_agents` | 3분할 QA(이미지/카피/컴플라이언스) 결정론 검사 + 집계 + 등록 게이트(`qa_gate`) |

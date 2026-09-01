@@ -5,11 +5,13 @@
 """Clossify MCP 서버 — 네이버 스마트스토어 등록 능력을 MCP 클라이언트 LLM에 부여.
 
 이 모듈은 MCP Python SDK(v2, PyPI `mcp`)의 `MCPServer`(FastMCP 후속)를 사용해
-로컬 stdio MCP 서버를 노출한다. 서버는 11개의 도구를 제공한다:
+로컬 stdio MCP 서버를 노출한다. 서버는 12개의 도구를 제공한다:
 
 - ``check_config``: 자격증명/설정 파일 존재 및 형식 검사. 기본은 외부 API 호출
   없음. ``read_existing=True`` 면 기존 상품에서 정책값을 읽어 제안(온보딩).
 - ``upload_images``: 로컬 이미지 경로 리스트를 네이버 이미지서버에 업로드.
+- ``pick_images``: tkinter 네이티브 선택창을 열어 이미지 절대경로 목록 반환
+  (파일을 읽지 않고 경로만 반환).
 - ``register_product``: 상품 정보를 받아 등록 페이로드를 구성하고 커머스 API로 등록.
 - ``get_product``: 등록된 상품(origin product)을 조회.
 - ``prepare_listing``: 상품 정보 + 이미지 소스로 prepared payload 를 만든다.
@@ -2210,6 +2212,109 @@ def upload_images(paths: list[str]) -> dict[str, Any]:
         "ok": True,
         "image_urls": urls,
         "count": len(urls),
+        "error": None,
+    }
+
+
+@mcp.tool()
+def pick_images(max_files: int = 10, title: str = "") -> dict[str, Any]:
+    """사용자 화면에 네이티브 파일 선택창을 열고 이미지 절대경로 목록을 반환한다.
+
+    대화창 위젯은 보안상 실제 경로를 받지 못하므로(fakepath), 로컬 서버가
+    tkinter 선택창을 직접 연다. 반환된 경로는 ``upload_images`` 로 업로드하고
+    ``register_product`` 의 ``image_urls`` 로 이어지는 기존 파이프라인에
+    그대로 연결된다.
+
+    Args:
+        max_files: 최대 선택 파일 수. 초과분은 앞에서 잘리고 ``truncated=true`` 로
+            반환에 드러난다. 기본 10.
+        title: 선택창 제목(빈 문자열이면 기본 제목 사용).
+
+    Returns:
+        ``{"ok": bool, "paths": [str, ...], "count": int, "cancelled": bool,
+        "truncated": bool, "error": str | None}``
+        사용자가 취소하면 ``ok=true, cancelled=true, paths=[]`` — 취소는 오류가
+        아니다. tkinter 를 쓸 수 없는 환경이면 ``ok=false, error`` 에 사유와
+        함께 "경로를 직접 입력하라" 는 안내가 실린다.
+
+    주의:
+        - 이 도구는 **파일을 읽지 않는다**. 경로만 반환하며 업로드·검증은
+          ``upload_images``/``prepare_listing`` 몫이다.
+        - 선택창은 호출당 1회 열리고, 블로킹은 이 도구 호출 안에서만
+          일어난다(서버 전체를 멈추지 않는다).
+    """
+    result_base: dict[str, Any] = {
+        "paths": [],
+        "count": 0,
+        "cancelled": False,
+        "truncated": False,
+        "error": None,
+    }
+
+    # 인자 검증 — 잘못된 max_files 를 조용히 무시하지 않는다.
+    try:
+        max_files = int(max_files)
+    except (TypeError, ValueError):
+        return {**result_base, "ok": False, "error": "max_files 는 정수여야 합니다."}
+    if max_files < 1:
+        return {**result_base, "ok": False, "error": "max_files 는 1 이상이어야 합니다."}
+
+    # tkinter 는 호출 시점에 import — 모듈 로드 경로에 GUI 의존을 심지 않는다.
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except Exception as exc:  # ImportError 등 — 삼키지 않고 명확히 안내.
+        return {
+            **result_base,
+            "ok": False,
+            "error": f"tkinter 를 사용할 수 없음({type(exc).__name__}: {exc}) — "
+            "경로를 직접 입력하라",
+        }
+
+    root = None
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        # 최상단 표시 — 뒤에 가려져 사용자가 선택창을 놓치는 일을 막는다.
+        root.attributes("-topmost", True)
+        raw = filedialog.askopenfilenames(
+            title=title or "업로드할 이미지 선택",
+            filetypes=[
+                ("이미지", "*.jpg *.jpeg *.png *.webp"),
+                ("모든 파일", "*.*"),
+            ],
+            parent=root,
+        )
+    except Exception as exc:  # 디스플레이 없음 등 — 조용히 죽이지 않는다.
+        return {
+            **result_base,
+            "ok": False,
+            "error": f"파일 선택창을 열 수 없음({type(exc).__name__}: {exc}) — "
+            "경로를 직접 입력하라",
+        }
+    finally:
+        if root is not None:
+            try:
+                root.destroy()
+            except Exception:  # 방어 — 창 정리 실패가 결과를 바꾸지 않게.
+                pass
+
+    paths = [str(p) for p in raw or []]
+
+    # 취소는 오류가 아니다.
+    if not paths:
+        return {**result_base, "ok": True, "cancelled": True}
+
+    truncated = len(paths) > max_files
+    if truncated:
+        paths = paths[:max_files]
+
+    return {
+        "ok": True,
+        "paths": paths,
+        "count": len(paths),
+        "cancelled": False,
+        "truncated": truncated,
         "error": None,
     }
 

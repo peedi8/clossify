@@ -576,10 +576,10 @@ class TestCheckConfigOrigin:
 
 
 # --------------------------------------------------------------------------- #
-# 도구 11개 등록 유지 (시그니처 변경 없음).
+# 도구 12개 등록 유지 (시그니처 변경 없음).
 # --------------------------------------------------------------------------- #
 class TestToolRegistrationPreserved:
-    """변경 후에도 11개 도구가 등록되어 있는가."""
+    """변경 후에도 12개 도구가 등록되어 있는가."""
 
     def test_eleven_tools_registered(self):
         import asyncio
@@ -590,14 +590,14 @@ class TestToolRegistrationPreserved:
                 tools = asyncio.run(tools)
             except RuntimeError:
                 tools = asyncio.get_event_loop().run_until_complete(tools)
-        # 11개 도구: check_config, upload_images, register_product, get_product,
+        # 12개 도구: check_config, upload_images, register_product, get_product,
         # prepare_listing, submit_reviews, delete_product, manage_products,
         # get_category_attributes, get_category_attribute_values, suggest_product_attributes.
         # manage_products 는 등록 후 관리(목록/중지/재개/검수)를 담당한다.
-        assert len(tools) == 11, f"도구가 11개여야 함: {len(tools)}"
+        assert len(tools) == 12, f"도구가 12개여야 함: {len(tools)}"
 
     def test_tool_names_unchanged(self):
-        """11개 도구 이름이 변경되지 않았는가."""
+        """12개 도구 이름이 변경되지 않았는가."""
         import asyncio
 
         tools = mcp_server.mcp.list_tools()
@@ -610,6 +610,7 @@ class TestToolRegistrationPreserved:
         expected = {
             "check_config",
             "upload_images",
+            "pick_images",
             "register_product",
             "get_product",
             "delete_product",

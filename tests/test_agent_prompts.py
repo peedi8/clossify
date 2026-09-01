@@ -57,6 +57,7 @@ _MCP_TOOLS = {
     "suggest_product_attributes",
     "submit_reviews",
     "upload_images",
+    "pick_images",
 }
 
 # Prompts that describe the registration flow and therefore must mention all

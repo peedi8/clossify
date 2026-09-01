@@ -153,7 +153,7 @@ AS 전화번호·KC 신고값 등 고시 관련 실값도 등록 단계의 컴�
 가시성 도구가 아니라 게이트다. 값이 새어나가는 일을 막기 위한 의도된 동작이다.
 
 연결이 잡혔다면 클라이언트가 열 도구를 인식해야 한다: `check_config`,
-`upload_images`, `register_product`, `get_product`, `delete_product`,
+`upload_images`, `pick_images`, `register_product`, `get_product`, `delete_product`,
 `prepare_listing`, `submit_reviews`, `manage_products`, `get_category_attributes`,
 `get_category_attribute_values`, `suggest_product_attributes`. 이 이름들이 보이지 않으면 서버가 뜌 경로가
 잘못된 것이다.

@@ -464,6 +464,7 @@ class TestToolRegistration:
             "register_product",
             "submit_reviews",
             "upload_images",
+            "pick_images",
         }
         missing = expected - names
         extra = names - expected
