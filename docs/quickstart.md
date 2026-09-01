@@ -47,11 +47,15 @@ Copy-Item config.example.json .local\config.json
 디렉터리를 정하기 때문에, **3단계의 `cwd` 설정과 같은 디렉터리**에 `.local/` 이
 있어야 한다. 정본 경로는 `<cwd>/.local/config.json` 이고, 환경변수 `CLOSSIFY_CONFIG`
 로 다른 경로를 가리킬 수 있다 (`CLOSSIFY_STATE_DIR` 로 상태 디렉터리 전체를
-재정의할 수도 있다). `check_config` 가 **반드시 채워야 한다**고 검사하는 키는 3 개다:
+재정의할 수도 있다). `check_config` 가 **반드시 채워야 한다**고 검사하는 키는 2 개다:
 
 - `naver.client_id`
 - `naver.client_secret`
-- `naver.store_url_slug`
+
+`naver.store_url_slug` 는 **선택**이다 — 값이 없어도 `check_config` 는 `ok=true`
+를 돌려준다(부재는 `optional_absent` 로만 드러난다). 인증 서명은
+`client_id`+`client_secret` 만 쓰고 API 는 슬러그를 요구하지 않으므로, 슬러그
+부재가 어떤 기능도 막지 않는다.
 
 값은 자리표시자(`REPLACE_WITH_...`, `{STORE_SLUG}` 등)가 아니라 **실제 발급값**이어야
 한다. 자리표시자가 남아 있으면 `check_config` 가 채워지지 않은 것으로 본다. 원산지·

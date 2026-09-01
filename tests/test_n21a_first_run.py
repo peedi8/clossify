@@ -86,27 +86,32 @@ class TestCheckConfigSpeaksExactly:
     """자리표시자 설정 상태에서 check_config 응답의 정확성을 고정한다."""
 
     def test_placeholders_count_exact(self, example_config_env: Path) -> None:
-        """자리표시자로 남아있는 필수 naver 키가 정확히 3개로 센다.
+        """자리표시자로 남아있는 필수 naver 키는 정확히 2개 (FIX-slug-optional).
 
-        config.example.json 의 naver.client_id, naver.client_secret,
-        naver.store_url_slug(={STORE_SLUG}) 모두 자리표시자이므로
-        ``placeholders`` 는 정확히 이 3개여야 한다. ``missing`` 은 비어야 한다
-        (키 자체는 존재하므로).
+        store_url_slug 는 선택 키가 되었다 — 자리표시자({STORE_SLUG})여도
+        ``placeholders``/``missing`` 에 들어가지 않고 ``optional_absent`` 로만
+        드러난다. 필수 자리표시자는 client_id, client_secret 2개뿐이다.
         """
         result = mcp_server.check_config()
 
         assert isinstance(result.get("placeholders"), list)
-        # 자리표시자로 잡힌 필수 naver 키는 정확히 3개.
+        # 자리표시자로 잡힌 필수 naver 키는 정확히 2개.
         placeholders = result["placeholders"]
-        assert len(placeholders) == 3, f"placeholders 개수가 3이 아님: {placeholders}"
-        # 3개 키 이름이 정확히 일치.
+        assert len(placeholders) == 2, f"placeholders 개수가 2가 아님: {placeholders}"
         assert sorted(placeholders) == sorted(
-            ["client_id", "client_secret", "store_url_slug"]
+            ["client_id", "client_secret"]
         ), f"placeholders 키 이름 불일치: {placeholders}"
-        # missing 은 비어야 한다 (키 자체는 존재하므로).
+        # 선택 슬러그는 placeholders/missing 어디에도 없다.
+        assert (
+            "store_url_slug" not in placeholders
+        ), f"선택 슬러그가 placeholders 에 잡힘: {placeholders}"
         assert (
             result.get("missing") == []
         ), f"키가 존재하는데 missing 에 잡혔다: {result.get('missing')}"
+        # 대신 optional_absent 에 드러난다 (ok 를 깎지 않는 힌트).
+        assert result.get("optional_absent") == [
+            "store_url_slug"
+        ], f"optional_absent 불일치: {result.get('optional_absent')}"
 
     def test_ok_false_when_placeholders(self, example_config_env: Path) -> None:
         """자리표시자가 하나라도 있으면 ok=False."""

@@ -1038,7 +1038,7 @@ def render_config_form_html(
 
     # store_url_slug.
     parts.append('<div class="field">')
-    parts.append(_field_label("store_url_slug", "스토어 URL 슬러그", required=True))
+    parts.append(_field_label("store_url_slug", "스토어 URL 슬러그", required=False))
     parts.append(
         '<input type="text" id="f-store_url_slug" name="store_url_slug" '
         'class="field-input" autocomplete="off" />'
@@ -1046,7 +1046,9 @@ def render_config_form_html(
     parts.append(_status_badge(bool(status.get("store_url_slug"))))
     parts.append(
         '<div class="field-guide">스토어 주소 <code>smartstore.naver.com/&lt;이 부분&gt;</code> '
-        "의 그 부분입니다. <strong>발급받는 값이 아닙니다</strong> — 스토어 주소의 일부입니다."
+        "의 그 부분입니다. <strong>발급받는 값이 아닙니다</strong> — 스토어 주소의 일부입니다. "
+        "<strong>선택 입력</strong>입니다 — 비워 두어도 설정 완료로 인정됩니다(안내·"
+        "미리보기 용도)."
         "</div>"
     )
     parts.append(

@@ -263,7 +263,16 @@ def _is_placeholder(value: Any) -> bool:
 
 
 def _required_naver_keys() -> tuple[str, ...]:
-    return ("client_id", "client_secret", "store_url_slug")
+    # store_url_slug 는 더 이상 필수가 아니다 — 인증 서명은
+    # client_id+client_secret 만 쓰고, API 어디에서도 슬러그를 요구하지 않는다
+    # (실측 2026-08-31: naver_client.py/register.py/preview.py grep 0건).
+    # 슬러그 부재가 사용자 온보딩을 막지 않게 한다 (FIX-slug-optional).
+    return ("client_id", "client_secret")
+
+
+def _optional_naver_keys() -> tuple[str, ...]:
+    # 값이 있으면 present 에 보존하고, 없으면 optional_absent 로만 드러낸다.
+    return ("store_url_slug",)
 
 
 def _resolve_upload_root() -> str:
@@ -1711,8 +1720,10 @@ def check_config(
     기본 동작(``read_existing=False``, ``probe=False``,
     ``include_public_ip=False``)은 외부 API 호출을 일절 하지 않는다.
     ``.local/config.json`` 파일의 존재, JSON 파싱 가능 여부, 그리고
-    ``naver.client_id`` / ``naver.client_secret`` / ``naver.store_url_slug``
-    세 키의 존재 및 플레이스홀더 미사용 여부를 확인한다.
+    ``naver.client_id`` / ``naver.client_secret``
+    두 필수 키의 존재 및 플레이스홀더 미사용 여부를 확인한다.
+    ``naver.store_url_slug`` 는 선택이다 — 값이 없어도 ``ok`` 가 깎이지
+    않고 ``optional_absent`` 로만 드러난다 (FIX-slug-optional).
     LLM은 이 도구로 "설정이 완료되었는가?" 를 분기 없이 확인할 수 있다.
 
     ``read_existing=True`` 일 때만, 판매자의 **기존 상품에서 스토어 정책값을
@@ -1746,7 +1757,8 @@ def check_config(
 
     Returns:
         ``{"ok": bool, "config_path": str, "present": {...}, "missing": [...],
-        "placeholders": [...], "origin_configured": bool, "origin_hint": str,
+        "placeholders": [...], "optional_absent": [...],
+        "origin_configured": bool, "origin_hint": str,
         "as_tel_configured": bool, "as_tel_hint": str, "error": str | None,
         "policy_gaps": [...], "suggested_from_existing": {...},
         "drift_from_existing": [...], "existing_read_error": str | None,
@@ -1758,6 +1770,8 @@ def check_config(
         - ``present``: 필수 키별 현재 값의 *존재 여부* (값 자체는 노출 안 함).
         - ``missing``: 누락된 필수 키 이름 목록.
         - ``placeholders``: 플레이스홀더로 남아있는 필수 키 이름 목록.
+        - ``optional_absent``: 값이 없는 선택 키 이름 목록
+          (``store_url_slug``). ``ok`` 에 영향을 주지 않는다.
         - ``origin_configured``: 원산지 정본 설정 여부(값 미노출).
         - ``as_tel_configured``: AS 전화번호 정본 설정 여부(값 미노출).
         - ``error``: 파일이 없거나 JSON 파싱에 실패한 경우의 메시지.
@@ -1850,8 +1864,10 @@ def check_config(
             result,
             cfg,
             cfg_path,
-            missing=["naver.client_id", "naver.client_secret", "naver.store_url_slug"],
+            missing=["naver.client_id", "naver.client_secret"],
         )
+        # 선택 슬러그도 이 경로에서는 부재 — optional_absent 로만 드러낸다.
+        result["optional_absent"] = list(_optional_naver_keys())
         # 설정 미완료 경로 — 인라인 설정 위젯(ui://) 리소스 안내를 얹는다.
         _attach_setup_ui_hint(result)
         # naver 섹션 비정상 경로에서도 템플릿 키를 얹는다(설정 진단과 무관).
@@ -1861,6 +1877,7 @@ def check_config(
 
     missing: list[str] = []
     placeholders: list[str] = []
+    optional_absent: list[str] = []
     present: dict[str, bool] = {}
 
     for key in _required_naver_keys():
@@ -1872,9 +1889,20 @@ def check_config(
         elif _is_placeholder(value):
             placeholders.append(key)
 
+    # 선택 키(store_url_slug) — 값이 있으면 present 에 보존하고, 없으면
+    # optional_absent 로만 드러낸다. missing/placeholders 에 넣지 않는다
+    # (온보딩을 막지 않는다). FIX-slug-optional.
+    for key in _optional_naver_keys():
+        value = naver.get(key)
+        exists = key in naver and value is not None and not _is_placeholder(value)
+        present[key] = exists
+        if not exists:
+            optional_absent.append(key)
+
     result["present"] = present
     result["missing"] = missing
     result["placeholders"] = placeholders
+    result["optional_absent"] = optional_absent
 
     # 원산지 설정 여부 점검 항목 추가.
     # 값 자체는 반환하지 않고 채워짐/비어있음만 보고한다.
@@ -1946,7 +1974,7 @@ def check_config(
     # ------------------------------------------------------------------ #
     # 최초 설정 폼 생성.
     #
-    # 설정이 비어 있을 때(키 3종 중 하나라도 missing/placeholder) 폼 HTML 을
+    # 설정이 비어 있을 때(필수 키 중 하나라도 missing/placeholder) 폼 HTML 을
     # 생성하고 경로를 반환한다. 사용자가 브라우저에서 폼을 열어 채우고 [저장]을
     # 누르면 설정 폼 서버(config_form_server) 가 설정 파일에 기록한다.
     #
@@ -1959,7 +1987,7 @@ def check_config(
     # ------------------------------------------------------------------ #
     _generate_config_form(result, cfg, cfg_path, missing=missing, placeholders=placeholders)
 
-    # 설정 미완료(키 3종 중 하나라도 missing/placeholder)일 때만 인라인 설정
+    # 설정 미완료(필수 키 중 하나라도 missing/placeholder)일 때만 인라인 설정
     # 위젯(ui://) 리소스 안내를 얹는다. 설정이 완료면 넣지 않는다 — 불필요한
     # 화면 유발 금지. 기존 키는 하나도 바꾸지 않는다.
     if missing or placeholders:
