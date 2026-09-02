@@ -632,6 +632,8 @@ class TestToolRegistrationPreserved:
         ``["색상","사이즈"]``) 을 naver_client._build_option_info 로
         전달하기 위해 추가된 키워드 전용 인자다. deferred_notice_fields 는
         판매자가 "상세페이지 참조" 로 미루기로 선택한 고시 필드명 리스트다.
+        customer_benefit 는 구매/리뷰 혜택(customerBenefit) 전달을 위해
+        끝에 추가된 키워드 전용 인자다.
         기존 파라미터 순서는 변경되지 않았고, 새 인자는 끝에 추가되었다.
         """
         import inspect
@@ -656,6 +658,7 @@ class TestToolRegistrationPreserved:
             "option_groups",
             "deferred_notice_fields",
             "attributes",
+            "customer_benefit",
         ]
         assert param_names == expected, f"시그니처 변경 감지: {param_names}"
 

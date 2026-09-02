@@ -3020,6 +3020,302 @@ def _validate_product_attributes(raw):
     return validated
 
 
+# ---------------------------------------------------------------------------
+# customerBenefit(상품 고객 혜택) 검증 — 문서 스펙 그대로(창작 금지).
+#
+# 근거 문서: 운영 문서 색인의 커머스API "원상품 정보 구조체" 스키마
+# (2.80.0~current) — customerBenefit 하위 정책 8종.
+# 문서에 있는 필드·범위만 검증한다. 문서에 없는 필드는 허용하지 않는다.
+# ---------------------------------------------------------------------------
+_BENEFIT_TOP_KEYS = frozenset(
+    {
+        "immediateDiscountPolicy",
+        "purchasePointPolicy",
+        "reviewPointPolicy",
+        "freeInterestPolicy",
+        "giftPolicy",
+        "multiPurchaseDiscountPolicy",
+        "reservedDiscountPolicy",
+        "promotionDiscountPolicies",
+    }
+)
+# discountMethod 계열 정책 허용 키(시작일/종료일 포함).
+_BENEFIT_DISCOUNT_METHOD_KEYS = frozenset({"discountMethod", "startDate", "endDate"})
+_BENEFIT_UNIT_TYPES = frozenset({"PERCENT", "WON"})
+_BENEFIT_ORDER_VALUE_UNIT_TYPES = frozenset({"COUNT", "WON"})
+_BENEFIT_REVIEW_POINT_KEYS = frozenset(
+    {
+        "textReviewPoint",
+        "photoVideoReviewPoint",
+        "afterUseTextReviewPoint",
+        "afterUsePhotoVideoReviewPoint",
+        "storeMemberReviewPoint",
+        "startDate",
+        "endDate",
+    }
+)
+
+
+def _validate_benefit_discount_method(node, path):
+    """discountMethod 할인 혜택 노드를 문서 스펙대로 검증한다.
+
+    - ``value`` (number, required): 1 이상 10,000,000 이하.
+    - ``unitType`` (string, required): PERCENT | WON (문서상 허용값).
+    """
+    if not isinstance(node, dict):
+        raise ValueError(f"{path} 는 dict(discountMethod) 여야 합니다.")
+    unknown = set(node.keys()) - {"value", "unitType"}
+    if unknown:
+        raise ValueError(
+            f"{path} 에 문서에 없는 키가 있습니다: {sorted(unknown)}. "
+            "허용 키: value, unitType (원상품 정보 구조체 스펙)."
+        )
+    value = node.get("value")
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"{path}.value 는 number 여야 합니다 (got {value!r}).")
+    if not (1 <= value <= 10000000):
+        raise ValueError(f"{path}.value 는 1 이상 10000000 이하여야 합니다 (got {value!r}).")
+    unit = node.get("unitType")
+    if unit not in _BENEFIT_UNIT_TYPES:
+        raise ValueError(f"{path}.unitType 은 PERCENT 또는 WON 이어야 합니다 (got {unit!r}).")
+    return {"value": value, "unitType": unit}
+
+
+def _validate_benefit_policy(node, path, *, allowed_keys, required_keys):
+    """정책 노드 공통 검증: 문서 허용 키·필수 키."""
+    if not isinstance(node, dict):
+        raise ValueError(f"{path} 는 dict 여야 합니다.")
+    unknown = set(node.keys()) - allowed_keys
+    if unknown:
+        raise ValueError(
+            f"{path} 에 문서에 없는 키가 있습니다: {sorted(unknown)}. "
+            f"허용 키: {sorted(allowed_keys)}."
+        )
+    for required in required_keys:
+        if required not in node:
+            raise ValueError(f"{path} 에 필수 키 '{required}' 가 없습니다.")
+
+
+def _validate_customer_benefit(raw):
+    """customerBenefit(상품 고객 혜택) 입력을 **문서 스펙 그대로** 검증한다.
+
+    구조(커머스API 원상품 정보 구조체 — 문서 근거, 창작 금지)::
+
+        customerBenefit:
+          immediateDiscountPolicy: {discountMethod{value,unitType},
+                                    startDate(date-time), endDate(date-time)}
+          purchasePointPolicy:     {value(number), unitType(PERCENT|WON),
+                                    startDate(date), endDate(date)}
+          reviewPointPolicy:       {textReviewPoint|photoVideoReviewPoint|
+                                    afterUseTextReviewPoint|
+                                    afterUsePhotoVideoReviewPoint|
+                                    storeMemberReviewPoint (integer<int32>),
+                                    startDate(date), endDate(date)}
+          freeInterestPolicy:      {value(integer<int32>), startDate, endDate}
+          giftPolicy:             {presentContent(string)}
+          multiPurchaseDiscountPolicy: {discountMethod{...}, startDate, endDate,
+                                        orderValue(number), orderValueUnitType(COUNT|WON)}
+          reservedDiscountPolicy:  {discountMethod{...},
+                                    startDate(date-time,필수), endDate(date-time,필수)}
+          promotionDiscountPolicies: [{promotionName, discountMethod{...},
+                                       startDate, endDate}, ...]
+
+    본 함수는 값을 만들지 않는다 — 형태·범위만 검증하고 통과한 입력을 그대로
+    돌려준다. ``None``/빈 dict → ``None`` (키 부재 = 미전송, 기존 거동 무변).
+
+    Raises:
+        ValueError: 형태·범위 위반(문서에 없는 키, 범위 밖 값, 타입 위반).
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError(
+            "customer_benefit 입력은 dict 여야 합니다. "
+            f"받은 타입: {type(raw).__name__} (문서 스펙 위반 — 거부)."
+        )
+    if not raw:
+        return None
+    unknown_top = set(raw.keys()) - _BENEFIT_TOP_KEYS
+    if unknown_top:
+        raise ValueError(
+            "customer_benefit 에 문서(원상품 정보 구조체)에 없는 키가 있습니다: "
+            f"{sorted(unknown_top)}. 허용 키: {sorted(_BENEFIT_TOP_KEYS)}."
+        )
+    validated: dict = {}
+
+    if "immediateDiscountPolicy" in raw:
+        node = raw["immediateDiscountPolicy"]
+        _validate_benefit_policy(
+            node,
+            "customer_benefit.immediateDiscountPolicy",
+            allowed_keys=_BENEFIT_DISCOUNT_METHOD_KEYS,
+            required_keys=(),
+        )
+        if "discountMethod" in node:
+            node = {
+                **node,
+                "discountMethod": _validate_benefit_discount_method(
+                    node["discountMethod"],
+                    "customer_benefit.immediateDiscountPolicy.discountMethod",
+                ),
+            }
+        validated["immediateDiscountPolicy"] = dict(node)
+
+    if "purchasePointPolicy" in raw:
+        node = raw["purchasePointPolicy"]
+        _validate_benefit_policy(
+            node,
+            "customer_benefit.purchasePointPolicy",
+            allowed_keys=frozenset({"value", "unitType", "startDate", "endDate"}),
+            required_keys=("value", "unitType"),
+        )
+        if node.get("unitType") not in _BENEFIT_UNIT_TYPES:
+            raise ValueError(
+                "customer_benefit.purchasePointPolicy.unitType 은 PERCENT 또는 "
+                f"WON 이어야 합니다 (got {node.get('unitType')!r})."
+            )
+        if "startDate" in node and "endDate" not in node:
+            raise ValueError(
+                "customer_benefit.purchasePointPolicy 는 startDate 를 입력하면 "
+                "endDate 가 필수입니다 (문서 스펙)."
+            )
+        validated["purchasePointPolicy"] = dict(node)
+
+    if "reviewPointPolicy" in raw:
+        node = raw["reviewPointPolicy"]
+        _validate_benefit_policy(
+            node,
+            "customer_benefit.reviewPointPolicy",
+            allowed_keys=_BENEFIT_REVIEW_POINT_KEYS,
+            required_keys=(),
+        )
+        for point_key in (
+            "textReviewPoint",
+            "photoVideoReviewPoint",
+            "afterUseTextReviewPoint",
+            "afterUsePhotoVideoReviewPoint",
+            "storeMemberReviewPoint",
+        ):
+            point = node.get(point_key)
+            if point is None:
+                continue
+            if isinstance(point, bool) or not isinstance(point, int):
+                raise ValueError(
+                    f"customer_benefit.reviewPointPolicy.{point_key} 는 "
+                    f"integer<int32> 여야 합니다 (got {point!r})."
+                )
+        if "startDate" in node and "endDate" not in node:
+            raise ValueError(
+                "customer_benefit.reviewPointPolicy 는 startDate 를 입력하면 "
+                "endDate 가 필수입니다 (문서 스펙)."
+            )
+        validated["reviewPointPolicy"] = dict(node)
+
+    if "freeInterestPolicy" in raw:
+        node = raw["freeInterestPolicy"]
+        _validate_benefit_policy(
+            node,
+            "customer_benefit.freeInterestPolicy",
+            allowed_keys=frozenset({"value", "startDate", "endDate"}),
+            required_keys=("value",),
+        )
+        months = node["value"]
+        if isinstance(months, bool) or not isinstance(months, int):
+            raise ValueError(
+                "customer_benefit.freeInterestPolicy.value 는 "
+                f"integer<int32>(무이자 할부 개월 수) 여야 합니다 (got {months!r})."
+            )
+        if "startDate" in node and "endDate" not in node:
+            raise ValueError(
+                "customer_benefit.freeInterestPolicy 는 startDate 를 입력하면 "
+                "endDate 가 필수입니다 (문서 스펙)."
+            )
+        validated["freeInterestPolicy"] = dict(node)
+
+    if "giftPolicy" in raw:
+        node = raw["giftPolicy"]
+        _validate_benefit_policy(
+            node,
+            "customer_benefit.giftPolicy",
+            allowed_keys=frozenset({"presentContent"}),
+            required_keys=(),
+        )
+        if "presentContent" in node and not isinstance(node["presentContent"], str):
+            raise ValueError(
+                "customer_benefit.giftPolicy.presentContent 는 string(사은품 내용)"
+                f" 이어야 합니다 (got {node['presentContent']!r})."
+            )
+        validated["giftPolicy"] = dict(node)
+
+    if "multiPurchaseDiscountPolicy" in raw:
+        node = raw["multiPurchaseDiscountPolicy"]
+        _validate_benefit_policy(
+            node,
+            "customer_benefit.multiPurchaseDiscountPolicy",
+            allowed_keys=frozenset(
+                {"discountMethod", "startDate", "endDate", "orderValue", "orderValueUnitType"}
+            ),
+            required_keys=("discountMethod", "orderValue", "orderValueUnitType"),
+        )
+        if "discountMethod" in node:
+            node = {
+                **node,
+                "discountMethod": _validate_benefit_discount_method(
+                    node["discountMethod"],
+                    "customer_benefit.multiPurchaseDiscountPolicy.discountMethod",
+                ),
+            }
+        if node.get("orderValueUnitType") not in _BENEFIT_ORDER_VALUE_UNIT_TYPES:
+            raise ValueError(
+                "customer_benefit.multiPurchaseDiscountPolicy.orderValueUnitType 은 "
+                f"COUNT 또는 WON 이어야 합니다 (got {node.get('orderValueUnitType')!r})."
+            )
+        validated["multiPurchaseDiscountPolicy"] = dict(node)
+
+    if "reservedDiscountPolicy" in raw:
+        node = raw["reservedDiscountPolicy"]
+        _validate_benefit_policy(
+            node,
+            "customer_benefit.reservedDiscountPolicy",
+            allowed_keys=_BENEFIT_DISCOUNT_METHOD_KEYS,
+            required_keys=("startDate", "endDate"),
+        )
+        if "discountMethod" in node:
+            node = {
+                **node,
+                "discountMethod": _validate_benefit_discount_method(
+                    node["discountMethod"],
+                    "customer_benefit.reservedDiscountPolicy.discountMethod",
+                ),
+            }
+        validated["reservedDiscountPolicy"] = dict(node)
+
+    if "promotionDiscountPolicies" in raw:
+        promos = raw["promotionDiscountPolicies"]
+        if not isinstance(promos, list):
+            raise ValueError("customer_benefit.promotionDiscountPolicies 는 리스트여야 합니다.")
+        checked_promos = []
+        for idx, promo in enumerate(promos):
+            path = f"customer_benefit.promotionDiscountPolicies[{idx}]"
+            _validate_benefit_policy(
+                promo,
+                path,
+                allowed_keys=frozenset({"promotionName", "discountMethod", "startDate", "endDate"}),
+                required_keys=(),
+            )
+            if "discountMethod" in promo:
+                promo = {
+                    **promo,
+                    "discountMethod": _validate_benefit_discount_method(
+                        promo["discountMethod"], f"{path}.discountMethod"
+                    ),
+                }
+            checked_promos.append(dict(promo))
+        validated["promotionDiscountPolicies"] = checked_promos
+
+    return validated
+
+
 def build_payload(p, detail_html, images, status="SALE", deferred_notice_fields=None):
     """상품 dict(p) + 상세HTML + 이미지URL들 → 등록 payload.
     p keys: name, categoryId, salePrice, options[{name,stock}], tags[], notice{...}, as_tel, as_guide, origin_code, display
@@ -3097,6 +3393,12 @@ def build_payload(p, detail_html, images, status="SALE", deferred_notice_fields=
     validated_attributes = _validate_product_attributes(p.get("attributes"))
     if validated_attributes is not None:
         detail_attribute["productAttributes"] = validated_attributes
+    # customerBenefit: 구매/리뷰 혜택(문서 스펙 — 원상품 정보 구조체). 값이
+    # 있을 때만 originProduct.customerBenefit 로 싣는다. 형태·범위 위반은
+    # _validate_customer_benefit 가 ValueError 로 거부한다(fail-closed).
+    # None/빈 dict → 키 자체를 넣지 않는다(기존 거동 무변).
+    validated_benefit = _validate_customer_benefit(p.get("customer_benefit"))
+    payload_customer_benefit = validated_benefit  # None 이면 키를 넣지 않는다.
 
     payload = {
         "originProduct": {
@@ -3135,6 +3437,10 @@ def build_payload(p, detail_html, images, status="SALE", deferred_notice_fields=
             "channelProductDisplayStatusType": p.get("display", display_default),
         },
     }
+    # customerBenefit 는 검증 통과 시에만 originProduct 하위에 싣는다
+    # (스펙 상 원상품 구조체의 자리). 조용한 생략도 조용한 변형도 없다.
+    if payload_customer_benefit is not None:
+        payload["originProduct"]["customerBenefit"] = payload_customer_benefit
     # KC 설정 부재 경고를 페이로드 메타에 포함(조용한 생략 금지).
     if kc_warning:
         payload["_kcWarning"] = kc_warning

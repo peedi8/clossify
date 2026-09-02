@@ -1422,7 +1422,134 @@ def _resolve_tags(
 # ---------------------------------------------------------------------------
 
 
-def prepare_listing(d, *, attach_fn=None, generate_fn=None, recommend_fn=None, restricted_fn=None):
+_SEO_TAG_TOKEN_RE = re.compile(r"[0-9A-Za-z가-힣]+")
+# 태그 후보로 쓸 수 없는 순수 숫자/1글자 조각은 거른다(길이 2 이상).
+_SEO_TAG_MIN_LEN = 2
+
+
+def _option_name_tokens(options) -> list[str]:
+    """옵션 조합에서 옵션값 텍스트(name · optionName1..3) 만 모은다."""
+    tokens: list[str] = []
+    for opt in options or []:
+        if not isinstance(opt, dict):
+            continue
+        for key in ("name", "optionName1", "optionName2", "optionName3"):
+            value = opt.get(key)
+            if isinstance(value, str) and value.strip():
+                tokens.extend(_SEO_TAG_TOKEN_RE.findall(value))
+    return tokens
+
+
+def _build_seo_tags_suggestion(name, options, category_path):
+    """로컬 규칙만으로 판매자태그 후보를 만든다 (외부 호출 0회).
+
+    재료(워크오더 Part A): 상품명 유지 키워드 + 옵션명 명사 + 카테고리 경로
+    어휘. 토큰화는 단순 문자 클래스(한글·영숫자 연속) — 새 어휘 분석기를
+    만들지 않는다. 순수 숫자·1글자 조각은 버리고, 중복을 제거해 최대 10개.
+
+    Returns:
+        ``{"tags": [...], "basis": [...], "reason": str|None}`` — 재료가 없어
+        만들 수 없으면 ``tags`` 가 빈 리스트이고 ``reason`` 에 사유가 있다
+        (조용한 생략 금지).
+    """
+    basis: list[str] = []
+    seen: set[str] = set()
+    tags: list[str] = []
+
+    def _take(tokens, source_label):
+        for token in tokens:
+            token = str(token or "").strip()
+            if len(token) < _SEO_TAG_MIN_LEN or token.isdigit():
+                continue
+            if token in seen:
+                continue
+            seen.add(token)
+            tags.append(token)
+            basis.append(f"{source_label}:{token}")
+            if len(tags) >= 10:
+                return
+
+    _take(_SEO_TAG_TOKEN_RE.findall(str(name or "")), "name")
+    if len(tags) < 10:
+        _take(_option_name_tokens(options), "option")
+    if len(tags) < 10:
+        _take(_SEO_TAG_TOKEN_RE.findall(str(category_path or "").replace(">", " ")), "category")
+    if not tags:
+        return {
+            "tags": [],
+            "basis": [],
+            "reason": (
+                "상품명·옵션명·카테고리 경로에서 태그 재료(2글자 이상 명사형) 를 "
+                "찾지 못했습니다."
+            ),
+        }
+    return {"tags": tags, "basis": basis, "reason": None}
+
+
+def _default_attributes_suggest(category_id, product_text):
+    """카테고리 속성 제안 기본 구현 — 외부 API(속성/속성값 조회) 1회 경로.
+
+    ``suggest_product_attributes`` MCP 도구와 같은 조회·대조 로직을 쓴다:
+    카테고리 속성 목록 → 첫 속성 attributeSeq 로 속성값 전체 조회 →
+    ``attribute_suggestions.suggest_category_attributes`` 문자 일치.
+
+    Returns:
+        ``{"ok": bool, "suggestions": list|None, "error": str|None}``.
+    """
+    from . import attribute_suggestions
+    from . import naver_client as _nc
+
+    try:
+        status, body = _nc.get_category_attributes(category_id)
+    except Exception as exc:  # 조회 실패 — 조용히 삼키지 않고 error 로 드러낸다.
+        return {"ok": False, "suggestions": None, "error": f"속성 목록 조회 실패: {exc}"}
+    if status != 200 or not isinstance(body, list):
+        return {
+            "ok": False,
+            "suggestions": None,
+            "error": f"속성 목록 API 반환 상태 {status}(list 아님 가능) — 제안 불가.",
+        }
+    first = next(
+        (
+            attr
+            for attr in body
+            if isinstance(attr, dict) and attr.get("attributeSeq") not in (None, "")
+        ),
+        None,
+    )
+    if first is None:
+        return {
+            "ok": False,
+            "suggestions": None,
+            "error": "속성 목록이 비어 있어 제안할 수 없습니다.",
+        }
+    try:
+        values_status, values_body = _nc.get_category_attribute_values(
+            category_id, first["attributeSeq"]
+        )
+    except Exception as exc:
+        return {"ok": False, "suggestions": None, "error": f"속성값 목록 조회 실패: {exc}"}
+    if values_status != 200 or not isinstance(values_body, list) or not values_body:
+        return {
+            "ok": False,
+            "suggestions": None,
+            "error": (
+                f"속성값 목록 API 반환 상태 {values_status} — 제안 불가" "(빈 목록 성공 취급 금지)."
+            ),
+        }
+    suggestions = attribute_suggestions.suggest_category_attributes(product_text, body, values_body)
+    return {"ok": True, "suggestions": suggestions, "error": None}
+
+
+def prepare_listing(
+    d,
+    *,
+    attach_fn=None,
+    generate_fn=None,
+    recommend_fn=None,
+    restricted_fn=None,
+    attributes_fn=None,
+):
     """상품 정보 + 이미지 소스 로 prepared payload 를 만든다.
 
     본 함수는 등록 전 단계를 수행한다: 이미지 정규화, (선택) 이미지 생성
@@ -1695,6 +1822,82 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None, recommend_fn=None, r
     )
     final_tags = list(tag_resolution.get("final_tags") or [])
 
+    # --- 3.6. 태그·속성 자동 제안 (워크오더 Part A/B) ---
+    # 태그 제안: 로컬 규칙만(외부 호출 0회). 상품명·옵션명·카테고리 경로가
+    # 재료다. 사용자 태그가 있더라도 제안은 만들어 반환한다 — 등록 단계에서
+    # 채용 여부를 판단한다(명시 tags 항상 우선).
+    _suggest_cat_path = ""
+    try:
+        _suggest_cat_path = _category_path_for(category_id) if category_id else ""
+    except Exception:
+        _suggest_cat_path = ""
+    seo_tags_suggestion = _build_seo_tags_suggestion(name, d.get("options"), _suggest_cat_path)
+
+    # 속성 제안: 카테고리 확정 시에만 외부 API(속성·속성값 조회) 1회 경로.
+    # 실패는 조용히 삼키지 않고 attributes_error 로 드러내되 준비를 막지 않는다.
+    # 상품명·옵션명 텍스트와 **문자열 일치**하는 속성값만 확신 제안이 된다.
+    attributes_suggestion: list[dict] = []
+    attributes_suggestion_basis: list[str] = []
+    attributes_error: str | None = None
+    attributes_needs_user_hint: dict | None = None
+    if category_id:
+        _attr_fn = attributes_fn if attributes_fn is not None else _default_attributes_suggest
+        _option_text = " ".join(_option_name_tokens(d.get("options")))
+        _attr_result = _attr_fn(
+            category_id, {"name": f"{name} {_option_text}".strip(), "detail": ""}
+        )
+        if not _attr_result.get("ok"):
+            attributes_error = str(_attr_result.get("error") or "속성 제안 조회 실패(사유 미상).")
+        else:
+            for row in _attr_result.get("suggestions") or []:
+                if not isinstance(row, dict) or row.get("status") != "matched":
+                    continue
+                # attributeSeq 는 속성(row) 에, attributeValueSeq 는 선택값
+                # (selected) 에 있다 — attribute_suggestions.suggest_category_
+                # attributes 의 반환 형태 그대로(창작 금지).
+                row_attr_seq = row.get("attributeSeq")
+                if not isinstance(row_attr_seq, int):
+                    continue
+                for selected in row.get("selected") or []:
+                    if not isinstance(selected, dict):
+                        continue
+                    if not isinstance(selected.get("attributeValueSeq"), int):
+                        continue
+                    attributes_suggestion.append(
+                        {
+                            "attributeSeq": row_attr_seq,
+                            "attributeValueSeq": selected["attributeValueSeq"],
+                        }
+                    )
+                    attributes_suggestion_basis.append(
+                        str(row.get("attributeName") or "")
+                        + "="
+                        + str(selected.get("minAttributeValue") or "")
+                        + " ("
+                        + str(selected.get("evidence") or "")
+                        + ")"
+                    )
+            # 일치 없는 속성의 후보는 needs_user 로 드러낸다(조용한 생략 금지).
+            # 확신 제안이 일부 있어도, 여전히 일치를 못 한 속성이 있으면
+            # 사용자가 후보에서 골라야 한다 — 제안이 있다고 미해결 속성이
+            # 사라지는 게 아니다.
+            _candidates_summary = [
+                f"{row.get('attributeName')}(후보 {len(row.get('candidates') or [])}개)"
+                for row in (_attr_result.get("suggestions") or [])
+                if isinstance(row, dict)
+                and row.get("status") != "matched"
+                and (row.get("candidates") or [])
+            ]
+            if _candidates_summary:
+                attributes_needs_user_hint = {
+                    "field": "attributes",
+                    "label": "상품속성 선택 필요",
+                    "why": (
+                        "상품명·옵션명과 문자열 일치하는 속성값이 없어 자동 채용할 "
+                        "확신 제안이 없습니다. 후보: " + ", ".join(_candidates_summary[:10])
+                    ),
+                }
+
     # deferred_notice_fields 를 한 번 정제해 컴플라이언스 검사와
     # payload 저장 양쪽에 같은 값을 쓴다. 등록 단계(mcp_server._validate
     # _deferred_notice_fields) 와 같은 원산지/allowlist/boolean-date 검증을
@@ -1927,6 +2130,10 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None, recommend_fn=None, r
             }
         )
 
+    # 속성 확신 제안이 없고 후보가 있으면 사용자 선택을 요청한다(조용한 생략 금지).
+    if attributes_needs_user_hint is not None:
+        needs_user.append(attributes_needs_user_hint)
+
     # --- 6. prepared payload 저장 ---
     payload = {
         "product_key": product_key,
@@ -2006,6 +2213,16 @@ def prepare_listing(d, *, attach_fn=None, generate_fn=None, recommend_fn=None, r
     # (사용자/네이버 추천), 어떤 태그가 제한 판정을 받았는지, API 호출이
     # 실패했는지를 드러낸다 (조용한 자동 채움/드롭 금지).
     payload["tags_meta"] = tag_resolution
+    # 태그·속성 자동 제안(워크오더 Part A/B). 등록 단계(register_product) 가
+    # prepared 에서 읽어 자동 채용한다 — 명시 인자가 항상 우선이다.
+    # 제안 불가 사유(reason)·조회 실패(attributes_error) 도 항상 남긴다
+    # (조용한 생략 금지).
+    payload["seo_tags_suggestion"] = seo_tags_suggestion
+    if attributes_suggestion:
+        payload["attributes_suggestion"] = list(attributes_suggestion)
+        payload["attributes_suggestion_basis"] = list(attributes_suggestion_basis)
+    if attributes_error is not None:
+        payload["attributes_error"] = attributes_error
     write_prepared_payload(payload)
 
     # --- 7. 미리보기 HTML 파일 생성 ---

@@ -2495,6 +2495,7 @@ def register_product(
     option_groups: list[str] | None = None,
     deferred_notice_fields: list[str] | None = None,
     attributes: list[dict[str, Any]] | None = None,
+    customer_benefit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """상품 정보를 받아 등록 페이로드를 빌드하고 네이버 커머스 API 로 등록한다.
 
@@ -2585,7 +2586,18 @@ def register_product(
             (오늘 제조사·수입사·배송비에서 한 것과 같은 자리·같은 방식). 명시
             입력이 우선한다. 검증은 기존 ``naver_client._validate_product_attributes``
             를 그대로 쓴다(새 판정 함수 금지). **값을 만들거나 추론하지 마라** —
-            명시적 ID 만 싣는다.
+            명시적 ID 만 싣는다. ``attributes`` 미지정이고 prepared 에 확신
+            제안(``attributes_suggestion`` — 상품명·옵션명과 문자열 일치) 이
+            있으면 자동 채용하며 ``filled_from_prepared`` 에 ``"attributes"``
+            로 드러난다.
+        customer_benefit: 구매/리뷰 혜택(customerBenefit — 커머스API 원상품
+            정보 구조체 스펙). 형태는 문서 그대로만 허용한다(예:
+            ``{"purchasePointPolicy": {"value": 1, "unitType": "PERCENT"},
+            "reviewPointPolicy": {"textReviewPoint": 100}}``). 검증은
+            ``naver_client._validate_customer_benefit`` 가 문서 타입/범위
+            그대로 수행하고 위반 시 거부한다(fail-closed). ``None`` (기본값)
+            이면 키를 실지 않는다 — 기존 거동 무변. 값을 만들거나 추론하지
+            않는다(호출자가 문서 스펙 값을 명시해야 한다).
 
     Returns:
         ``{"ok": bool, "status_code": int | None, "origin_product_no": str | None,
@@ -3140,12 +3152,21 @@ def register_product(
             if isinstance(_prepared_notice, dict) and _prepared_notice:
                 notice = _prepared_notice
                 filled_from_prepared.append("notice")
-        # tags: prepared.product.tags. SEO 카피값.
+        # tags: prepared.product.tags. SEO 카피값. prepared 에 태그가 없어도
+        # 준비 단계의 로컬 제안(seo_tags_suggestion) 이 있으면 자동 채용한다
+        # (워크오더 Part A — 조용히 흐르지 않게 filled_from_prepared 표기).
+        # 명시 tags 는 항상 우선이다(_need_tags 확인으로 보장).
         if _need_tags:
             _prepared_tags = _fp_product.get("tags")
             if isinstance(_prepared_tags, list) and _prepared_tags:
                 tags = list(_prepared_tags)
                 filled_from_prepared.append("tags")
+            elif tags is None:
+                _suggestion = _fill_prepared.get("seo_tags_suggestion")
+                _suggested_tags = _suggestion.get("tags") if isinstance(_suggestion, dict) else None
+                if isinstance(_suggested_tags, list) and _suggested_tags:
+                    tags = [str(t) for t in _suggested_tags if str(t or "").strip()]
+                    filled_from_prepared.append("tags")
         # options: prepared.product.options. 옵션 조합 목록.
         if _need_options:
             _prepared_options = _fp_product.get("options")
@@ -3183,6 +3204,13 @@ def register_product(
             if isinstance(_prepared_attrs, list) and _prepared_attrs:
                 attributes = list(_prepared_attrs)
                 filled_from_prepared.append("attributes")
+            elif attributes is None:
+                # 준비 단계의 확신 제안(상품명·옵션명 문자열 일치) 자동 채용
+                # (워크오더 Part B). ID 참조 원칙 — 제안도 명시적 ID 목록이다.
+                _prepared_suggest = _fill_prepared.get("attributes_suggestion")
+                if isinstance(_prepared_suggest, list) and _prepared_suggest:
+                    attributes = list(_prepared_suggest)
+                    filled_from_prepared.append("attributes")
 
     # ------------------------------------------------------------------ #
     # **5라운드 감리 ②**: manufacturer·importer 복원은 ``_needs_any`` 와
@@ -3355,6 +3383,11 @@ def register_product(
     # 가 형태를 검증한다(문자 ID·모르는 키 거부 — 새 판정 함수 금지).
     if attributes is not None:
         product["attributes"] = list(attributes)
+    # customer_benefit: 구매/리뷰 혜택. None 이면 키를 넣지 않는다(기존 거동
+    # 무변). 값이 있으면 build_payload → _validate_customer_benefit 가 문서
+    # 스펙(타입/범위) 그대로 검증하고 originProduct.customerBenefit 로 싣는다.
+    if customer_benefit is not None:
+        product["customer_benefit"] = customer_benefit
 
     try:
         payload = naver_client.build_payload(
@@ -5246,6 +5279,13 @@ def prepare_listing(
         # SEO 상품명 제안(제안 전용 — D119: itemName 품명에 자동 반영 금지).
         # 로컬 규칙(copywriting/seo 기존 함수)만 쓰고 외부 호출 0회.
         "seo_title_suggestion": _build_seo_title_suggestion(payload),
+        # 태그 자동 제안(워크오더 Part A — 로컬 규칙, 외부 호출 0회).
+        # 등록 단계에서 tags 미지정 시 자동 채용된다(명시 tags 우선).
+        "seo_tags_suggestion": payload.get("seo_tags_suggestion"),
+        # 속성 자동 제안(워크오더 Part B — 카테고리 확정 시에만 조회).
+        # 확신 제안(문자열 일치)만 들어간다. 조회 실패는 attributes_error 로.
+        "attributes_suggestion": payload.get("attributes_suggestion"),
+        "attributes_error": payload.get("attributes_error"),
         # 성공 경로에도 키를 항상 포함한다. 결정론 컴플라이언스 FAIL 이면
         # 등록에 필요한 누락을 한 번에 넣고, 그 밖에는 None 이다.
         "requirements": None if requirements is None else requirements,
