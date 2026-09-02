@@ -37,6 +37,30 @@ KNOWN_RESTRICTED_SELLER_TAGS = {"인테리어", "화병", "도자기", "꽃병"}
 # 네이버 커머스 API 상품명 최대 길이(정책). 초과 시 등록 거절.
 MAX_PRODUCT_NAME_LEN = 50
 
+# 보유 API 정본 「(v2) 상품 등록」 스키마 실측(2026-09-02):
+# originProduct.detailAttribute.seoInfo 하위 가산점 필드 상한.
+# 미입력 시 플랫폼 기본값이 적용될 뿐 등록은 막히지 않는다 — 초과 입력은
+# 거부가 아니라 단어 경계 절단 + truncated 표기로 처리한다.
+SEO_PAGE_TITLE_MAX_LEN = 100
+SEO_META_DESCRIPTION_MAX_LEN = 160
+
+
+def _truncate_seo_text(text, max_len):
+    """seoInfo 가산점 필드용 단어 경계 절단. ``(잘린값, truncated)`` 반환.
+
+    가산점 필드(pageTitle/metaDescription) 는 길이 초과가 등록을 막으면 안
+    된다(미입력 시 플랫폼 기본값이 적용되는 필드). 따라서 거부 대신 절단한다.
+    절단은 단어(공백) 경계에서 하되, 공백이 없으면 하드컷한다(빈 값 방지).
+    """
+    text = str(text or "").strip()
+    if len(text) <= max_len:
+        return text, False
+    cut = text[:max_len].rstrip()
+    if " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    cut = (cut or text[:max_len]).strip()
+    return cut, cut != text
+
 
 # 네이버 커머스 API originAreaInfo.originAreaCode 표준 코드 화이트리스트.
 # 특정 해외국 코드를 기본값으로 갖지 않는다. 원산지는 판매자가 config 에
@@ -2255,6 +2279,7 @@ _INTERNAL_PAYLOAD_META_KEYS = frozenset(
     {
         "notice_filled_from_config",
         "_kcWarning",
+        "seo_meta_truncated",
     }
 )
 
@@ -2265,6 +2290,8 @@ def _strip_internal_meta(payload):
     ``build_payload`` 는 내부 보고/사용자 안내용 메타를 페이로드 루트에 싣는다:
       - ``notice_filled_from_config``: 공통 5필드 중 config 에서 채운 항목 보고.
       - ``_kcWarning``: KC 설정 부재 경고.
+      - ``seo_meta_truncated``: seoInfo 가산점 필드(pageTitle/metaDescription)
+        중 단어 경계 절단이 일어난 항목 보고.
 
     이 값들은 사용자에게는 보여야 하지만 **네이버 요청 JSON 에는 없어야 한다.**
     네이버 스키마에 없는 키라 거절될 수 있고, 애초에 내부 메타를 외부로 보내면
@@ -3332,6 +3359,13 @@ def build_payload(p, detail_html, images, status="SALE", deferred_notice_fields=
     형태 위반(문자 ID·모르는 키)은 ValueError 로 거부한다(fail-closed).
     없거나 빈 리스트면 키 자체를 넣지 않는다(빈 배열 전송 금지).
     값을 만들거나 추론하지 않는다 — ID 참조 원칙.
+
+    ``p.page_title``·``p.meta_description`` (선택): seoInfo 가산점 필드
+    (정본 스키마: pageTitle <= 100자, metaDescription <= 160자). 값이 있을 때만
+    ``originProduct.detailAttribute.seoInfo`` 하위에 **sellerTags 와 병합**해
+    싣는다(태그를 덮어쓰지 않는다). 가산점 필드이므로 길이 초과는 거부가 아니라
+    단어 경계 절단이며, 절단이 일어나면 페이로드 루트 메타
+    ``seo_meta_truncated`` 에 항목명이 남는다(송신 직전 제거 — 내부 메타).
     """
     if status not in {"SALE", "SUSPENSION"}:
         raise ValueError("status must be one of {'SALE', 'SUSPENSION'}")
@@ -3373,6 +3407,26 @@ def build_payload(p, detail_html, images, status="SALE", deferred_notice_fields=
     # KC 부재 경고를 페이로드 메타에 포함한다.
     kc_block, kc_warning = _kc_config()
 
+    # seoInfo: 판매자태그(sellerTags) 는 기존 배선 그대로 두고, 가산점 필드
+    # pageTitle·metaDescription 을 **병합**한다 — 태그를 덮어쓰지 않는다.
+    # (보유 API 정본 스키마: pageTitle <= 100자, metaDescription <= 160자.
+    # 미입력 시 플랫폼 기본값이 적용되는 가산점 필드이므로 초과 입력은 거부가
+    # 아니라 단어 경계 절단 + seo_meta_truncated 메타 표기로 처리한다.)
+    seo_info: dict = {"sellerTags": [{"text": t} for t in p.get("tags", [])]}
+    seo_meta_truncated: list[str] = []
+    _page_title = p.get("page_title")
+    if isinstance(_page_title, str) and _page_title.strip():
+        _pt, _pt_truncated = _truncate_seo_text(_page_title, SEO_PAGE_TITLE_MAX_LEN)
+        seo_info["pageTitle"] = _pt
+        if _pt_truncated:
+            seo_meta_truncated.append("page_title")
+    _meta_desc = p.get("meta_description")
+    if isinstance(_meta_desc, str) and _meta_desc.strip():
+        _md, _md_truncated = _truncate_seo_text(_meta_desc, SEO_META_DESCRIPTION_MAX_LEN)
+        seo_info["metaDescription"] = _md
+        if _md_truncated:
+            seo_meta_truncated.append("meta_description")
+
     detail_attribute = {
         "afterServiceInfo": {
             "afterServiceTelephoneNumber": defaults["as_tel"],
@@ -3381,7 +3435,7 @@ def build_payload(p, detail_html, images, status="SALE", deferred_notice_fields=
         "originAreaInfo": origin_area_info,
         "minorPurchasable": True,
         "taxType": "TAX",
-        "seoInfo": {"sellerTags": [{"text": t} for t in p.get("tags", [])]},
+        "seoInfo": seo_info,
         "productInfoProvidedNotice": notice,
         "optionInfo": option_info,
     }
@@ -3450,4 +3504,9 @@ def build_payload(p, detail_html, images, status="SALE", deferred_notice_fields=
     filled_from_config = defaults.get("notice_filled_from_config") or []
     if filled_from_config:
         payload["notice_filled_from_config"] = list(filled_from_config)
+    # seoInfo 가산점 필드(pageTitle/metaDescription) 절단 보고 — 초과 입력이
+    # 절단됐으면 그 사실을 페이로드 메타로 알린다(조용한 절단 금지). 송신
+    # 직전 _strip_internal_meta 로 네이버 API 로 나가지 않는다.
+    if seo_meta_truncated:
+        payload["seo_meta_truncated"] = list(seo_meta_truncated)
     return payload

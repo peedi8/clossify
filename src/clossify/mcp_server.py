@@ -2496,6 +2496,8 @@ def register_product(
     deferred_notice_fields: list[str] | None = None,
     attributes: list[dict[str, Any]] | None = None,
     customer_benefit: dict[str, Any] | None = None,
+    page_title: str | None = None,
+    meta_description: str | None = None,
 ) -> dict[str, Any]:
     """상품 정보를 받아 등록 페이로드를 빌드하고 네이버 커머스 API 로 등록한다.
 
@@ -2598,6 +2600,14 @@ def register_product(
             그대로 수행하고 위반 시 거부한다(fail-closed). ``None`` (기본값)
             이면 키를 실지 않는다 — 기존 거동 무변. 값을 만들거나 추론하지
             않는다(호출자가 문서 스펙 값을 명시해야 한다).
+        page_title: seoInfo.pageTitle (<=100자, 정본 스키마 근거). 가산점
+            필드 — 미입력 시 플랫폼 기본값이 적용될 뿐 등록은 막히지 않는다.
+            ``None`` (기본값) 이면 prepared 제안(``seo_meta_suggestion``) 을
+            자동 채용하며 ``filled_from_prepared`` 에 ``"page_title"`` 로
+            드러난다. 명시 인자가 항상 우선한다. 초과 입력은 거부가 아니라
+            단어 경계 절단 + 반환의 ``seo_meta_truncated`` 표기.
+        meta_description: seoInfo.metaDescription (<=160자). ``page_title``
+            과 같은 규칙(자동 채용·명시 우선·절단+표기).
 
     Returns:
         ``{"ok": bool, "status_code": int | None, "origin_product_no": str | None,
@@ -2605,10 +2615,14 @@ def register_product(
         - ``ok``: HTTP 상태가 2xx(성공)인지.
         - ``raw``: API 응답 본문 (에러 메시지 포함 가능).
         - ``seller_tags``: 제한어 자동 제거 메타가 있을 때만 존재.
+        - ``seo_meta_truncated``: seoInfo 가산점 필드(pageTitle/metaDescription)
+          중 길이 초과로 단어 경계 절단이 일어난 항목 리스트(조용한 절단 금지).
+          절단이 없으면 빈 리스트.
         - ``filled_from_prepared``: prepared payload 에서 채운 항목 리스트.
           가능한 항목: ``"detail_html"`` · ``"image_urls"`` · ``"notice"`` ·
           ``"tags"`` · ``"options"`` · ``"option_groups"`` ·
-          ``"deferred_notice_fields"`` · ``"attributes"``. prepared 에 실제로 있고 호출자가 명시적으로
+          ``"deferred_notice_fields"`` · ``"attributes"`` · ``"page_title"`` ·
+          ``"meta_description"``. prepared 에 실제로 있고 호출자가 명시적으로
           넘기지 않은 인자만 이 리스트에 들어간다. 직접 준 값은 포함되지 않는다
           (조용한 흐름 금지 — 복원은 항상 보고된다).
         - ``prepared_key_used``: 실제로 prepared 조회에 쓴 product_key.
@@ -2637,6 +2651,15 @@ def register_product(
         return _fail("category_id 는 비어있지 않은 문자열이어야 합니다.", dry_run=_dry_run)
     if status not in {"SALE", "SUSPENSION"}:
         return _fail("status 는 'SALE' 또는 'SUSPENSION' 이어야 합니다.", dry_run=_dry_run)
+    # seoInfo 가산점 필드(pageTitle/metaDescription) 인자 형태 검사.
+    # None = 미지정(prepared 제안 자동 채용 후보). 문자열만 허용하고, 빈
+    # 문자열은 "명시적으로 값 없음" 으로 취급해 페이로드에 실지 않는다.
+    for _seo_text_arg, _seo_arg_name in (
+        (page_title, "page_title"),
+        (meta_description, "meta_description"),
+    ):
+        if _seo_text_arg is not None and not isinstance(_seo_text_arg, str):
+            return _fail(f"{_seo_arg_name} 은 문자열이어야 합니다.", dry_run=_dry_run)
     # option_groups 검증: 다축 옵션의 그룹 이름 리스트. naver_client 의
     # _build_option_info 가 읽는 "option_groups" 키로 product dict 에 싣는다.
     # 비어있지 않은 문자열 1~3개만 허용 — 그 외는 네이버 호출 0회로 거부한다.
@@ -3066,6 +3089,8 @@ def register_product(
     _need_deferred = deferred_notice_fields is None
     _need_delivery_fee = delivery_fee is None
     _need_attributes = attributes is None
+    _need_page_title = page_title is None
+    _need_meta_description = meta_description is None
     filled_from_prepared: list[str] = []
 
     _needs_any = (
@@ -3078,6 +3103,8 @@ def register_product(
         or _need_deferred
         or _need_delivery_fee
         or _need_attributes
+        or _need_page_title
+        or _need_meta_description
     )
     if _needs_any and _resolved_payload is not None:
         _fill_pkey = _product_key
@@ -3211,6 +3238,24 @@ def register_product(
                 if isinstance(_prepared_suggest, list) and _prepared_suggest:
                     attributes = list(_prepared_suggest)
                     filled_from_prepared.append("attributes")
+        # page_title·meta_description: seoInfo 가산점 필드 제안 자동 채용
+        # (태그·속성과 같은 패턴 — 명시 인자 우선, prepared 에 실제로 있는
+        # 값만 복원, 복원은 filled_from_prepared 에 표기). 제안의 null 은
+        # "제안 없음" 이므로 채용하지 않는다(창작 금지 — 미탑재여도 등록은
+        # 막히지 않는 가산점 필드다).
+        if _need_page_title or _need_meta_description:
+            _seo_meta_suggest = _fill_prepared.get("seo_meta_suggestion")
+            if isinstance(_seo_meta_suggest, dict):
+                if _need_page_title:
+                    _suggested_pt = _seo_meta_suggest.get("page_title")
+                    if isinstance(_suggested_pt, str) and _suggested_pt.strip():
+                        page_title = _suggested_pt.strip()
+                        filled_from_prepared.append("page_title")
+                if _need_meta_description:
+                    _suggested_md = _seo_meta_suggest.get("meta_description")
+                    if isinstance(_suggested_md, str) and _suggested_md.strip():
+                        meta_description = _suggested_md.strip()
+                        filled_from_prepared.append("meta_description")
 
     # ------------------------------------------------------------------ #
     # **5라운드 감리 ②**: manufacturer·importer 복원은 ``_needs_any`` 와
@@ -3388,6 +3433,13 @@ def register_product(
     # 스펙(타입/범위) 그대로 검증하고 originProduct.customerBenefit 로 싣는다.
     if customer_benefit is not None:
         product["customer_benefit"] = customer_benefit
+    # seoInfo 가산점 필드: 값이 있을 때만 싣는다(빈 문자열·None 미탑재).
+    # 절단은 build_payload 가 정본(naver_client._truncate_seo_text) 한 곳에서
+    # 수행하고, 결과는 payload 메타(seo_meta_truncated) 로 보고된다.
+    if isinstance(page_title, str) and page_title.strip():
+        product["page_title"] = page_title.strip()
+    if isinstance(meta_description, str) and meta_description.strip():
+        product["meta_description"] = meta_description.strip()
 
     try:
         payload = naver_client.build_payload(
@@ -3409,6 +3461,10 @@ def register_product(
     # 추출한다. 이 값은 모든 이후 반환 경로에 실려 사용자에게 보고되어야 한다
     # (조용한 자동 채움 금지). 전송 페이로드에서는 naver_client 가 이미 제거했다.
     notice_filled = list(payload.get("notice_filled_from_config") or [])
+    # seoInfo 가산점 필드 절단 보고 — build_payload 가 남긴 내부 메타에서
+    # 추출해 모든 반환 경로에 실는다(조용한 절단 금지). 송신 페이로드에서는
+    # naver_client 가 이미 제거한다.
+    seo_meta_truncated_report = list(payload.get("seo_meta_truncated") or [])
 
     # 미루기 적용 결과를 계산한다. ``_deferred_clean`` 은 판매자가 미루기로
     # 선택한(원산지 필터 통과) 필드명 리스트다. 그 중 실값이 있어 미루기가
@@ -3776,6 +3832,7 @@ def register_product(
             "name_truncated": name_truncated,  # Fix 5
             "raw": outcome,
             "seller_tags": None,
+            "seo_meta_truncated": seo_meta_truncated_report,
             "gate": gate_label,
             "pending_reviews": gate["pending_reviews"],
             "warnings": gate.get("warnings") or [],
@@ -3922,6 +3979,7 @@ def register_product(
         "name_truncated": name_truncated,  # Fix 5
         "raw": exposed_raw,
         "seller_tags": seller_tags_meta,
+        "seo_meta_truncated": seo_meta_truncated_report,
         "gate": gate_label,
         "pending_reviews": gate["pending_reviews"],
         "warnings": gate.get("warnings") or [],
@@ -5034,6 +5092,112 @@ def _build_seo_title_suggestion(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _build_seo_meta_suggestion(payload: dict[str, Any], seo_title_suggestion) -> dict[str, Any]:
+    """``prepare_listing`` 성공 반환용 seoInfo 가산점 필드 제안 조립.
+
+    보유 API 정본 스키마(2026-09-02 실측): ``detailAttribute.seoInfo`` 하위
+    ``pageTitle``(<=100자)·``metaDescription``(<=160자). 미입력 시 플랫폼
+    기본값이 적용되는 **가산점 필드**다. 창작 금지 — 문서 근거 필드만 만든다.
+
+    - ``page_title``: 기존 ``seo_title_suggestion.suggested`` 재사용. 그게
+      null 이면 입력 name 정제본(copywriting._sanitize_seo_title).
+    - ``meta_description``: 로컬 규칙 조립(LLM 0·외부 호출 0).
+      ``[핵심 서술](상품명+카테고리 리프) + [옵션 요약](옵션명 나열)`` 을
+      기존 정제기(_sanitize_seo_title — 금지어 사전 통과)로 위생화한다.
+    - 재료 부족 시 null + note 사유(조용한 생략 금지). payload 는 건드리지
+      않는다(읽기 전용 — 반영은 등록 단계 자동 채용/명시 인자).
+    """
+    prepared_product = payload.get("product") if isinstance(payload.get("product"), dict) else {}
+    name = str(prepared_product.get("name") or "").strip()
+    if not name:
+        return {
+            "page_title": None,
+            "meta_description": None,
+            "basis": [],
+            "note": "상품명(name) 재료가 없어 seoInfo 가산점 제안을 만들 수 없습니다.",
+        }
+
+    basis: list[str] = [f"input-name:{name}"]
+
+    # --- page_title: seo_title_suggestion.suggested 재사용 → 없으면 name 정제본 ---
+    suggested_title = (
+        seo_title_suggestion.get("suggested") if isinstance(seo_title_suggestion, dict) else None
+    )
+    if isinstance(suggested_title, str) and suggested_title.strip():
+        page_title, _pt_truncated = naver_client._truncate_seo_text(
+            suggested_title.strip(), naver_client.SEO_PAGE_TITLE_MAX_LEN
+        )
+        basis.append("rule:seo_title_suggestion.suggested 재사용(100자 단어 경계 절단)")
+    else:
+        page_title = _copywriting_mod._sanitize_seo_title(
+            name, max_len=naver_client.SEO_PAGE_TITLE_MAX_LEN
+        )
+        if not _copywriting_mod._valid_seo_title(page_title):
+            return {
+                "page_title": None,
+                "meta_description": None,
+                "basis": basis,
+                "note": "입력 상품명 정제본이 유효하지 않아 pageTitle 제안을 만들 수 없습니다.",
+            }
+        basis.append("rule:copywriting._sanitize_seo_title(입력 name 정제본, max_len=100)")
+
+    # --- meta_description: [핵심 서술] + [옵션 요약] 로컬 조립 ---
+    category_id = str(prepared_product.get("categoryId") or "").strip()
+    try:
+        category_path = _category_path_for(category_id) if category_id else ""
+    except Exception:
+        category_path = ""
+    leaf_category = str(category_path or "").split(">")[-1].strip() if category_path else ""
+    if leaf_category:
+        basis.append(f"category-leaf:{leaf_category}")
+
+    options = prepared_product.get("options")
+    option_tokens: list[str] = []
+    for token in _register_mod._option_name_tokens(options):
+        if len(token) < 2 or token.isdigit() or token in option_tokens:
+            continue
+        option_tokens.append(token)
+        if len(option_tokens) >= 5:
+            break
+    if option_tokens:
+        basis.append(f"option-tokens:{','.join(option_tokens)}")
+
+    # 핵심 서술: 상품명(+카테고리 리프명). 옵션 요약: 옵션명 나열(+종수).
+    core = f"{name} {leaf_category}".strip() if leaf_category else name
+    if option_tokens:
+        option_count = len(options) if isinstance(options, list) and options else None
+        summary = "·".join(option_tokens)
+        option_part = f"{summary} 등 {option_count}종" if option_count else summary
+        raw_description = f"{core}. {option_part}."
+    else:
+        raw_description = f"{core}."
+    basis.append(
+        "rule:로컬 조립(핵심 서술+옵션 요약) 후 copywriting._sanitize_seo_title 통과(금지어 제거)"
+    )
+    meta_description = _copywriting_mod._sanitize_seo_title(
+        raw_description, max_len=naver_client.SEO_META_DESCRIPTION_MAX_LEN
+    )
+    if not meta_description or not _copywriting_mod._valid_seo_title(meta_description):
+        return {
+            "page_title": page_title,
+            "meta_description": None,
+            "basis": basis,
+            "note": "메타 설명 재료가 정제 후 남지 않았습니다(금지어·불용어 전량 제거).",
+        }
+
+    note = (
+        "seoInfo 가산점 필드 제안(정본 스키마: pageTitle<=100자, metaDescription<=160자). "
+        "미입력 시 플랫폼 기본값이 적용되는 필드다 — 등록 단계에서 미지정 시 자동 "
+        "채용되며(filled_from_prepared 표기) 명시 인자가 항상 우선한다."
+    )
+    return {
+        "page_title": page_title,
+        "meta_description": meta_description,
+        "basis": basis,
+        "note": note,
+    }
+
+
 @mcp.tool()
 def prepare_listing(
     product: dict[str, Any],
@@ -5080,6 +5244,11 @@ def prepare_listing(
           "dropped_terms": [...], "note": str}``). 제안일 뿐 — prepared payload
           의 name 을 바꾸지 않는다(D119: itemName 품명에 마케팅명 침투 금지).
           반영하려면 사용자가 다음 호출에서 그 이름을 명시적으로 넘겨야 한다.
+        - ``seo_meta_suggestion``: seoInfo 가산점 필드(pageTitle<=100자·
+          metaDescription<=160자, 정본 스키마 근거) 제안 (``{"page_title":
+          str|null, "meta_description": str|null, "basis": [...], "note": str}``).
+          로컬 규칙만 쓰고(외부 호출 0회) 준비된 payload 를 건드리지 않는다.
+          등록 단계에서 미지정 시 자동 채용된다(filled_from_prepared 표기).
 
     안내:
         - ``needs_llm`` 의 각 항목은 ``submit_reviews`` 로 회신해야 한다.
@@ -5264,6 +5433,24 @@ def prepare_listing(
             }
 
     # 자동 열기: enable_auto_open 이 켜져 있으면 미리보기 HTML 을 브라우저로 자동 연다.
+    # seoInfo 가산점 필드 제안(pageTitle/metaDescription — 정본 스키마 근거).
+    # seo_title_suggestion.suggested 를 page_title 이 재사용하므로 한 번만 계산해
+    # 함께 넘긴다. 제안은 prepared payload 에도 저장한다 — 등록 단계
+    # (register_product) 가 미지정 시 자동 채용할 수 있게(태그·속성과 같은 패턴).
+    _seo_title_suggestion = _build_seo_title_suggestion(payload)
+    _seo_meta_suggestion = _build_seo_meta_suggestion(payload, _seo_title_suggestion)
+    payload["seo_meta_suggestion"] = _seo_meta_suggestion
+    try:
+        _register_mod.write_prepared_payload(payload)
+    except Exception as _meta_save_exc:
+        # 저장 실패가 준비 성공을 무효화하지는 않지만 조용히 흘리지 않는다 —
+        # 노트에 사유를 남겨 등록 단계 자동 채용이 불가함을 알린다.
+        _seo_meta_suggestion = dict(_seo_meta_suggestion)
+        _seo_meta_suggestion["note"] = (
+            f"{_seo_meta_suggestion.get('note') or ''} "
+            f"(경고: prepared payload 저장 실패로 등록 단계 자동 채용 불가: "
+            f"{_sanitize_error(_meta_save_exc)})"
+        ).strip()
     _result = {
         "ok": True,
         "product_key": payload.get("product_key"),
@@ -5278,7 +5465,10 @@ def prepare_listing(
         "error": None,
         # SEO 상품명 제안(제안 전용 — D119: itemName 품명에 자동 반영 금지).
         # 로컬 규칙(copywriting/seo 기존 함수)만 쓰고 외부 호출 0회.
-        "seo_title_suggestion": _build_seo_title_suggestion(payload),
+        "seo_title_suggestion": _seo_title_suggestion,
+        # seoInfo 가산점 필드 제안(pageTitle<=100자·metaDescription<=160자,
+        # 정본 스키마 근거). 등록 단계에서 미지정 시 자동 채용된다(명시 인자 우선).
+        "seo_meta_suggestion": _seo_meta_suggestion,
         # 태그 자동 제안(워크오더 Part A — 로컬 규칙, 외부 호출 0회).
         # 등록 단계에서 tags 미지정 시 자동 채용된다(명시 tags 우선).
         "seo_tags_suggestion": payload.get("seo_tags_suggestion"),
@@ -6366,6 +6556,7 @@ def _fail(
         "name_truncated": name_truncated,  # Fix 5 — validation-fail 시 기본값
         "raw": None,
         "seller_tags": None,
+        "seo_meta_truncated": [],
         "filled_from_prepared": filled_from_prepared if filled_from_prepared is not None else [],
         "prepared_lookup": prepared_lookup if prepared_lookup is not None else {},
         "notice_filled_from_config": (

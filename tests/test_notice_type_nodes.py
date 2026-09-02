@@ -611,7 +611,9 @@ class TestToolRegistrationPreserved:
         ``deferred_notice_fields`` 는 판매자가 "상세페이지 참조" 로 미루기로
         선택한 고시 필드명 리스트로, 끝에 추가된 키워드 전용 인자다.
         ``customer_benefit`` 는 구매/리뷰 혜택(customerBenefit) 전달을 위해
-        끝에 추가된 키워드 전용 인자다.
+        끝에 추가된 키워드 전용 인자다. ``page_title``·``meta_description``
+        는 seoInfo(pageTitle/metaDescription) 가산점 필드 전달을 위해 끝에
+        추가된 키워드 전용 인자다(미제안 시 prepared 제안 자동 채용).
         """
         import inspect
 
@@ -636,5 +638,7 @@ class TestToolRegistrationPreserved:
             "deferred_notice_fields",
             "attributes",
             "customer_benefit",
+            "page_title",
+            "meta_description",
         ]
         assert param_names == expected, f"시그니처 변경 감지: {param_names}"
