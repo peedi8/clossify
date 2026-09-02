@@ -1838,14 +1838,22 @@ def prepare_listing(
     # 상품명·옵션명 텍스트와 **문자열 일치**하는 속성값만 확신 제안이 된다.
     attributes_suggestion: list[dict] = []
     attributes_suggestion_basis: list[str] = []
+    attributes_suggestion_blocked: list[dict] = []
     attributes_error: str | None = None
     attributes_needs_user_hint: dict | None = None
     if category_id:
         _attr_fn = attributes_fn if attributes_fn is not None else _default_attributes_suggest
         _option_text = " ".join(_option_name_tokens(d.get("options")))
-        _attr_result = _attr_fn(
-            category_id, {"name": f"{name} {_option_text}".strip(), "detail": ""}
-        )
+        # 전문 텍스트(source_text): 호출자가 전문·속성쌍을 합쳐 전달하는 선택 키.
+        # 생성 트랙 파일 파싱은 이 단계 밖(호출자 몫) — 여기선 문자열만 받는다.
+        _attr_product: dict[str, str] = {
+            "name": f"{name} {_option_text}".strip(),
+            "detail": "",
+        }
+        _source_text = d.get("source_text")
+        if isinstance(_source_text, str) and _source_text.strip():
+            _attr_product["source_text"] = _source_text
+        _attr_result = _attr_fn(category_id, _attr_product)
         if not _attr_result.get("ok"):
             attributes_error = str(_attr_result.get("error") or "속성 제안 조회 실패(사유 미상).")
         else:
@@ -1888,6 +1896,28 @@ def prepare_listing(
                 and row.get("status") != "matched"
                 and (row.get("candidates") or [])
             ]
+            # 부정 가드 차단(전문 텍스트 매칭)도 전부 드러낸다 — 조용한 생략
+            # 금지. 차단값은 자동 채용되지 않고 후보로 강등되며 사유가 표기된다.
+            for row in _attr_result.get("suggestions") or []:
+                if not isinstance(row, dict):
+                    continue
+                for blocked in row.get("blocked") or []:
+                    if not isinstance(blocked, dict):
+                        continue
+                    attributes_suggestion_blocked.append(
+                        {
+                            "attributeSeq": row.get("attributeSeq"),
+                            "attributeName": row.get("attributeName"),
+                            "attributeValueSeq": blocked.get("attributeValueSeq"),
+                            "minAttributeValue": blocked.get("minAttributeValue"),
+                            "evidence": blocked.get("evidence"),
+                            "reason": blocked.get("reason"),
+                        }
+                    )
+                    _candidates_summary.append(
+                        f"{row.get('attributeName')}="
+                        f"{blocked.get('minAttributeValue')}(차단: {blocked.get('reason')})"
+                    )
             if _candidates_summary:
                 attributes_needs_user_hint = {
                     "field": "attributes",
@@ -2221,6 +2251,11 @@ def prepare_listing(
     if attributes_suggestion:
         payload["attributes_suggestion"] = list(attributes_suggestion)
         payload["attributes_suggestion_basis"] = list(attributes_suggestion_basis)
+    # 전문 텍스트 부정 가드 차단(자동 채용 금지·후보 강등 사유) 표기.
+    # attributes_suggestion(자동 채용 대상) 과 분리해 실으므로 등록 단계의
+    # 자동 채용 경로가 차단값을 절대 줍지 않는다.
+    if attributes_suggestion_blocked:
+        payload["attributes_suggestion_blocked"] = list(attributes_suggestion_blocked)
     if attributes_error is not None:
         payload["attributes_error"] = attributes_error
     write_prepared_payload(payload)
