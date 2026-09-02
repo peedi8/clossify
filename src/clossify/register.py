@@ -1584,7 +1584,9 @@ def prepare_listing(
             선택: ``options``, ``tags``, ``notice``, ``category_id``,
             ``generate_images`` (bool — 이미지 생성 단계 분기),
             ``image_prompt`` (str — 생성 프롬프트),
-            ``needed_cuts`` (int — 필요 컷 수, 기본 1).
+            ``needed_cuts`` (int — 필요 컷 수, 기본 1),
+            ``facts`` (``[{"name": str, "value": str}, ...]`` — 이름↔팩트
+            모순 게이트 입력. 생성 트랙 name_ko/value_ko 형태도 받는다).
         attach_fn: ``images.attach_images`` 대체(테스트 주입용).
         generate_fn: ``image_gen.generate`` 대체(테스트 주입용).
         recommend_fn: ``naver_client.recommend_tags`` 대체(테스트 주입용).
@@ -1612,6 +1614,8 @@ def prepare_listing(
             ``restricted_lookup``/``field_duplicates``/``error`` 키를 담는다(네이버 태그 API 연동 — ``_resolve_tags``
             참조). 추천·제한 검사를 통과한 최종 태그가 ``product.tags`` 에 들어간다.
           - ``version``: ``common.PREPARED_PAYLOAD_VERSION``.
+          - ``name_fact_check``: 이름↔팩트 모순 게이트 결과
+            (``{"status": "ok"|"conflict"|"skipped", "conflicts": [...]}``).
 
     Raises:
         ValueError: URL 키 존재, rejected 이미지 존재, 상품명/가격 누락.
@@ -1631,6 +1635,14 @@ def prepare_listing(
         raise ValueError("prepare_listing: 상품명(name) 이 필요합니다.")
     if sale_price is None:
         raise ValueError("prepare_listing: 판매가(salePrice, KRW) 가 필요합니다.")
+
+    # --- 0. 이름↔팩트 모순 게이트 (결정론, LLM 0·외부 호출 0) ---
+    # 상품명과 번들 팩트(facts) 를 대조해 오역·사실 오류(예: 이름은 "손잡이
+    # 있는" 인데 팩트는 "손잡이 없는 디자인") 를 등록 앞에서 드러낸다.
+    # facts 가 없으면 조용히 통과하지 않고 skipped 로 보고한다.
+    from . import name_fact as _name_fact_mod
+
+    name_fact_check = _name_fact_mod.check_name_facts(name, d.get("facts"))
 
     # --- 1. 이미지 정규화 (images.attach_images) ---
     image_sources = d.get("image_sources")
@@ -2164,6 +2176,26 @@ def prepare_listing(
     if attributes_needs_user_hint is not None:
         needs_user.append(attributes_needs_user_hint)
 
+    # 이름↔팩트 모순이 있으면 사용자 확인을 요청한다(등록 단계가 거부한다).
+    if name_fact_check.get("status") == "conflict":
+        _nfc_summary = "; ".join(
+            f"{c.get('topic')}: 이름={c.get('name_says')}/팩트={c.get('fact_says')}({c.get('rule')})"
+            for c in (name_fact_check.get("conflicts") or [])
+            if isinstance(c, dict)
+        )
+        needs_user.append(
+            {
+                "field": "name",
+                "label": "상품명 사실 확인",
+                "why": (
+                    "상품명과 팩트가 서로 다른 사실을 말합니다(오역·사실 오류 가능 — "
+                    f"네이버 기재불일치 랭크다운 사유): {_nfc_summary}. 어느 쪽이 맞는지 "
+                    "확인하고 이름 또는 팩트를 고친 뒤 다시 준비하세요."
+                ),
+                "answer_shape": "text",
+            }
+        )
+
     # --- 6. prepared payload 저장 ---
     payload = {
         "product_key": product_key,
@@ -2243,6 +2275,10 @@ def prepare_listing(
     # (사용자/네이버 추천), 어떤 태그가 제한 판정을 받았는지, API 호출이
     # 실패했는지를 드러낸다 (조용한 자동 채움/드롭 금지).
     payload["tags_meta"] = tag_resolution
+    # 이름↔팩트 모순 게이트 결과. status 는 "ok"|"conflict"|"skipped" —
+    # skipped 에도 facts 없음 사유가 담긴다(조용한 통과 금지). conflict 면
+    # 등록 단계(register_product) 가 name_conflict_acknowledged 없이는 거부한다.
+    payload["name_fact_check"] = name_fact_check
     # 태그·속성 자동 제안(워크오더 Part A/B). 등록 단계(register_product) 가
     # prepared 에서 읽어 자동 채용한다 — 명시 인자가 항상 우선이다.
     # 제안 불가 사유(reason)·조회 실패(attributes_error) 도 항상 남긴다

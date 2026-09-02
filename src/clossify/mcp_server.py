@@ -2498,6 +2498,7 @@ def register_product(
     customer_benefit: dict[str, Any] | None = None,
     page_title: str | None = None,
     meta_description: str | None = None,
+    name_conflict_acknowledged: bool = False,
 ) -> dict[str, Any]:
     """상품 정보를 받아 등록 페이로드를 빌드하고 네이버 커머스 API 로 등록한다.
 
@@ -2608,6 +2609,11 @@ def register_product(
             단어 경계 절단 + 반환의 ``seo_meta_truncated`` 표기.
         meta_description: seoInfo.metaDescription (<=160자). ``page_title``
             과 같은 규칙(자동 채용·명시 우선·절단+표기).
+        name_conflict_acknowledged: 이름↔팩트 모순 게이트 사후 확인.
+            prepared payload 의 ``name_fact_check.status`` 가 ``"conflict"``
+            이면(상품명과 팩트가 서로 다른 사실을 말하면 — 오역·사실 오류)
+            기본적으로 등록을 거부한다(fail-closed, 네이버 호출 0회). 사람이
+            확인했음을 명시할 때만 ``True`` 로 넘겨 통과한다(사람 확인 경로).
 
     Returns:
         ``{"ok": bool, "status_code": int | None, "origin_product_no": str | None,
@@ -2808,6 +2814,55 @@ def register_product(
             "name": "",
             "salePrice": None,
         }
+
+    # ------------------------------------------------------------------ #
+    # 이름↔팩트 모순 게이트 (fail-closed).
+    #
+    # prepare_listing 이 상품명과 번들 팩트를 대조해 name_fact_check 에
+    # conflict 를 남겼으면 미해결 모순이 있는 상태다 — 오역·사실 오류가
+    # 등록으로 새는 것을 막기 위해 여기서 거부한다(네이버 호출 0회).
+    # 호출자가 name_conflict_acknowledged=True 를 명시하면 통과한다(사람
+    # 확인 경로 — 선언 게이트).
+    # ------------------------------------------------------------------ #
+    if isinstance(_resolved_payload, dict):
+        _name_fact_check = _resolved_payload.get("name_fact_check")
+        if (
+            isinstance(_name_fact_check, dict)
+            and _name_fact_check.get("status") == "conflict"
+            and not name_conflict_acknowledged
+        ):
+            _nfc_conflicts = [
+                c for c in (_name_fact_check.get("conflicts") or []) if isinstance(c, dict)
+            ]
+            _nfc_detail = "; ".join(
+                f"{c.get('topic')}: 이름={c.get('name_says')}/팩트={c.get('fact_says')}({c.get('rule')})"
+                for c in _nfc_conflicts
+            )
+            _nfc_message = (
+                "상품명과 팩트가 서로 다른 사실을 말합니다(이름↔팩트 모순 — 오역·"
+                f"사실 오류 가능): {_nfc_detail}. 어느 쪽이 맞는지 확인한 뒤, 사실이면 "
+                "name_conflict_acknowledged=true 로 재호출하거나 이름/팩트를 고쳐 "
+                "다시 준비하세요."
+            )
+            return {
+                "ok": False,
+                "status_code": None,
+                "origin_product_no": None,
+                "channel_product_no": None,
+                "missing_channel_no": True,
+                "name_truncated": False,
+                "raw": None,
+                "seller_tags": None,
+                "blocked_by": "name_fact_conflict",
+                "filled_from_prepared": [],
+                "prepared_lookup": prepared_lookup,
+                "notice_filled_from_config": [],
+                "deferred_notice_fields": list(_deferred_clean),
+                "dry_run": _dry_run,
+                "name_fact_check": _name_fact_check,
+                "message": _nfc_message,
+                "error": _sanitize_text(_nfc_message),
+            }
 
     # ------------------------------------------------------------------ #
     # 미리보기 승인 게이트 (선언 게이트).
@@ -5237,7 +5292,10 @@ def prepare_listing(
         "needs_user": [...], "qa": {...}, "images": [...],
         "preview_path": str|None, "template_applied": {...}|None,
         "template_saved": {...}|None, "error": str | None,
-        "seo_title_suggestion": {...}, "requirements": {...}|None}``
+        "seo_title_suggestion": {...}, "requirements": {...}|None,
+        "name_fact_check": {"status": "ok"|"conflict"|"skipped",
+        "conflicts": [{"topic","name_says","fact_says","rule"}],
+        "reason": "...(skipped 시)"}}``
 
         - ``seo_title_suggestion``: 로컬 규칙(copywriting/seo 기존 함수)로
           만든 마케팅 상품명 **제안** (``{"suggested": str|null, "basis": [...],
@@ -5479,6 +5537,11 @@ def prepare_listing(
         # 성공 경로에도 키를 항상 포함한다. 결정론 컴플라이언스 FAIL 이면
         # 등록에 필요한 누락을 한 번에 넣고, 그 밖에는 None 이다.
         "requirements": None if requirements is None else requirements,
+        # 이름↔팩트 모순 게이트 결과 — 성공 반환 최상위에 항상 싣는다
+        # (워크오더 3항 형식: status ok|conflict|skipped, conflicts, skipped 면
+        # reason). conflict 면 needs_user 의 "상품명 사실 확인" 항목도 이미
+        # 위 needs_user 리스트에 실려 있다(그대로 유지).
+        "name_fact_check": payload.get("name_fact_check"),
     }
     _auto_open.maybe_open_screen(
         _result.get("preview_path"),

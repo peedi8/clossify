@@ -614,6 +614,8 @@ class TestToolRegistrationPreserved:
         끝에 추가된 키워드 전용 인자다. ``page_title``·``meta_description``
         는 seoInfo(pageTitle/metaDescription) 가산점 필드 전달을 위해 끝에
         추가된 키워드 전용 인자다(미제안 시 prepared 제안 자동 채용).
+        name_conflict_acknowledged 는 이름↔팩트 모순 게이트의 사람 확인
+        경로(사후 승인) 인자로 끝에 추가되었다.
         """
         import inspect
 
@@ -640,5 +642,6 @@ class TestToolRegistrationPreserved:
             "customer_benefit",
             "page_title",
             "meta_description",
+            "name_conflict_acknowledged",
         ]
         assert param_names == expected, f"시그니처 변경 감지: {param_names}"
