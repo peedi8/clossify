@@ -259,5 +259,200 @@ def test_prepare_without_source_text_calls_fn_without_key(monkeypatch, tmp_path)
     assert "source_text" not in captured[0], "source_text 없는데 키가 실렸다"
 
 
+# =========================================================================== #
+# FIX — 부정형 라벨 오매칭(극성 충돌). "뚜껑포함" 과 "뚜껑미포함" 은 서로 다른
+# 키여야 하고, 전문 극성과 라벨 극성이 일치할 때만 자동이다.
+# =========================================================================== #
+def test_fix_a_lid_included_label_blocked_on_excluded_text():
+    suggestions = _suggest(
+        {"name": "머그", "source_text": "뚜껑 미포함. 본체만 판매합니다."},
+        _attrs(1),
+        _vals(1, "뚜껑포함"),
+    )
+    row = suggestions[0]
+    assert row["status"] == "unknown", "뚜껑포함이 뚜껑미포함 전문에 자동 채용되면 오신고"
+    blocked = _by_label(row)
+    assert "뚜껑포함" in blocked and "부정 근접" in blocked["뚜껑포함"]["reason"]
+
+
+def test_fix_b_lid_included_label_auto_on_included_text():
+    suggestions = _suggest(
+        {"name": "머그", "source_text": "뚜껑 포함 구성입니다."},
+        _attrs(1),
+        _vals(1, "뚜껑포함"),
+    )
+    assert suggestions[0]["status"] == "matched"
+    assert suggestions[0]["selected"][0]["minAttributeValue"] == "뚜껑포함"
+
+
+def test_fix_c_lid_excluded_label_auto_on_excluded_text():
+    suggestions = _suggest(
+        {"name": "머그", "source_text": "뚜껑 미포함. 본체만 판매합니다."},
+        _attrs(1),
+        _vals(1, "뚜껑미포함"),
+    )
+    assert suggestions[0]["status"] == "matched"
+    assert suggestions[0]["selected"][0]["minAttributeValue"] == "뚜껑미포함"
+
+
+def test_fix_c2_lid_excluded_label_blocked_on_included_text():
+    suggestions = _suggest(
+        {"name": "머그", "source_text": "뚜껑 포함 구성입니다."},
+        _attrs(1),
+        _vals(1, "뚜껑미포함"),
+    )
+    row = suggestions[0]
+    assert row["status"] == "unknown"
+    assert "뚜껑미포함" in _by_label(row)
+
+
+def test_fix_d_oven_usable_regression():
+    suggestions = _suggest(
+        {"name": "머그", "source_text": "오븐 사용 가능한 세라믹 머그입니다."},
+        _attrs(1),
+        _vals(1, "오븐사용가능"),
+    )
+    assert suggestions[0]["status"] == "matched"
+    assert suggestions[0]["selected"][0]["minAttributeValue"] == "오븐사용가능"
+
+
+def test_fix_e_microwave_unusable_regression():
+    suggestions = _suggest(
+        {"name": "머그", "source_text": "전자레인지 사용 불가 제품입니다."},
+        _attrs(1),
+        _vals(1, "전자레인지사용가능"),
+    )
+    row = suggestions[0]
+    assert row["status"] == "unknown"
+    assert "전자레인지사용가능" in _by_label(row)
+
+
+def test_fix_f_real_mug_fixture_exactly_two_autos():
+    # 실물 픽스처: 머그 전문(재질 세라믹/오븐 사용 가능/뚜껑 미포함).
+    # 자동은 {도자기/세라믹, 오븐사용가능} 정확히 2개 — 뚜껑포함 없음.
+    suggestions = _suggest(
+        {"name": "머그", "source_text": "세라믹 머그. 오븐 사용 가능. 뚜껑 미포함."},
+        _attrs(11, 12, 13),
+        _vals(11, "도자기/세라믹") + _vals(12, "오븐사용가능") + _vals(13, "뚜껑포함"),
+    )
+    auto = sorted(s["minAttributeValue"] for row in suggestions for s in row["selected"])
+    assert auto == ["도자기/세라믹", "오븐사용가능"]
+    lid_row = next(row for row in suggestions if row["attributeSeq"] == 13)
+    assert "뚜껑포함" in _by_label(lid_row), "차단이 조용히 사라졌다"
+
+
+# =========================================================================== #
+# FIX — 속성값만 대조(속성명 "포함 여부" 가 값 "미포함" 을 뒤집는 오염).
+# 실물 머그 번들(도자기 손잡이 컵) facts+desc 그대로: 이름은 질문(라벨)이지
+# 주장이 아니다. "컵 뚜껑 포함 여부 = 뚜껑 미포함" 단위에서 이름의 "포함" 이
+# 후보 "뚜껑포함" 에 긍정 일치해 값 "미포함" 을 뒤집던 오염(실물 실증).
+# =========================================================================== #
+_MUG_FACTS_NAME_VALUE: list[tuple[str, str]] = [
+    ("브랜드", "루루 자훠푸(Lülü Zahuopu)"),
+    ("메인 이미지 출처", "자체 실사 촬영 이미지"),
+    ("원산지", "중국 본토"),
+    ("소재", "세라믹"),
+    ("컵 뚜껑 포함 여부", "뚜껑 미포함"),
+    ("컵 뚜껑 재질", "세라믹"),
+    ("손잡이 디자인", "손잡이 없는 디자인"),
+    ("색상", "잉크 스팟 그립컵/호박색, 잉크 스팟 그립컵/크림 옐로"),
+]
+_MUG_DESC = (
+    "재질: 세라믹\n크기:\n입구 지름 약 9CM, 높이 약 9.5CM\n"
+    "용량 가득 채움 기준 약 250ML\n(수작업 측정으로 약간의 오차가 있을 수 있습니다)\n"
+    "유하채(유약 아래 채색)\n전자레인지, 식기세척기, 식기 소독기, 오븐 사용 가능\n"
+    "모든 이미지는 실제 촬영본입니다\n무단 도용 시 법적 책임을 묻습니다"
+)
+
+
+def _mug_attrs_and_values():
+    return (
+        _attrs(11, 12, 13),
+        _vals(11, "도자기/세라믹") + _vals(12, "오븐사용가능") + _vals(13, "뚜껑포함"),
+    )
+
+
+def test_fix2_a_real_mug_values_plus_desc_exactly_two_autos():
+    # 올바른 계약: facts 는 값(value)만 대조한다.
+    values_only = " ".join(value for _, value in _MUG_FACTS_NAME_VALUE) + " " + _MUG_DESC
+    attributes, values = _mug_attrs_and_values()
+    suggestions = _suggest(
+        {"name": "손잡이 있는 도자기 음료잔", "source_text": values_only},
+        attributes,
+        values,
+    )
+    auto = sorted(s["minAttributeValue"] for row in suggestions for s in row["selected"])
+    assert auto == ["도자기/세라믹", "오븐사용가능"], f"자동 = {auto}"
+    lid_row = next(row for row in suggestions if row["attributeSeq"] == 13)
+    assert lid_row["status"] == "unknown", "뚜껑포함이 자동 채용되면 오염"
+    assert "뚜껑포함" in _by_label(lid_row)
+
+
+def test_fix2_a2_real_mug_names_included_still_exactly_two_autos():
+    # 최악의 조립(이름까지 통째로): 오염 패턴 "컵 뚜껑 포함 여부 = 뚜껑 미포함"
+    # 이 텍스트 안에 실물 그대로 들어 있어도 자동은 정확히 2개.
+    names_and_values = (
+        " ".join(f"{name}: {value}" for name, value in _MUG_FACTS_NAME_VALUE) + " " + _MUG_DESC
+    )
+    attributes, values = _mug_attrs_and_values()
+    suggestions = _suggest(
+        {"name": "손잡이 있는 도자기 음료잔", "source_text": names_and_values},
+        attributes,
+        values,
+    )
+    auto = sorted(s["minAttributeValue"] for row in suggestions for s in row["selected"])
+    assert auto == ["도자기/세라믹", "오븐사용가능"], f"자동 = {auto}"
+    lid_row = next(row for row in suggestions if row["attributeSeq"] == 13)
+    assert lid_row["status"] == "unknown", "속성명 문구가 값을 뒤집었다(오염 재발)"
+    blocked = _by_label(lid_row)
+    assert "뚜껑포함" in blocked and "부정 근접" in blocked["뚜껑포함"]["reason"]
+
+
+def test_fix2_b_question_unit_blocks_included_and_autos_excluded():
+    # 실물 오염 패턴 단위: "X 포함 여부 = X 미포함".
+    text = "컵 뚜껑 포함 여부: 뚜껑 미포함"
+    suggestions = _suggest(
+        {"name": "머그", "source_text": text},
+        _attrs(1),
+        _vals(1, "뚜껑포함", "뚜껑미포함"),
+    )
+    row = suggestions[0]
+    assert row["status"] == "matched"
+    assert row["selected"][0]["minAttributeValue"] == "뚜껑미포함"
+    blocked = _by_label(row)
+    assert "뚜껑포함" in blocked and "부정 근접" in blocked["뚜껑포함"]["reason"]
+
+
+def test_fix2_c_pure_positive_inclusion_still_auto():
+    # 회귀 안전: "여부" 없는 순수 긍정 "뚜껑 포함" → 뚜껑포함 자동.
+    suggestions = _suggest(
+        {"name": "머그", "source_text": "뚜껑 포함 구성입니다."},
+        _attrs(1),
+        _vals(1, "뚜껑포함"),
+    )
+    assert suggestions[0]["status"] == "matched"
+    assert suggestions[0]["selected"][0]["minAttributeValue"] == "뚜껑포함"
+
+
+def test_fix2_d_oven_ceramic_and_microwave_regressions():
+    # (d) 오븐사용가능·세라믹 회귀 유지 + 전자레인지 불가 차단 회귀.
+    oven = _suggest(
+        {"name": "머그", "source_text": "오븐 사용 가능한 세라믹 머그입니다."},
+        _attrs(1, 2),
+        _vals(1, "오븐사용가능") + _vals(2, "도자기/세라믹"),
+    )
+    assert sorted(s["minAttributeValue"] for row in oven for s in row["selected"]) == [
+        "도자기/세라믹",
+        "오븐사용가능",
+    ]
+    microwave = _suggest(
+        {"name": "머그", "source_text": "전자레인지 사용 불가 제품입니다."},
+        _attrs(1),
+        _vals(1, "전자레인지사용가능"),
+    )
+    assert microwave[0]["status"] == "unknown"
+    assert "전자레인지사용가능" in _by_label(microwave[0])
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])

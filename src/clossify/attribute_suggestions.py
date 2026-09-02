@@ -42,14 +42,45 @@ _SOURCE_TEXT_NEGATIVE_TOKENS: tuple[str, ...] = (
 # 부정 가드 창 크기(일치 지점 앞뒤 각각, 계약상 6~10자 중 8자 채택).
 _SOURCE_TEXT_GUARD_WINDOW = 8
 
-# 단계 3 — 라벨 키에서 떼는 접미. "사용가능/가능" 은 계약 명시. "미포함/포함"
-# 은 부정형 라벨 특칙 검증(뚜껑포함 vs 뚜껑미포함)을 위해 함께 뗀다 — 접미를
-# 떼야 일치 지점이 생기고, 그 지점의 앞뒤 창에서 부정 가드가 판정된다.
-_SOURCE_TEXT_LABEL_SUFFIXES: tuple[str, ...] = (
-    "사용가능",
-    "가능",
+# 단계 3 — 극성 접미. 접미를 *무조건 떼지 않는다*: 라벨의 극성(긍정 "포함/
+# 가능" vs 부정 "미포함")을 보존해 판정한다. 접미를 떼어 "뚜껑포함" 과
+# "뚜껑미포함" 이 같은 키("뚜껑")로 합쳐지면 부정형 라벨 특칙이 정반대로
+# 작동한다(실물 오신고: 뚜껑미포함 전문에 뚜껑포함 자동 채용).
+_POLARITY_SUFFIXES: tuple[tuple[str, str], ...] = (
+    ("사용가능", "positive"),
+    ("가능", "positive"),
+    ("미포함", "negative"),
+    ("포함", "positive"),
+)
+
+# 극성 라벨의 스템 직후 창에서 극성 표지를 찾는다(한국어 어순상 극성 표지는
+# 스템 뒤에 온다: "뚜껑 미포함", "오븐 사용 가능", "전자레인지 사용 불가").
+_POLARITY_AFTER_WINDOW = 6
+
+# 질문 접미 방어(속성명 오염). facts 의 이름(name)은 질문(라벨)이지 주장이
+# 아니다. 통짜 source_text 에 "컵 뚜껑 포함 여부 = 뚜껑 미포함" 처럼 질문
+# 문구가 값 앞에 붙어 오면, "뚜껑 포함" 이라는 *이름* 이 긍정 일치해 값
+# "미포함" 을 뒤집는 오염이 생긴다(실물 실증). 라벨 일치 뒤에 곧바로
+# "여부" 가 오면 속성명 문맥으로 보고 "여부" 뒤 실제 값까지 창을 넓혀
+# 극성을 재판정한다.
+_QUESTION_SUFFIX = "여부"
+_QUESTION_MARKERS: tuple[str, ...] = (
     "미포함",
     "포함",
+    "사용",
+    "가능",
+    "불가",
+)
+# "여부" 뒤 실제 값을 읽는 확장 창("포함 여부 = 뚜껑 미포함" 의 값 부분).
+_QUESTION_VALUE_WINDOW = 10
+
+# 스템 직후 긍정 표지(닫힌 어휘). 부정 토큰을 먼저 검사하므로 "불가능" 은
+# 부정("불가")이 이긴다.
+_POSITIVE_MARKERS: tuple[str, ...] = (
+    "포함",
+    "가능",
+    "있음",
+    "있",
 )
 
 # 단계 6 — 동의어 최소 시드(코드 상수). 확장은 데이터 파일로 뺄 수 있는
@@ -157,22 +188,16 @@ def _synonym_variants(key: str) -> list[str]:
 
 
 def _label_match_keys(label: str) -> list[str]:
-    """라벨의 대조 키 후보를 구체적인 순서로 만든다.
+    """극성 없는(중립) 라벨의 대조 키 후보를 만든다.
 
-    순서 원칙: ① 정규화 라벨 전체(가장 구체적) → ② 접미("사용가능/가능/
-    미포함/포함")를 뗀 키 → ③ 구분자로 쪼갠 대체 컴포넌트(예: "도자기/세라믹"
-    의 "세라믹") → ④ 각각의 동의어 변형. 첫 일치 키가 판정을 결정한다
-    (포괄 키로 뒤집지 않는다 — fail-safe).
+    순서 원칙: ① 정규화 라벨 전체(가장 구체적) → ② 구분자로 쪼갠 대체
+    컴포넌트(예: "도자기/세라믹" 의 "세라믹") → ③ 각각의 동의어 변형.
+    첫 일치 키가 판정을 결정한다(포괄 키로 뒤집지 않는다 — fail-safe).
+    극성 접미("포함/미포함/사용가능/가능")는 여기서 떼지 않는다 — 극성
+    라벨은 ``_match_polar_label`` 경로로 간다(오매칭 방지 계약).
     """
     normalized, _ = _normalize_with_map(label)
     keys: list[str] = [normalized]
-    for suffix in _SOURCE_TEXT_LABEL_SUFFIXES:
-        if (
-            normalized.endswith(suffix)
-            and len(normalized) - len(suffix) >= _SOURCE_TEXT_MIN_KEY_LENGTH
-        ):
-            keys.append(normalized[: -len(suffix)])
-            break
     for component in _SOURCE_TEXT_SEPARATOR_RE.split(label):
         stripped = component.strip().lower()
         if len(stripped) >= _SOURCE_TEXT_MIN_KEY_LENGTH and stripped not in keys:
@@ -186,13 +211,227 @@ def _label_match_keys(label: str) -> list[str]:
     return expanded
 
 
-def _label_negative_tokens(normalized_label: str) -> frozenset[str]:
-    """라벨 자체에 포함된 부정 토큰(부정형 라벨 특칙의 제외 대상)."""
-    return frozenset(token for token in _SOURCE_TEXT_NEGATIVE_TOKENS if token in normalized_label)
+def _stem_and_polarity(normalized_label: str) -> tuple[str, str | None]:
+    """극성 접미를 인식해 ``(스템, 극성)`` 을 반환한다.
+
+    "뚜껑포함"→("뚜껑", 긍정), "뚜껑미포함"→("뚜껑", 부정), "오븐사용가능"→
+    ("오븐", 긍정). 접미가 없으면 ``(라벨 전체, None)`` — 중립 경로.
+    접미가 붙은 라벨은 극성을 떼어 버리지 않고 스템+극성 쌍으로 보존하므로
+    서로 반대인 두 라벨이 절대 같은 키로 합쳐지지 않는다.
+    """
+    for suffix, polarity in _POLARITY_SUFFIXES:
+        if normalized_label.endswith(suffix) and len(normalized_label) - len(suffix) >= (
+            _SOURCE_TEXT_MIN_KEY_LENGTH
+        ):
+            return normalized_label[: -len(suffix)], polarity
+    return normalized_label, None
+
+
+def _first_token(text: str, tokens: tuple[str, ...]) -> str | None:
+    """닫힌 어휘 중 텍스트에 있는 첫 토큰을 반환한다(없으면 ``None``)."""
+    return next((token for token in tokens if token in text), None)
+
+
+def _text_polarity(text: str) -> tuple[str, str] | None:
+    """텍스트 창의 극성을 ``(극성, 표지)`` 로 판정한다(부정 우선)."""
+    negative = _first_token(text, _SOURCE_TEXT_NEGATIVE_TOKENS)
+    if negative is not None:
+        return ("negative", negative)
+    positive = _first_token(text, _POSITIVE_MARKERS)
+    if positive is not None:
+        return ("positive", positive)
+    return None
+
+
+def _question_value_offset(text_after_match: str) -> int | None:
+    """일치 지점 직후가 “접미+여부” 질문 문맥이면 값 시작 오프셋을 반환한다.
+
+    ``"...포함 여부"`` / ``"...사용 여부"`` / ``"...여부"``(접미 생략) 패턴을
+    속성명(질문) 문맥으로 인정한다. 질문은 주장이 아니므로 이 오프셋 뒤의
+    실제 값으로 극성을 재판정한다.
+    """
+    for marker in _QUESTION_MARKERS:
+        if text_after_match.startswith(marker + _QUESTION_SUFFIX):
+            return len(marker) + len(_QUESTION_SUFFIX)
+    if text_after_match.startswith(_QUESTION_SUFFIX):
+        return len(_QUESTION_SUFFIX)
+    return None
+
+
+def _match_neutral_label(
+    field_name: str,
+    field_text: str,
+    label: str,
+    normalized_text: str,
+    offsets: list[int],
+) -> dict[str, Any] | None:
+    """중립 라벨(극성 접미 없음)의 기존 4단 판정 — 부정 가드 그대로.
+
+    질문 접미 방어만 추가: 일치 뒤에 곧바로 "여부" 가 오면 속성명 문맥으로
+    보고 이 일치로 자동 판정하지 않는다. "여부" 뒤 실제 값 창에서 부정
+    토큰이 보이면 차단, 극성 표지가 없으면 다음 일치로 넘어간다.
+
+    출현이 여러 개면 깨끗한(부정 가드에 안 걸리는) 출현이 자동 근거가
+    된다(실물: "세라믹 뚜껑 미포함 ... 재질: 세라믹" — 인접 부정 오차).
+    첫 키에서 출현을 전부 봤는데 전부 차단이면 차단으로 확정한다(fail-safe).
+    """
+    for key in _label_match_keys(label):
+        # 1글자 키는 전문 산문에서 오탐률이 급등한다 — 최소 길이 미달 키는
+        # 자동 판정 재료에서 뺀다(후보로 강등).
+        if len(key) < _SOURCE_TEXT_MIN_KEY_LENGTH:
+            continue
+        position = normalized_text.find(key)
+        blocked_result: dict[str, Any] | None = None
+        found_any = False
+        while position >= 0:
+            found_any = True
+            after_start = position + len(key)
+            if normalized_text[after_start:].startswith(_QUESTION_SUFFIX):
+                value_start = after_start + len(_QUESTION_SUFFIX)
+                value_text = normalized_text[value_start : value_start + _QUESTION_VALUE_WINDOW]
+                judged = _text_polarity(value_text)
+                if judged is not None and judged[0] == "negative":
+                    original_start = offsets[position]
+                    original_end = offsets[position + len(key) - 1] + 1
+                    blocked_result = blocked_result or {
+                        "status": "blocked",
+                        "label": label,
+                        "evidence": f"{field_name}[{original_start}:{original_end}]:'{label}'",
+                        "reason": f"부정 근접({judged[1]})",
+                    }
+                # 질문 문맥인데 값에 극성 표지가 없으면 증거 없음 — 건너뛴다.
+                position = normalized_text.find(key, position + 1)
+                continue
+            original_start = offsets[position]
+            original_end = offsets[position + len(key) - 1] + 1
+            window = field_text[
+                max(0, original_start - _SOURCE_TEXT_GUARD_WINDOW) : original_end
+                + _SOURCE_TEXT_GUARD_WINDOW
+            ]
+            evidence = f"{field_name}[{original_start}:{original_end}]:'{label}'"
+            guard_token = _first_token(window, _SOURCE_TEXT_NEGATIVE_TOKENS)
+            if guard_token is not None:
+                blocked_result = blocked_result or {
+                    "status": "blocked",
+                    "label": label,
+                    "evidence": evidence,
+                    "reason": f"부정 근접({guard_token})",
+                }
+                position = normalized_text.find(key, position + 1)
+                continue
+            return {
+                "status": "auto",
+                "label": label,
+                "evidence": evidence,
+                "reason": None,
+            }
+        # 이 키의 출현이 전부 가드에 걸렸다 — 차단 확정(다음 키로 흐리지 않는다).
+        if found_any and blocked_result is not None:
+            return blocked_result
+    return None
+
+
+def _polar_decision(
+    field_name: str,
+    label: str,
+    polarity: str,
+    offsets: list[int],
+    position: int,
+    key: str,
+    found: str,
+    token: str,
+) -> dict[str, Any]:
+    """전문 극성(``found``)과 라벨 극성(``polarity``) 대조로 판정을 내린다."""
+    original_start = offsets[position]
+    original_end = offsets[position + len(key) - 1] + 1
+    evidence = f"{field_name}[{original_start}:{original_end}]:'{label}'"
+    if found == "negative":
+        # 전문이 부정 — 부정 라벨만 자동, 긍정 라벨은 차단.
+        if polarity == "negative":
+            return {"status": "auto", "label": label, "evidence": evidence, "reason": None}
+        return {
+            "status": "blocked",
+            "label": label,
+            "evidence": evidence,
+            "reason": f"부정 근접({token})",
+        }
+    # 전문이 긍정 — 긍정 라벨만 자동, 부정 라벨은 차단.
+    if polarity == "positive":
+        return {"status": "auto", "label": label, "evidence": evidence, "reason": None}
+    return {
+        "status": "blocked",
+        "label": label,
+        "evidence": evidence,
+        "reason": f"긍정 근접({token})",
+    }
+
+
+def _match_polar_label(
+    field_name: str,
+    label: str,
+    stem: str,
+    polarity: str,
+    normalized_text: str,
+    offsets: list[int],
+) -> dict[str, Any] | None:
+    """극성 라벨 판정 — 전문 극성과 라벨 극성이 같을 때만 자동.
+
+    스템 직후 창에서 극성 표지를 읽는다(한국어 어순). 부정 토큰 우선:
+    "불가능" 은 긍정("가능")이 아니라 부정("불가")으로 판정된다.
+
+    질문 접미 방어: 스템(또는 스템+접미) 일치 뒤에 곧바로 "여부" 가 오면
+    그 일치는 속성명 문맥("...포함 여부")이다 — 이름의 "포함" 이 값의
+    "미포함" 을 뒤집는 오염(실물 실증)을 막는다. "여부" 뒤 실제 값까지
+    창을 넓혀 극성을 재판정하고, 값에 극성 표지가 없으면 그 출현은
+    건너뛴다 — 증거 없는 자동도 차단도 하지 않는다.
+    """
+    for key in [stem, *_synonym_variants(stem)]:
+        if len(key) < _SOURCE_TEXT_MIN_KEY_LENGTH:
+            continue
+        position = normalized_text.find(key)
+        while position >= 0:
+            after_start = position + len(key)
+            after = normalized_text[after_start : after_start + _POLARITY_AFTER_WINDOW]
+            question_offset = _question_value_offset(after)
+            if question_offset is not None:
+                value_start = after_start + question_offset
+                value_text = normalized_text[value_start : value_start + _QUESTION_VALUE_WINDOW]
+                judged = _text_polarity(value_text)
+                if judged is not None:
+                    return _polar_decision(
+                        field_name,
+                        label,
+                        polarity,
+                        offsets,
+                        position,
+                        key,
+                        judged[0],
+                        judged[1],
+                    )
+                position = normalized_text.find(key, position + 1)
+                continue
+            judged = _text_polarity(after)
+            if judged is not None:
+                return _polar_decision(
+                    field_name,
+                    label,
+                    polarity,
+                    offsets,
+                    position,
+                    key,
+                    judged[0],
+                    judged[1],
+                )
+            position = normalized_text.find(key, position + 1)
+    return None
 
 
 def match_source_label(field_name: str, field_text: str, label: str) -> dict[str, Any] | None:
     """전문 텍스트 위에서 라벨 1개의 4단 결정론 매칭을 판정한다.
+
+    극성 접미("포함/미포함/사용가능/가능")가 있는 라벨은 스템 직후 극성
+    표지와 라벨 극성의 일치로 판정한다(``_match_polar_label``). 그 외
+    중립 라벨은 기존 부정 가드 판정을 그대로 쓴다(``_match_neutral_label``).
 
     Returns:
         일치가 없으면 ``None``. 있으면 판정 딕셔너리:
@@ -204,44 +443,11 @@ def match_source_label(field_name: str, field_text: str, label: str) -> dict[str
     normalized_label, _ = _normalize_with_map(label)
     if not normalized_label:
         return None
-    # 부정형 라벨 특칙: 라벨 안의 부정 토큰은 가드에서 뺀다 — 라벨 전체 일치가
-    # 곧 긍정 매칭이다(예: "뚜껑미포함" 이 "뚜껑 미포함" 전문에 걸린 경우).
-    label_negatives = _label_negative_tokens(normalized_label)
-    guard_tokens = tuple(
-        token for token in _SOURCE_TEXT_NEGATIVE_TOKENS if token not in label_negatives
-    )
-
     normalized_text, offsets = _normalize_with_map(field_text)
-    for key in _label_match_keys(label):
-        # 1글자 키는 전문 산문에서 오탐률이 급등한다 — 최소 길이 미달 키는
-        # 자동 판정 재료에서 뺀다(후보로 강등).
-        if len(key) < _SOURCE_TEXT_MIN_KEY_LENGTH:
-            continue
-        position = normalized_text.find(key)
-        if position < 0:
-            continue
-        original_start = offsets[position]
-        original_end = offsets[position + len(key) - 1] + 1
-        window = field_text[
-            max(0, original_start - _SOURCE_TEXT_GUARD_WINDOW) : original_end
-            + _SOURCE_TEXT_GUARD_WINDOW
-        ]
-        evidence = f"{field_name}[{original_start}:{original_end}]:'{label}'"
-        for token in guard_tokens:
-            if token in window:
-                return {
-                    "status": "blocked",
-                    "label": label,
-                    "evidence": evidence,
-                    "reason": f"부정 근접({token})",
-                }
-        return {
-            "status": "auto",
-            "label": label,
-            "evidence": evidence,
-            "reason": None,
-        }
-    return None
+    stem, polarity = _stem_and_polarity(normalized_label)
+    if polarity is None:
+        return _match_neutral_label(field_name, field_text, label, normalized_text, offsets)
+    return _match_polar_label(field_name, label, stem, polarity, normalized_text, offsets)
 
 
 def suggest_category_attributes(
